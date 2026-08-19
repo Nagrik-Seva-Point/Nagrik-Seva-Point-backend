@@ -1,0 +1,29 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-net --allow-read --allow-write --allow-env --allow-sys --env src/index.ts",
+    "db:generate": "deno run --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 generate",
+    "db:migrate": "deno run --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 migrate dev",
+    "db:push": "deno run --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 db push",
+    "db:seed": "deno run --allow-net --allow-read --allow-write --allow-env --allow-sys --env src/seed.ts",
+    "db:studio": "deno run --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 studio",
+    "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-sys"
+  },
+  "imports": {
+    "hono": "npm:hono@^4.6.0",
+    "hono/cors": "npm:hono@^4.6.0/cors",
+    "hono/logger": "npm:hono@^4.6.0/logger",
+    "better-auth": "npm:better-auth@^1.1.0",
+    "better-auth/plugins": "npm:better-auth@^1.1.0/plugins",
+    "@prisma/client": "npm:@prisma/client@7.9.1",
+    "@prisma/adapter-pg": "npm:@prisma/adapter-pg@7.9.1",
+    "pg": "npm:pg@^8.13.0",
+    "@types/pg": "npm:@types/pg@^8.11.10",
+    "zod": "npm:zod@^3.23.8",
+    "dotenv": "npm:dotenv@^16.4.5"
+  },
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.ns"],
+    "strict": true
+  }
+}

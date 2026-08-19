@@ -1,0 +1,171 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider        = "prisma-client-js"
+}
+
+// --- ENUMS ---
+enum RequestStatus {
+  CREATED
+  PROCESSING
+  SUCCESS
+  FAILED
+}
+
+// --- BETTER-AUTH CORE & ORGANIZATION ---
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean
+  image         String?
+  createdAt     DateTime
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  members       Member[]
+}
+
+model Session {
+  id             String   @id
+  expiresAt      DateTime
+  token          String   @unique
+  createdAt      DateTime
+  updatedAt      DateTime @updatedAt
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress      String?
+  userAgent      String?
+  activeOrganizationId String?
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime
+  updatedAt             DateTime  @updatedAt
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime?
+  updatedAt  DateTime? @updatedAt
+}
+
+// Organization = Cyber Café
+model Organization {
+  id          String   @id
+  name        String
+  slug        String?  @unique
+  logo        String?
+  createdAt   DateTime
+  metadata    String?
+  
+  members     Member[]
+  invitations Invitation[]
+
+  // Business relationships
+  customers   Customer[]
+  requests    ServiceRequest[]
+}
+
+model Member {
+  id             String       @id
+  role           String       // owner, staff
+  createdAt      DateTime
+  updatedAt      DateTime     @updatedAt
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Invitation {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           String
+  status         String       // pending, accepted, rejected
+  expiresAt      DateTime
+  inviterId      String
+}
+
+// --- BUSINESS MODELS ---
+
+model Customer {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  name           String
+  phone          String?
+  
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  
+  requests       ServiceRequest[]
+}
+
+model Service {
+  id             String       @id @default(uuid())
+  code           String       @unique // e.g., "PAN_FIND"
+  name           String
+  description    String?
+  category       String
+  isActive       Boolean      @default(true)
+  retailerPrice  Decimal?     @db.Decimal(10, 2) // Nullable during initial free pilot
+  
+  requests       ServiceRequest[]
+}
+
+model ServiceRequest {
+  id               String          @id @default(uuid())
+  organizationId   String
+  organization     Organization    @relation(fields: [organizationId], references: [id])
+  
+  customerId       String
+  customer         Customer        @relation(fields: [customerId], references: [id])
+  
+  serviceId        String
+  service          Service         @relation(fields: [serviceId], references: [id])
+  
+  status           RequestStatus   @default(CREATED)
+  
+  // inputData stores only operational metadata/non-sensitive fields.
+  // Sensitive identifiers (Aadhaar, Voter Card Number) are processed transiently
+  // or stored under strict access/retention/encryption guidelines.
+  inputData        Json
+  resultData       Json?           // Normalized result returned to user
+  referenceNumber  String?         // Provider's ref ID
+  idempotencyKey   String?         @unique
+  
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  
+  events           ServiceRequestEvent[]
+}
+
+model ServiceRequestEvent {
+  id               String          @id @default(uuid())
+  serviceRequestId String
+  serviceRequest   ServiceRequest  @relation(fields: [serviceRequestId], references: [id])
+  status           RequestStatus
+  createdAt        DateTime        @default(now()) // Immutable event tracker (no updatedAt)
+}
+
