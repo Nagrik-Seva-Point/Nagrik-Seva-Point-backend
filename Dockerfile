@@ -10,11 +10,8 @@ RUN deno install
 # Copy application source code
 COPY . .
 
-# Generate Prisma Client during build time (safe fallback database URL lookup is active)
-RUN deno task db:generate
-
 # Expose server port (Google Cloud Run automatically sets the PORT environment variable)
 EXPOSE 8000
 
-# Run the API server with required Deno permissions
-CMD ["run", "--allow-net", "--allow-read", "--allow-write", "--allow-env", "--allow-sys", "src/index.ts"]
+# Generate Prisma Client and run the API server with required Deno permissions at startup
+CMD ["sh", "-c", "deno task db:generate && deno run --allow-net --allow-read --allow-write --allow-env --allow-sys src/index.ts"]
