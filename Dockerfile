@@ -4,7 +4,7 @@ FROM denoland/deno:alpine-2.9.5
 WORKDIR /app
 
 # Cache dependencies
-COPY deno.json deno.lock ./
+COPY deno.json deno.loc[k] ./
 RUN deno install
 
 # Copy application source code
