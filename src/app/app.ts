@@ -15,12 +15,15 @@ export const app = new Hono<ContextVariables>();
 app.use("*", cors({
   origin: env.CORS_ORIGIN,
   credentials: true,
+  allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowHeaders: ["Content-Type", "Authorization", "User-Agent", "X-Requested-With"],
+  maxAge: 600,
 }));
 app.use("*", logger());
 app.use("*", requestIdMiddleware());
 
 // BetterAuth Mount
-app.on(["POST", "GET"], "/api/auth/*", (c) => {
+app.all("/api/auth/*", (c) => {
   return auth.handler(c.req.raw);
 });
 
