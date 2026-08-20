@@ -4,7 +4,11 @@ import { logger } from "hono/logger";
 import { CONSTANTS } from "../core/config/constants.ts";
 import { errorHandler } from "../core/errors/error-handler.ts";
 import { requestIdMiddleware } from "../middleware/request-id.middleware.ts";
-import { env } from "../core/config/env.ts";
+import {
+  CORS_ALLOW_HEADERS,
+  CORS_ALLOW_METHODS,
+  getAllowedCorsOrigin,
+} from "../core/config/cors.ts";
 import { auth } from "../core/auth/better-auth.ts";
 import { apiRouter } from "./routes.ts";
 import type { ContextVariables } from "./context.ts";
@@ -12,27 +16,40 @@ import type { ContextVariables } from "./context.ts";
 export const app = new Hono<ContextVariables>();
 
 // Global Middleware
-app.use("*", cors({
-  origin: env.CORS_ORIGIN,
-  credentials: true,
-  allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization", "User-Agent", "X-Requested-With"],
-  maxAge: 600,
-}));
+app.use(
+  "*",
+  cors({
+    origin: (origin) => getAllowedCorsOrigin(origin),
+    credentials: true,
+    allowMethods: CORS_ALLOW_METHODS,
+    allowHeaders: CORS_ALLOW_HEADERS,
+    maxAge: 600,
+  }),
+);
 app.use("*", logger());
 app.use("*", requestIdMiddleware());
 
 // BetterAuth Mount
 app.all("/api/auth/*", async (c) => {
   const res = await auth.handler(c.req.raw);
-  
+  const allowedOrigin = getAllowedCorsOrigin(c.req.header("Origin"));
+
   // Clone and append CORS headers to the raw response object returned by Better Auth
   const corsHeaders = new Headers(res.headers);
-  corsHeaders.set("Access-Control-Allow-Origin", env.CORS_ORIGIN);
+  if (allowedOrigin) {
+    corsHeaders.set("Access-Control-Allow-Origin", allowedOrigin);
+    corsHeaders.set("Vary", "Origin");
+  }
   corsHeaders.set("Access-Control-Allow-Credentials", "true");
-  corsHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  corsHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization, User-Agent, X-Requested-With");
-  
+  corsHeaders.set(
+    "Access-Control-Allow-Methods",
+    CORS_ALLOW_METHODS.join(", "),
+  );
+  corsHeaders.set(
+    "Access-Control-Allow-Headers",
+    CORS_ALLOW_HEADERS.join(", "),
+  );
+
   return new Response(res.body, {
     status: res.status,
     statusText: res.statusText,
