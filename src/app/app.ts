@@ -23,8 +23,21 @@ app.use("*", logger());
 app.use("*", requestIdMiddleware());
 
 // BetterAuth Mount
-app.all("/api/auth/*", (c) => {
-  return auth.handler(c.req.raw);
+app.all("/api/auth/*", async (c) => {
+  const res = await auth.handler(c.req.raw);
+  
+  // Clone and append CORS headers to the raw response object returned by Better Auth
+  const corsHeaders = new Headers(res.headers);
+  corsHeaders.set("Access-Control-Allow-Origin", env.CORS_ORIGIN);
+  corsHeaders.set("Access-Control-Allow-Credentials", "true");
+  corsHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  corsHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization, User-Agent, X-Requested-With");
+  
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: corsHeaders,
+  });
 });
 
 // API Routes (Prefix: /api/v1)
