@@ -1,76 +1,136 @@
 import { prisma } from "../../core/db/prisma.ts";
-import prismaPkg from "@prisma/client";
 import type { Prisma, RequestStatus } from "@prisma/client";
-import type {
-  CreateRequestInput,
-  QueryRequestInput,
-} from "./request.schema.ts";
-
-const { Prisma: PrismaRuntime } = prismaPkg;
+import type { QueryRequestInput } from "./request.schema.ts";
+import type { RequestContext } from "../../core/types/context.types.ts";
 
 export class RequestRepository {
-  async create(
-    organizationId: string,
-    serviceId: string,
-    customerId: string,
-    data: CreateRequestInput,
-  ) {
-    const request = await prisma.serviceRequest.create({
-      data: {
-        organizationId,
-        serviceId,
-        customerId,
-        status: "CREATED",
-        inputData: data.inputData as Prisma.InputJsonValue,
-        idempotencyKey: data.idempotencyKey || null,
-      },
-    });
-    await this.addEvent(request.id, "CREATED");
-    return request;
-  }
-
-  async findById(id: string, organizationId: string) {
-    return await prisma.serviceRequest.findFirst({
-      where: {
-        id,
-        organizationId,
-      },
+  async findById(id: string) {
+    return await prisma.serviceRequest.findUnique({
+      where: { id },
       include: {
         service: true,
         customer: true,
+        user: true,
+        organization: true,
         events: {
           orderBy: { createdAt: "asc" },
+        },
+        payments: {
+          orderBy: { createdAt: "desc" },
         },
       },
     });
   }
 
-  async findByIdempotencyKey(idempotencyKey: string, organizationId: string) {
-    return await prisma.serviceRequest.findFirst({
-      where: {
-        idempotencyKey,
-        organizationId,
+  async findByIdempotencyKey(key: string) {
+    return await prisma.serviceRequest.findUnique({
+      where: { idempotencyKey: key },
+      include: {
+        service: true,
+        customer: true,
+        events: true,
+        payments: true,
+      },
+    });
+  }
+
+  async create(data: {
+    referenceNumber: string;
+    serviceId: string;
+    context: RequestContext;
+    customerId?: string | null;
+    amount: number;
+    currency: string;
+    inputData: Record<string, unknown>;
+    idempotencyKey?: string;
+  }) {
+    return await prisma.serviceRequest.create({
+      data: {
+        referenceNumber: data.referenceNumber,
+        serviceId: data.serviceId,
+        accessMode: data.context.accessMode,
+        pricingTier: data.context.pricingTier,
+        userId: data.context.userId || null,
+        organizationId: data.context.organizationId || null,
+        customerId: data.customerId || null,
+        guestSessionId: data.context.guestSessionId || null,
+        amount: data.amount,
+        currency: data.currency,
+        status: "REQUEST_CREATED",
+        inputData: data.inputData as Prisma.InputJsonValue,
+        idempotencyKey: data.idempotencyKey || null,
+        events: {
+          create: {
+            status: "REQUEST_CREATED",
+            note: "Service request initiated and price locked",
+          },
+        },
       },
       include: {
         service: true,
         customer: true,
+        events: true,
+        payments: true,
+      },
+    });
+  }
+
+  async updateStatus(id: string, status: RequestStatus, note?: string) {
+    const isTerminal = status === "COMPLETED" || status === "PROVIDER_FAILED" || status === "FAILED";
+
+    return await prisma.serviceRequest.update({
+      where: { id },
+      data: {
+        status,
+        completedAt: isTerminal ? new Date() : undefined,
+        events: {
+          create: {
+            status,
+            note: note || undefined,
+          },
+        },
+      },
+      include: {
+        service: true,
+        customer: true,
+        events: true,
+        payments: true,
+      },
+    });
+  }
+
+  async updateResult(
+    id: string,
+    resultData: Record<string, unknown>,
+    providerId?: string,
+    providerReference?: string,
+  ) {
+    return await prisma.serviceRequest.update({
+      where: { id },
+      data: {
+        resultData: resultData as Prisma.InputJsonValue,
+        providerId: providerId || undefined,
+        providerReference: providerReference || undefined,
       },
     });
   }
 
   async findMany(organizationId: string, query: QueryRequestInput) {
-    const { customerId, status, page, limit } = query;
+    const { page, limit, status, serviceCode, customerId } = query;
     const skip = (page - 1) * limit;
 
     const where: Prisma.ServiceRequestWhereInput = {
       organizationId,
     };
 
-    if (customerId) {
-      where.customerId = customerId;
-    }
     if (status) {
       where.status = status;
+    }
+    if (serviceCode) {
+      where.service = { code: serviceCode };
+    }
+    if (customerId) {
+      where.customerId = customerId;
     }
 
     const [items, total] = await Promise.all([
@@ -82,55 +142,19 @@ export class RequestRepository {
         include: {
           service: true,
           customer: true,
+          payments: true,
         },
       }),
       prisma.serviceRequest.count({ where }),
     ]);
 
-    return { items, total, page, limit };
-  }
-
-  async updateStatus(
-    id: string,
-    organizationId: string,
-    status: RequestStatus,
-  ) {
-    return await prisma.serviceRequest.update({
-      where: {
-        id,
-        organizationId,
-      },
-      data: {
-        status,
-      },
-    });
-  }
-
-  async updateResult(
-    id: string,
-    organizationId: string,
-    resultData: Prisma.InputJsonValue | undefined,
-    referenceNumber?: string,
-  ) {
-    return await prisma.serviceRequest.update({
-      where: {
-        id,
-        organizationId,
-      },
-      data: {
-        resultData: resultData ?? PrismaRuntime.JsonNull,
-        referenceNumber: referenceNumber || null,
-      },
-    });
-  }
-
-  async addEvent(serviceRequestId: string, status: RequestStatus) {
-    return await prisma.serviceRequestEvent.create({
-      data: {
-        serviceRequestId,
-        status,
-      },
-    });
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 }
 

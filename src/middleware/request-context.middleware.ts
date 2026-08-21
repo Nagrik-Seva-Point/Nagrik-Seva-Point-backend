@@ -1,0 +1,99 @@
+import type { Context, MiddlewareHandler } from "hono";
+import { auth } from "../core/auth/better-auth.ts";
+import { prisma } from "../core/db/prisma.ts";
+import type { ContextVariables } from "../app/context.ts";
+import type { RequestContext } from "../core/types/context.types.ts";
+import { logger } from "../core/logger/logger.ts";
+
+export const requestContextMiddleware = (): MiddlewareHandler<ContextVariables> => {
+  return async (c: Context<ContextVariables>, next) => {
+    try {
+      // 1. Check for authenticated session
+      const session = await auth.api.getSession({
+        headers: c.req.raw.headers,
+      });
+
+      if (session && session.user) {
+        // 2. Resolve Retailer Organization Context
+        const userId = session.user.id;
+        let organizationId = session.session.activeOrganizationId;
+
+        // If no activeOrganizationId on session, query user's primary membership
+        if (!organizationId) {
+          const membership = await prisma.member.findFirst({
+            where: { userId },
+            include: { organization: true },
+            orderBy: { createdAt: "asc" },
+          });
+
+          if (membership) {
+            organizationId = membership.organizationId;
+            c.set("organization", membership.organization);
+          }
+        } else {
+          // Verify user actually belongs to this organization in DB (BOLA Protection)
+          const membership = await prisma.member.findFirst({
+            where: { userId, organizationId },
+            include: { organization: true },
+          });
+
+          if (membership) {
+            c.set("organization", membership.organization);
+          } else {
+            logger.warn(`User ${userId} attempted to access unauthorized org ${organizationId}`);
+            organizationId = null;
+          }
+        }
+
+        const requestContext: RequestContext = {
+          accessMode: "RETAILER",
+          userId,
+          organizationId: organizationId || null,
+          customerId: null, // Populated per-request payload if present
+          pricingTier: "PARTNER",
+          guestSessionId: null,
+        };
+
+        c.set("user", session.user);
+        c.set("session", session.session);
+        c.set("organizationId", organizationId || undefined);
+        c.set("requestContext", requestContext);
+      } else {
+        // 3. Resolve Guest Context
+        let guestSessionId = c.req.header("x-guest-session-id");
+        if (!guestSessionId) {
+          guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
+        }
+
+        const requestContext: RequestContext = {
+          accessMode: "GUEST",
+          userId: null,
+          organizationId: null,
+          customerId: null,
+          pricingTier: "PUBLIC",
+          guestSessionId,
+        };
+
+        c.set("user", null);
+        c.set("session", null);
+        c.set("organizationId", undefined);
+        c.set("organization", null);
+        c.set("requestContext", requestContext);
+      }
+    } catch (error) {
+      logger.error("Error resolving request context:", error);
+      // Fallback to Guest on session error
+      const guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
+      c.set("requestContext", {
+        accessMode: "GUEST",
+        userId: null,
+        organizationId: null,
+        customerId: null,
+        pricingTier: "PUBLIC",
+        guestSessionId,
+      });
+    }
+
+    await next();
+  };
+};

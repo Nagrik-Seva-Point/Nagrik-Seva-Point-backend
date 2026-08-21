@@ -25,6 +25,8 @@ const envSchema = z.object({
     return [...new Set(origins)];
   }),
   PORT: z.string().default("8000").transform((v) => parseInt(v, 10)),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
 });
 
 const getEnv = () => {
@@ -34,6 +36,8 @@ const getEnv = () => {
     BETTER_AUTH_URL: getEnvVar("BETTER_AUTH_URL"),
     CORS_ORIGIN: getEnvVar("CORS_ORIGIN"),
     PORT: getEnvVar("PORT") || "8000",
+    GOOGLE_CLIENT_ID: getEnvVar("GOOGLE_CLIENT_ID"),
+    GOOGLE_CLIENT_SECRET: getEnvVar("GOOGLE_CLIENT_SECRET"),
   });
 
   if (!result.success) {

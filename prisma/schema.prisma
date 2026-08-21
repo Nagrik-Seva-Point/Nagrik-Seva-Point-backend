@@ -3,15 +3,58 @@ datasource db {
 }
 
 generator client {
-  provider        = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 // --- ENUMS ---
+enum AccessMode {
+  GUEST
+  RETAILER
+}
+
+enum PricingTier {
+  PUBLIC
+  PARTNER
+  PARTNER_GOLD
+  ENTERPRISE
+}
+
 enum RequestStatus {
+  // Legacy / Compatibility
   CREATED
-  PROCESSING
   SUCCESS
   FAILED
+
+  // Production State Machine
+  REQUEST_CREATED
+  PRICE_LOCKED
+  PAYMENT_PENDING
+  PAYMENT_CAPTURED
+  PROCESSING
+  COMPLETED
+  PROVIDER_FAILED
+  CANCELLED
+  REFUND_PENDING
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  RAZORPAY
+  WALLET
+  FREE_PILOT
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
 }
 
 // --- BETTER-AUTH CORE & ORGANIZATION ---
@@ -19,25 +62,27 @@ model User {
   id            String    @id
   name          String
   email         String    @unique
-  emailVerified Boolean
+  phone         String?   @unique // 10-digit mobile number for Phone
+  emailVerified Boolean   @default(true)
   image         String?
-  createdAt     DateTime
+  createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   sessions      Session[]
   accounts      Account[]
   members       Member[]
+  requests      ServiceRequest[]
 }
 
 model Session {
-  id             String   @id
-  expiresAt      DateTime
-  token          String   @unique
-  createdAt      DateTime
-  updatedAt      DateTime @updatedAt
-  userId         String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ipAddress      String?
-  userAgent      String?
+  id                   String   @id
+  expiresAt            DateTime
+  token                String   @unique
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress            String?
+  userAgent            String?
   activeOrganizationId String?
 }
 
@@ -54,40 +99,42 @@ model Account {
   refreshTokenExpiresAt DateTime?
   scope                 String?
   password              String?
-  createdAt             DateTime
+  createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 }
 
 model Verification {
-  id         String   @id
+  id         String    @id
   identifier String
   value      String
   expiresAt  DateTime
-  createdAt  DateTime?
+  createdAt  DateTime? @default(now())
   updatedAt  DateTime? @updatedAt
 }
 
 // Organization = Cyber Café
 model Organization {
-  id          String   @id
+  id          String   @id @default(uuid())
   name        String
   slug        String?  @unique
   logo        String?
-  createdAt   DateTime
+  createdAt   DateTime @default(now())
   metadata    String?
-  
+
   members     Member[]
   invitations Invitation[]
 
   // Business relationships
   customers   Customer[]
   requests    ServiceRequest[]
+  wallet      Wallet?
+  payments    Payment[]
 }
 
 model Member {
-  id             String       @id
+  id             String       @id @default(uuid())
   role           String       // owner, staff
-  createdAt      DateTime
+  createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -96,7 +143,7 @@ model Member {
 }
 
 model Invitation {
-  id             String       @id
+  id             String       @id @default(uuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   email          String
@@ -111,61 +158,149 @@ model Invitation {
 model Customer {
   id             String       @id @default(uuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   name           String
   phone          String?
-  
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
-  
+
   requests       ServiceRequest[]
 }
 
+// --- SERVICE CATALOGUE & CAPABILITIES ---
 model Service {
-  id             String       @id @default(uuid())
-  code           String       @unique // e.g., "PAN_FIND"
-  name           String
-  description    String?
-  category       String
-  isActive       Boolean      @default(true)
-  retailerPrice  Decimal?     @db.Decimal(10, 2) // Nullable during initial free pilot
-  
-  requests       ServiceRequest[]
+  id               String         @id @default(uuid())
+  code             String         @unique // e.g., "PAN_FIND", "VOTER_VERIFY"
+  name             String
+  description      String?
+  category         String
+  isActive         Boolean        @default(true)
+  retailerPrice    Decimal?       @db.Decimal(10, 2) // Legacy compatibility
+
+  // Service Capability Flags
+  isPublicAllowed  Boolean        @default(true)  // Whether guests can execute this service
+  requiresCustomer Boolean        @default(false) // Mandatory customer record for retailers
+  requiresUpload   Boolean        @default(false) // Photo / signature upload required
+  producesDocument Boolean        @default(false) // Generates downloadable PDF
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  prices           ServicePrice[]
+  requests         ServiceRequest[]
 }
 
+model ServicePrice {
+  id            String       @id @default(uuid())
+  serviceId     String
+  service       Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  pricingTier   PricingTier
+  amount        Decimal      @db.Decimal(10, 2)
+  currency      String       @default("INR")
+  effectiveFrom DateTime     @default(now())
+  effectiveTo   DateTime?
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([serviceId, pricingTier])
+}
+
+// --- CENTRAL SERVICE REQUEST ENTITY ---
 model ServiceRequest {
-  id               String          @id @default(uuid())
-  organizationId   String
-  organization     Organization    @relation(fields: [organizationId], references: [id])
-  
-  customerId       String
-  customer         Customer        @relation(fields: [customerId], references: [id])
-  
-  serviceId        String
-  service          Service         @relation(fields: [serviceId], references: [id])
-  
-  status           RequestStatus   @default(CREATED)
-  
-  // inputData stores only operational metadata/non-sensitive fields.
-  // Sensitive identifiers (Aadhaar, Voter Card Number) are processed transiently
-  // or stored under strict access/retention/encryption guidelines.
-  inputData        Json
-  resultData       Json?           // Normalized result returned to user
-  referenceNumber  String?         // Provider's ref ID
-  idempotencyKey   String?         @unique
-  
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  
-  events           ServiceRequestEvent[]
+  id                String               @id @default(uuid())
+  referenceNumber   String?              @unique // e.g., "REQ-20260821-ABC123"
+  serviceId         String
+  service           Service              @relation(fields: [serviceId], references: [id])
+
+  accessMode        AccessMode           @default(RETAILER)
+  pricingTier       PricingTier          @default(PARTNER)
+
+  // Contextual Relations (Nullable for Guests)
+  userId            String?
+  user              User?                @relation(fields: [userId], references: [id])
+  organizationId    String?
+  organization      Organization?        @relation(fields: [organizationId], references: [id])
+  customerId        String?
+  customer          Customer?            @relation(fields: [customerId], references: [id])
+  guestSessionId    String?              // Anonymous tracking ID for guest requests
+
+  // Immutable Price Snapshot
+  amount            Decimal              @default(0.00) @db.Decimal(10, 2)
+  currency          String               @default("INR")
+
+  status            RequestStatus        @default(REQUEST_CREATED)
+
+  // Payloads & Results
+  inputData         Json                 // Operational request payload (non-sensitive/redacted)
+  resultData        Json?                // Normalized response returned to client
+  providerId        String?              // Identifier of provider used (e.g., "EZYTM", "MOCK")
+  providerReference String?              // Provider's internal reference ID
+  idempotencyKey    String?              @unique
+
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  completedAt       DateTime?
+
+  events            ServiceRequestEvent[]
+  payments          Payment[]
 }
 
 model ServiceRequestEvent {
   id               String          @id @default(uuid())
   serviceRequestId String
-  serviceRequest   ServiceRequest  @relation(fields: [serviceRequestId], references: [id])
+  serviceRequest   ServiceRequest  @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
   status           RequestStatus
-  createdAt        DateTime        @default(now()) // Immutable event tracker (no updatedAt)
+  note             String?
+  createdAt        DateTime        @default(now())
 }
 
+// --- PAYMENTS ---
+model Payment {
+  id               String          @id @default(uuid())
+  serviceRequestId String
+  serviceRequest   ServiceRequest  @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+
+  organizationId   String?
+  organization     Organization?   @relation(fields: [organizationId], references: [id])
+  guestSessionId   String?
+
+  amount           Decimal         @db.Decimal(10, 2)
+  currency         String          @default("INR")
+  method           PaymentMethod   @default(RAZORPAY)
+  status           PaymentStatus   @default(PENDING)
+
+  // Razorpay Gateway fields
+  gatewayOrderId   String?
+  gatewayPaymentId String?
+  gatewaySignature String?
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+}
+
+// --- WALLET & LEDGER (Prepared for future activation) ---
+model Wallet {
+  id             String              @id @default(uuid())
+  organizationId String              @unique
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  balance        Decimal             @default(0.00) @db.Decimal(10, 2)
+  currency       String              @default("INR")
+  updatedAt      DateTime            @updatedAt
+
+  transactions   WalletTransaction[]
+}
+
+model WalletTransaction {
+  id           String          @id @default(uuid())
+  walletId     String
+  wallet       Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount       Decimal         @db.Decimal(10, 2)
+  type         TransactionType
+  balanceAfter Decimal         @db.Decimal(10, 2)
+  referenceId  String?         // Points to ServiceRequest.id or Payment.id
+  description  String?
+  createdAt    DateTime        @default(now())
+}
