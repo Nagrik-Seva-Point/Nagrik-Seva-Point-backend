@@ -1,10 +1,11 @@
 import { prisma } from "../../core/db/prisma.ts";
+import type { Prisma } from "@prisma/client";
 import type { QueryServiceInput } from "./service.schema.ts";
 
 export class ServiceRepository {
   async findMany(query: QueryServiceInput) {
     const { category } = query;
-    const where: any = {
+    const where: Prisma.ServiceWhereInput = {
       isActive: true,
     };
     if (category) {

@@ -1,10 +1,15 @@
+import type { Organization } from "@prisma/client";
+import type { auth } from "../core/auth/better-auth.ts";
+
+type AuthSession = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
+
 export interface HonoVariables {
   requestId: string;
-  user?: any;
-  session?: any;
+  user?: AuthSession["user"];
+  session?: AuthSession["session"];
   organizationId?: string;
-  organization?: any;
-  validData?: any;
+  organization?: Organization;
+  validData?: unknown;
 }
 
 export type ContextVariables = {

@@ -17,30 +17,41 @@ export const requestRoutes = new Hono<ContextVariables>();
 requestRoutes.use("*", authMiddleware());
 requestRoutes.use("*", organizationMiddleware());
 
-requestRoutes.post("/", validationMiddleware(createRequestSchema), async (c) => {
-  const organizationId = c.get("organizationId")!;
-  const data = c.get("validData") as CreateRequestInput;
+requestRoutes.post(
+  "/",
+  validationMiddleware(createRequestSchema),
+  async (c) => {
+    const organizationId = c.get("organizationId")!;
+    const data = c.get("validData") as CreateRequestInput;
 
-  // 1. Create the request DB record
-  const request = await requestService.createRequest(organizationId, data);
+    // 1. Create the request DB record
+    const request = await requestService.createRequest(organizationId, data);
 
-  // 2. If it was already completed (e.g. matched an existing idempotency key), return it
-  if (request.status === "SUCCESS" || request.status === "FAILED") {
-    return c.json({ success: true, data: request });
-  }
+    // 2. If it was already completed (e.g. matched an existing idempotency key), return it
+    if (request.status === "SUCCESS" || request.status === "FAILED") {
+      return c.json({ success: true, data: request });
+    }
 
-  // 3. Process the integration workflow
-  const result = await requestService.processRequest(request.id, organizationId);
-  return c.json({ success: true, data: result });
-});
+    // 3. Process the integration workflow
+    const result = await requestService.processRequest(
+      request.id,
+      organizationId,
+    );
+    return c.json({ success: true, data: result });
+  },
+);
 
-requestRoutes.get("/", validationMiddleware(queryRequestSchema, "query"), async (c) => {
-  const organizationId = c.get("organizationId")!;
-  const query = c.get("validData") as QueryRequestInput;
+requestRoutes.get(
+  "/",
+  validationMiddleware(queryRequestSchema, "query"),
+  async (c) => {
+    const organizationId = c.get("organizationId")!;
+    const query = c.get("validData") as QueryRequestInput;
 
-  const result = await requestService.queryRequests(organizationId, query);
-  return c.json({ success: true, ...result });
-});
+    const result = await requestService.queryRequests(organizationId, query);
+    return c.json({ success: true, ...result });
+  },
+);
 
 requestRoutes.get("/:id", async (c) => {
   const organizationId = c.get("organizationId")!;

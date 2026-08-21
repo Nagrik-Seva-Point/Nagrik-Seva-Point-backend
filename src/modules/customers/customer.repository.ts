@@ -1,4 +1,5 @@
 import { prisma } from "../../core/db/prisma.ts";
+import type { Prisma } from "@prisma/client";
 import type {
   CreateCustomerInput,
   QueryCustomerInput,
@@ -42,7 +43,7 @@ export class CustomerRepository {
     const { search, page, limit } = query;
     const skip = (page - 1) * limit;
 
-    const where: any = {
+    const where: Prisma.CustomerWhereInput = {
       organizationId,
     };
 

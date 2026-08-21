@@ -1,15 +1,27 @@
 import { prisma } from "../../core/db/prisma.ts";
-import type { CreateRequestInput, QueryRequestInput } from "./request.schema.ts";
+import prismaPkg from "@prisma/client";
+import type { Prisma, RequestStatus } from "@prisma/client";
+import type {
+  CreateRequestInput,
+  QueryRequestInput,
+} from "./request.schema.ts";
+
+const { Prisma: PrismaRuntime } = prismaPkg;
 
 export class RequestRepository {
-  async create(organizationId: string, serviceId: string, customerId: string, data: CreateRequestInput) {
+  async create(
+    organizationId: string,
+    serviceId: string,
+    customerId: string,
+    data: CreateRequestInput,
+  ) {
     const request = await prisma.serviceRequest.create({
       data: {
         organizationId,
         serviceId,
         customerId,
         status: "CREATED",
-        inputData: data.inputData,
+        inputData: data.inputData as Prisma.InputJsonValue,
         idempotencyKey: data.idempotencyKey || null,
       },
     });
@@ -50,7 +62,7 @@ export class RequestRepository {
     const { customerId, status, page, limit } = query;
     const skip = (page - 1) * limit;
 
-    const where: any = {
+    const where: Prisma.ServiceRequestWhereInput = {
       organizationId,
     };
 
@@ -78,7 +90,11 @@ export class RequestRepository {
     return { items, total, page, limit };
   }
 
-  async updateStatus(id: string, organizationId: string, status: "CREATED" | "PROCESSING" | "SUCCESS" | "FAILED") {
+  async updateStatus(
+    id: string,
+    organizationId: string,
+    status: RequestStatus,
+  ) {
     return await prisma.serviceRequest.update({
       where: {
         id,
@@ -90,20 +106,25 @@ export class RequestRepository {
     });
   }
 
-  async updateResult(id: string, organizationId: string, resultData: any, referenceNumber?: string) {
+  async updateResult(
+    id: string,
+    organizationId: string,
+    resultData: Prisma.InputJsonValue | undefined,
+    referenceNumber?: string,
+  ) {
     return await prisma.serviceRequest.update({
       where: {
         id,
         organizationId,
       },
       data: {
-        resultData: resultData || null,
+        resultData: resultData ?? PrismaRuntime.JsonNull,
         referenceNumber: referenceNumber || null,
       },
     });
   }
 
-  async addEvent(serviceRequestId: string, status: "CREATED" | "PROCESSING" | "SUCCESS" | "FAILED") {
+  async addEvent(serviceRequestId: string, status: RequestStatus) {
     return await prisma.serviceRequestEvent.create({
       data: {
         serviceRequestId,

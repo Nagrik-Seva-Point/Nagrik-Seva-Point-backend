@@ -14,7 +14,7 @@ export const organizationMiddleware = (): MiddlewareHandler<
       throw AppError.unauthorized("Authentication required");
     }
 
-    let organizationId: string | null = session.activeOrganizationId;
+    let organizationId: string | null = session.activeOrganizationId ?? null;
     if (!organizationId) {
       organizationId = c.req.header("X-Organization-Id") || null;
     }

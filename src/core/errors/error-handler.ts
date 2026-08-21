@@ -1,8 +1,11 @@
 import type { Context } from "hono";
+import type { ContextVariables } from "../../app/context.ts";
 import { AppError } from "./AppError.ts";
 import { logger } from "../logger/logger.ts";
 
-export const errorHandler = (err: Error, c: Context) => {
+type ErrorStatusCode = 400 | 401 | 403 | 404 | 409 | 500;
+
+export const errorHandler = (err: Error, c: Context<ContextVariables>) => {
   const requestId = c.get("requestId") || "unknown";
 
   if (err instanceof AppError) {
@@ -16,7 +19,7 @@ export const errorHandler = (err: Error, c: Context) => {
           requestId,
         },
       },
-      err.statusCode as any,
+      err.statusCode as ErrorStatusCode,
     );
   }
 

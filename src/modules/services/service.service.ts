@@ -1,5 +1,6 @@
 import { serviceRepository } from "./service.repository.ts";
 import { AppError } from "../../core/errors/AppError.ts";
+import { logger } from "../../core/logger/logger.ts";
 import type { QueryServiceInput } from "./service.schema.ts";
 
 export class ServiceService {
@@ -16,9 +17,8 @@ export class ServiceService {
   }
 
   async seedInitialServices() {
-    console.log("Seeding initial services catalogue...");
+    logger.info("Seeding initial services catalogue...");
 
-    // Seed PAN_FIND
     await serviceRepository.upsert("PAN_FIND", {
       name: "PAN Find (Aadhaar/DOB search)",
       description:
@@ -27,7 +27,6 @@ export class ServiceService {
       isActive: true,
     });
 
-    // Seed VOTER_SERVICE (for Phase 2 prep)
     await serviceRepository.upsert("VOTER_SERVICE", {
       name: "Voter ID Service",
       description: "Verify Voter ID card status and retrieve details",
@@ -35,7 +34,7 @@ export class ServiceService {
       isActive: true,
     });
 
-    console.log("Seeding completed successfully.");
+    logger.info("Seeding completed successfully.");
   }
 }
 

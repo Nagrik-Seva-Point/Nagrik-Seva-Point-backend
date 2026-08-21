@@ -1,4 +1,5 @@
 import type {
+  ServiceInput,
   ServiceIntegration,
   ServiceResult,
 } from "../integration.interface.ts";
@@ -8,7 +9,7 @@ import { logger } from "../../../core/logger/logger.ts";
 export class PanAdapter implements ServiceIntegration {
   readonly serviceCode = "PAN_FIND";
 
-  async validateInput(inputData: Record<string, any>): Promise<void> {
+  validateInput(inputData: ServiceInput): void {
     const { aadhaar, dob, name } = inputData;
 
     if (!aadhaar || typeof aadhaar !== "string" || !/^\d{12}$/.test(aadhaar)) {
@@ -33,14 +34,15 @@ export class PanAdapter implements ServiceIntegration {
     }
   }
 
-  async execute(inputData: Record<string, any>): Promise<ServiceResult> {
+  async execute(inputData: ServiceInput): Promise<ServiceResult> {
     logger.info(`Executing PAN Find API integration...`);
+    const name = String(inputData.name);
 
     // In Phase 1, we simulate response delay and mock behavior.
     // In production, we integrate our authorized reseller API here.
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
-    if (inputData.name.toLowerCase().includes("fail")) {
+    if (name.toLowerCase().includes("fail")) {
       logger.warn("Simulated provider failure triggered.");
       return {
         success: false,
@@ -60,7 +62,7 @@ export class PanAdapter implements ServiceIntegration {
       referenceNumber: refNum,
       resultData: {
         pan: mockPan,
-        name: inputData.name.toUpperCase(),
+        name: name.toUpperCase(),
         matchStatus: "EXACT_MATCH",
       },
     };
