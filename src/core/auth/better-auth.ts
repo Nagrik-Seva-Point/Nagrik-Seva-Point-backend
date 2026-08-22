@@ -20,6 +20,12 @@ export const auth = betterAuth({
         required: false,
         input: true,
       },
+      role: {
+        type: "string",
+        required: false,
+        defaultValue: "USER",
+        input: false, // Prevents regular users from setting role during signup
+      },
     },
   },
   socialProviders: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET

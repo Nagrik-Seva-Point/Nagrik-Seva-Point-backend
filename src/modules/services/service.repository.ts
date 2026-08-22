@@ -4,21 +4,27 @@ import type { QueryServiceInput } from "./service.schema.ts";
 
 export class ServiceRepository {
   async findMany(query: QueryServiceInput, isGuest = false) {
-    const { category } = query;
-    const where: Prisma.ServiceWhereInput = {
-      isActive: true,
-    };
-    if (category) {
-      where.category = category;
+    const { categoryId, categoryCode } = query;
+    const where: Prisma.ServiceWhereInput = {};
+
+    if (categoryId) {
+      where.categoryId = categoryId;
+    } else if (categoryCode) {
+      where.category = { code: categoryCode.toUpperCase() };
     }
+
+    // Explicit AccessMode visibility enforcement
     if (isGuest) {
       where.isPublicAllowed = true;
+    } else {
+      where.isRetailerAllowed = true;
     }
 
     return await prisma.service.findMany({
       where,
       include: {
         prices: true,
+        category: true,
       },
       orderBy: { name: "asc" },
     });
@@ -29,6 +35,7 @@ export class ServiceRepository {
       where: { code },
       include: {
         prices: true,
+        category: true,
       },
     });
   }
@@ -38,9 +45,10 @@ export class ServiceRepository {
     data: {
       name: string;
       description?: string;
-      category: string;
+      categoryId?: string | null;
       isActive?: boolean;
       isPublicAllowed?: boolean;
+      isRetailerAllowed?: boolean;
       requiresCustomer?: boolean;
       requiresUpload?: boolean;
       producesDocument?: boolean;
@@ -51,9 +59,10 @@ export class ServiceRepository {
       update: {
         name: data.name,
         description: data.description,
-        category: data.category,
+        categoryId: data.categoryId,
         isActive: data.isActive ?? true,
         isPublicAllowed: data.isPublicAllowed ?? true,
+        isRetailerAllowed: data.isRetailerAllowed ?? true,
         requiresCustomer: data.requiresCustomer ?? false,
         requiresUpload: data.requiresUpload ?? false,
         producesDocument: data.producesDocument ?? false,
@@ -62,12 +71,17 @@ export class ServiceRepository {
         code,
         name: data.name,
         description: data.description,
-        category: data.category,
+        categoryId: data.categoryId,
         isActive: data.isActive ?? true,
         isPublicAllowed: data.isPublicAllowed ?? true,
+        isRetailerAllowed: data.isRetailerAllowed ?? true,
         requiresCustomer: data.requiresCustomer ?? false,
         requiresUpload: data.requiresUpload ?? false,
         producesDocument: data.producesDocument ?? false,
+      },
+      include: {
+        prices: true,
+        category: true,
       },
     });
   }

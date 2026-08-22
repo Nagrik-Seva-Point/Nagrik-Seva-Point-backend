@@ -57,12 +57,19 @@ enum TransactionType {
   DEBIT
 }
 
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
 // --- BETTER-AUTH CORE & ORGANIZATION ---
 model User {
   id            String    @id
   name          String
   email         String    @unique
   phone         String?   @unique // 10-digit mobile number for Phone
+  role          UserRole  @default(USER)
   emailVerified Boolean   @default(true)
   image         String?
   createdAt     DateTime  @default(now())
@@ -169,24 +176,41 @@ model Customer {
   requests       ServiceRequest[]
 }
 
+// --- SERVICE CATEGORIES ---
+model ServiceCategory {
+  id           String    @id @default(uuid())
+  code         String    @unique // e.g. "IDENTITY_TAX", "ELECTION", "TRANSPORT"
+  name         String    // e.g. "Identity & Tax", "Electoral Services"
+  description  String?
+  icon         String?
+  displayOrder Int       @default(0)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  services     Service[]
+}
+
 // --- SERVICE CATALOGUE & CAPABILITIES ---
 model Service {
-  id               String         @id @default(uuid())
-  code             String         @unique // e.g., "PAN_FIND", "VOTER_VERIFY"
+  id               String           @id @default(uuid())
+  code             String           @unique // e.g., "PAN_FIND", "VOTER_VERIFY"
   name             String
   description      String?
-  category         String
-  isActive         Boolean        @default(true)
-  retailerPrice    Decimal?       @db.Decimal(10, 2) // Legacy compatibility
+  categoryId       String?
+  category         ServiceCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  isActive         Boolean          @default(true)
+  retailerPrice    Decimal?         @db.Decimal(10, 2) // Legacy compatibility
 
   // Service Capability Flags
-  isPublicAllowed  Boolean        @default(true)  // Whether guests can execute this service
-  requiresCustomer Boolean        @default(false) // Mandatory customer record for retailers
-  requiresUpload   Boolean        @default(false) // Photo / signature upload required
-  producesDocument Boolean        @default(false) // Generates downloadable PDF
+  isPublicAllowed   Boolean         @default(true)  // Whether GUEST mode can access
+  isRetailerAllowed Boolean         @default(true)  // Whether RETAILER mode can access
+  requiresCustomer  Boolean         @default(false) // Mandatory customer record for retailers
+  requiresUpload    Boolean         @default(false) // Photo / signature upload required
+  producesDocument  Boolean         @default(false) // Generates downloadable PDF
 
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   prices           ServicePrice[]
   requests         ServiceRequest[]
@@ -213,7 +237,7 @@ model ServiceRequest {
   id                String               @id @default(uuid())
   referenceNumber   String?              @unique // e.g., "REQ-20260821-ABC123"
   serviceId         String
-  service           Service              @relation(fields: [serviceId], references: [id])
+  service           Service              @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   accessMode        AccessMode           @default(RETAILER)
   pricingTier       PricingTier          @default(PARTNER)

@@ -2,15 +2,23 @@ import { Hono } from "hono";
 import { serviceService } from "./service.service.ts";
 import { pricingService } from "../pricing/pricing.service.ts";
 import {
+  type CreateServiceInput,
+  createServiceSchema,
   type QueryServiceInput,
   queryServiceSchema,
+  type UpdateServiceInput,
+  updateServiceSchema,
 } from "./service.schema.ts";
 import { validationMiddleware } from "../../middleware/validation.middleware.ts";
+import { requireAdmin } from "../../middleware/admin.middleware.ts";
 import type { ContextVariables } from "../../app/context.ts";
 
 export const serviceRoutes = new Hono<ContextVariables>();
 
-// Public & Retailer Service Catalog
+// ==========================================
+// 1. PUBLIC & RETAILER SERVICE CATALOG ROUTES
+// ==========================================
+
 serviceRoutes.get(
   "/",
   validationMiddleware(queryServiceSchema, "query"),
@@ -35,4 +43,45 @@ serviceRoutes.get("/:code/pricing", async (c) => {
   const code = c.req.param("code");
   const pricingMatrix = await pricingService.getPricingMatrix(code);
   return c.json({ success: true, data: pricingMatrix });
+});
+
+// ==========================================
+// 2. MASTER ADMIN SERVICE MANAGEMENT ROUTES
+// ==========================================
+
+export const adminServiceRoutes = new Hono<ContextVariables>();
+
+// Enforce admin privileges on all admin routes
+adminServiceRoutes.use("*", requireAdmin());
+
+adminServiceRoutes.get("/", async (c) => {
+  const services = await serviceService.getAllAdminServices();
+  return c.json({ success: true, data: services });
+});
+
+adminServiceRoutes.post(
+  "/",
+  validationMiddleware(createServiceSchema),
+  async (c) => {
+    const data = c.get("validData") as CreateServiceInput;
+    const result = await serviceService.createService(data);
+    return c.json({ success: true, data: result }, 201);
+  },
+);
+
+adminServiceRoutes.put(
+  "/:id",
+  validationMiddleware(updateServiceSchema),
+  async (c) => {
+    const id = c.req.param("id");
+    const data = c.get("validData") as UpdateServiceInput;
+    const result = await serviceService.updateService(id, data);
+    return c.json({ success: true, data: result });
+  },
+);
+
+adminServiceRoutes.delete("/:id", async (c) => {
+  const id = c.req.param("id");
+  const result = await serviceService.deleteService(id);
+  return c.json(result);
 });

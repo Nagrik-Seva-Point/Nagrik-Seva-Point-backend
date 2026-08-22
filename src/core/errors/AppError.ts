@@ -32,4 +32,8 @@ export class AppError extends Error {
   static internal(message: string, code = "INTERNAL_SERVER_ERROR") {
     return new AppError(message, 500, code);
   }
+
+  static badGateway(message: string, code = "BAD_GATEWAY", details?: unknown) {
+    return new AppError(message, 502, code, details);
+  }
 }

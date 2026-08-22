@@ -64,9 +64,13 @@ export class RequestService {
       );
     }
 
-    // Check capability: isPublicAllowed
+    // Check capability: isPublicAllowed vs isRetailerAllowed
     if (context.accessMode === "GUEST" && !service.isPublicAllowed) {
       throw AppError.forbidden("This service requires retailer login", "AUTH_REQUIRED");
+    }
+
+    if (context.accessMode === "RETAILER" && !service.isRetailerAllowed) {
+      throw AppError.forbidden("This service is not available for retailer workspace", "SERVICE_NOT_ALLOWED");
     }
 
     // Check capability: requiresCustomer

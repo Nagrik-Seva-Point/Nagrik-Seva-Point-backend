@@ -8,10 +8,34 @@ import { logger } from "../core/logger/logger.ts";
 export const requestContextMiddleware = (): MiddlewareHandler<ContextVariables> => {
   return async (c: Context<ContextVariables>, next) => {
     try {
-      // 1. Check for authenticated session
-      const session = await auth.api.getSession({
+      // 1. Check for authenticated session via Better Auth
+      let session = await auth.api.getSession({
         headers: c.req.raw.headers,
-      });
+      }).catch(() => null);
+
+      // Fallback: Check Bearer token or x-session-token in database if header was supplied
+      if (!session || !session.user) {
+        const authHeader = c.req.header("Authorization");
+        const bearerToken = authHeader?.startsWith("Bearer ")
+          ? authHeader.slice(7).trim()
+          : null;
+        const customToken = c.req.header("x-session-token");
+        const token = bearerToken || customToken;
+
+        if (token) {
+          const sessionRecord = await prisma.session.findUnique({
+            where: { token },
+            include: { user: true },
+          });
+
+          if (sessionRecord && sessionRecord.expiresAt > new Date()) {
+            session = {
+              session: sessionRecord,
+              user: sessionRecord.user,
+            } as any;
+          }
+        }
+      }
 
       if (session && session.user) {
         // 2. Resolve Retailer Organization Context

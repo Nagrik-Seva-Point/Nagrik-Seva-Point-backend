@@ -9,6 +9,7 @@
     "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-sys"
   },
   "imports": {
+    "@types/qrcode": "npm:@types/qrcode@^1.5.6",
     "hono": "npm:hono@^4.6.0",
     "hono/cors": "npm:hono@^4.6.0/cors",
     "hono/logger": "npm:hono@^4.6.0/logger",
@@ -16,8 +17,10 @@
     "better-auth/plugins": "npm:better-auth@^1.1.0/plugins",
     "@prisma/client": "npm:@prisma/client@7.9.1",
     "@prisma/adapter-pg": "npm:@prisma/adapter-pg@7.9.1",
+    "pdf-lib": "npm:pdf-lib@^1.17.1",
     "pg": "npm:pg@^8.13.0",
     "@types/pg": "npm:@types/pg@^8.11.10",
+    "qrcode": "npm:qrcode@^1.5.4",
     "zod": "npm:zod@^3.23.8",
     "dotenv": "npm:dotenv@^16.4.5"
   },
