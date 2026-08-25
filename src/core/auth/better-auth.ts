@@ -5,6 +5,24 @@ import { prisma } from "../db/prisma";
 import { bearer, organization } from "better-auth/plugins";
 import { env } from "../config/env";
 
+const getCookieDomain = (): string | undefined => {
+  try {
+    const url = new URL(env.BETTER_AUTH_URL);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return undefined;
+    }
+    const parts = url.hostname.split(".");
+    if (parts.length >= 2) {
+      return `.${parts.slice(-2).join(".")}`;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const cookieDomain = getCookieDomain();
+
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   database: prismaAdapter(prisma, {
@@ -63,9 +81,15 @@ export const auth = betterAuth({
   },
   advanced: {
     trustHost: true,
+    crossSubDomainCookies: cookieDomain
+      ? {
+        enabled: true,
+        domain: cookieDomain,
+      }
+      : undefined,
     defaultCookieAttributes: {
-      domain: ".nagrikseva.in",
-      sameSite: "none",
+      domain: cookieDomain,
+      sameSite: cookieDomain ? "lax" : "none",
       secure: true,
       httpOnly: true,
       path: "/",
@@ -79,3 +103,4 @@ export const auth = betterAuth({
 
 type Auth = typeof auth;
 export type { Auth };
+

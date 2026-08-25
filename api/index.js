@@ -6514,6 +6514,22 @@ var prisma = globalCtx.__prismaClient;
 
 // src/core/auth/better-auth.ts
 import { bearer, organization } from "better-auth/plugins";
+var getCookieDomain = () => {
+  try {
+    const url = new URL(env.BETTER_AUTH_URL);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return void 0;
+    }
+    const parts = url.hostname.split(".");
+    if (parts.length >= 2) {
+      return `.${parts.slice(-2).join(".")}`;
+    }
+    return void 0;
+  } catch {
+    return void 0;
+  }
+};
+var cookieDomain = getCookieDomain();
 var auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   database: prismaAdapter(prisma, {
@@ -6568,9 +6584,13 @@ var auth = betterAuth({
   },
   advanced: {
     trustHost: true,
+    crossSubDomainCookies: cookieDomain ? {
+      enabled: true,
+      domain: cookieDomain
+    } : void 0,
     defaultCookieAttributes: {
-      domain: ".nagrikseva.in",
-      sameSite: "none",
+      domain: cookieDomain,
+      sameSite: cookieDomain ? "lax" : "none",
       secure: true,
       httpOnly: true,
       path: "/"
