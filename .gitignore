@@ -21,3 +21,4 @@ Thumbs.db
 /tests
 /scripts
 /src/seed.ts
+deno.lock

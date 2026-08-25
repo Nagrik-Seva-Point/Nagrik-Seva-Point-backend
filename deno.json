@@ -25,6 +25,7 @@
     "dotenv": "npm:dotenv@^16.4.5"
   },
   "nodeModulesDir": true,
+  "lock": false,
   "unstable": ["sloppy-imports"],
   "compilerOptions": {
     "lib": ["deno.window", "deno.ns"],
