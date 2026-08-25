@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "prisma generate && esbuild api/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=api/index.js --external:@prisma/client --external:@prisma/adapter-pg --external:pg --external:better-auth",
+    "build": "prisma generate",
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit"
   },
