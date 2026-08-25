@@ -3,15 +3,18 @@
   "specifiers": {
     "npm:@prisma/adapter-pg@7.9.1": "7.9.1",
     "npm:@prisma/client@7.9.1": "7.9.1_prisma@7.9.1__typescript@5.9.3_typescript@5.9.3",
+    "npm:@types/node@^20.14.0": "20.19.43",
     "npm:@types/pg@^8.11.10": "8.21.0",
     "npm:@types/qrcode@^1.5.6": "1.5.6",
     "npm:better-auth@^1.1.0": "1.6.28_@prisma+client@7.9.1__prisma@7.9.1___typescript@5.9.3__typescript@5.9.3_pg@8.23.0_prisma@7.9.1__typescript@5.9.3_react@19.2.8_react-dom@19.2.8__react@19.2.8",
     "npm:dotenv@^16.4.5": "16.6.1",
     "npm:hono@^4.6.0": "4.13.2",
     "npm:pdf-lib@^1.17.1": "1.17.1",
+    "npm:pg@*": "8.23.0",
     "npm:pg@^8.13.0": "8.23.0",
     "npm:prisma@7.9.1": "7.9.1_typescript@5.9.3",
     "npm:qrcode@^1.5.4": "1.5.4",
+    "npm:typescript@^5.4.0": "5.9.3",
     "npm:zod@^3.23.8": "3.25.76"
   },
   "npm": {
@@ -1300,6 +1303,24 @@
       "npm:pg@^8.13.0",
       "npm:qrcode@^1.5.4",
       "npm:zod@^3.23.8"
-    ]
+    ],
+    "packageJson": {
+      "dependencies": [
+        "npm:@prisma/adapter-pg@7.9.1",
+        "npm:@prisma/client@7.9.1",
+        "npm:@types/node@^20.14.0",
+        "npm:@types/pg@^8.11.10",
+        "npm:@types/qrcode@^1.5.6",
+        "npm:better-auth@^1.1.0",
+        "npm:dotenv@^16.4.5",
+        "npm:hono@^4.6.0",
+        "npm:pdf-lib@^1.17.1",
+        "npm:pg@^8.13.0",
+        "npm:prisma@7.9.1",
+        "npm:qrcode@^1.5.4",
+        "npm:typescript@^5.4.0",
+        "npm:zod@^3.23.8"
+      ]
+    }
   }
 }

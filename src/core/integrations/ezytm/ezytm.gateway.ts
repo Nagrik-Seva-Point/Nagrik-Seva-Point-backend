@@ -8,6 +8,7 @@ export class EzytmGateway {
   private apiUserId: string;
   private apiPassword: string;
   private apiMode: string;
+  private proxyUrl?: string;
 
   constructor() {
     this.baseUrl = (getEnvVar("EZYTM_BASE_URL") || "https://planapi.in").replace(/\/+$/, "");
@@ -15,6 +16,7 @@ export class EzytmGateway {
     this.apiUserId = (getEnvVar("EZYTM_API_USER_ID") || getEnvVar("PLANAPI_API_USER_ID") || "").replace(/["']/g, "").trim();
     this.apiPassword = (getEnvVar("EZYTM_API_PASSWORD") || getEnvVar("PLANAPI_API_PASSWORD") || "").replace(/["']/g, "").trim();
     this.apiMode = (getEnvVar("EZYTM_API_MODE") || "1").replace(/["']/g, "").trim();
+    this.proxyUrl = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY");
   }
 
   public isConfigured(): boolean {
@@ -86,7 +88,7 @@ export class EzytmGateway {
     }
 
     const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
-    const headers = {
+    const headers: Record<string, string> = {
       "TokenID": this.tokenId,
       "ApiUserID": this.apiUserId,
       "ApiPassword": this.apiPassword,
