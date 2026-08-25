@@ -8973,13 +8973,6 @@ app.all("/api/auth/*", async (c) => {
   });
 });
 app.route(CONSTANTS.API_PREFIX, apiRouter);
-app.get("/", (c) => {
-  return c.json({
-    name: "Nagrik Seva API",
-    status: "ok",
-    health: "/health"
-  });
-});
 app.get("/health", (c) => {
   return c.json({
     status: "ok",
