@@ -24,7 +24,7 @@
     "zod": "npm:zod@^3.23.8",
     "dotenv": "npm:dotenv@^16.4.5"
   },
-  "nodeModulesDir": "auto",
+  "nodeModulesDir": true,
   "unstable": ["sloppy-imports"],
   "compilerOptions": {
     "lib": ["deno.window", "deno.ns"],
