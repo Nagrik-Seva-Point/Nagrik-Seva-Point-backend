@@ -64,6 +64,7 @@ export const auth = betterAuth({
   advanced: {
     trustHost: true,
     defaultCookieAttributes: {
+      domain: ".nagrikseva.in",
       sameSite: "none",
       secure: true,
       httpOnly: true,
