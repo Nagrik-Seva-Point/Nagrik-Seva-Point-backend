@@ -4,7 +4,7 @@
   "description": "Nagrik Seva Platform Backend API",
   "type": "module",
   "scripts": {
-    "build": "prisma generate",
+    "build": "prisma generate && npx esbuild api/index.ts --bundle --platform=node --target=node24 --format=esm --outfile=api/index.js --external:@prisma/client --external:pg --external:@prisma/adapter-pg && rm api/index.ts",
     "test-build": "prisma generate && tsc --noEmit",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
