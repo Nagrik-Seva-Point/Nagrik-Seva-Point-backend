@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { validationMiddleware } from "../../middleware/validation.middleware.ts";
-import { authService } from "./auth.service.ts";
+import { validationMiddleware } from "../../middleware/validation.middleware";
+import { authService } from "./auth.service";
 import {
   type CheckAvailabilityInput,
   checkAvailabilitySchema,
@@ -8,8 +8,8 @@ import {
   registerRetailerSchema,
   type LoginInput,
   loginSchema,
-} from "./auth.schema.ts";
-import type { ContextVariables } from "../../app/context.ts";
+} from "./auth.schema";
+import type { ContextVariables } from "../../app/context";
 
 export const authRoutes = new Hono<ContextVariables>();
 

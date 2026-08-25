@@ -1,8 +1,8 @@
-import { ezytmGateway } from "./ezytm.gateway.ts";
+import { ezytmGateway } from "./ezytm.gateway";
 import type {
   AadharToPanFindResponse,
   PanDetailsResponse,
-} from "./ezytm.types.ts";
+} from "./ezytm.types";
 
 export class EzytmPanGateway {
   /**

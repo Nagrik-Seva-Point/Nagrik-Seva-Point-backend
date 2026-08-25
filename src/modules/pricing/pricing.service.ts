@@ -1,6 +1,6 @@
-import { pricingRepository } from "./pricing.repository.ts";
-import { AppError } from "../../core/errors/AppError.ts";
-import type { PricingTier } from "../../core/types/context.types.ts";
+import { pricingRepository } from "./pricing.repository";
+import { AppError } from "../../core/errors/AppError";
+import type { PricingTier } from "../../core/types/context.types";
 
 export interface PriceSnapshot {
   amount: number;

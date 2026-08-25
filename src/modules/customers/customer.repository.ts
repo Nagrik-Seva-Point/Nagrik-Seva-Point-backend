@@ -1,10 +1,10 @@
-import { prisma } from "../../core/db/prisma.ts";
+import { prisma } from "../../core/db/prisma";
 import type { Prisma } from "@prisma/client";
 import type {
   CreateCustomerInput,
   QueryCustomerInput,
   UpdateCustomerInput,
-} from "./customer.schema.ts";
+} from "./customer.schema";
 
 export class CustomerRepository {
   async create(organizationId: string, data: CreateCustomerInput) {

@@ -1,6 +1,6 @@
-import { getEnvVar } from "../../config/env-helper.ts";
-import { AppError } from "../../errors/AppError.ts";
-import { logger } from "../../logger/logger.ts";
+import { getEnvVar } from "../../config/env-helper";
+import { AppError } from "../../errors/AppError";
+import { logger } from "../../logger/logger";
 
 export class EzytmGateway {
   private baseUrl: string;

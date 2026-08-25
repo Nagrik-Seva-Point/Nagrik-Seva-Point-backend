@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { validationMiddleware } from "../../middleware/validation.middleware.ts";
-import { requestService } from "./request.service.ts";
+import { validationMiddleware } from "../../middleware/validation.middleware";
+import { requestService } from "./request.service";
 import {
   type CreateRequestInput,
   createRequestSchema,
@@ -8,8 +8,8 @@ import {
   confirmRequestPaymentSchema,
   type QueryRequestInput,
   queryRequestSchema,
-} from "./request.schema.ts";
-import type { ContextVariables } from "../../app/context.ts";
+} from "./request.schema";
+import type { ContextVariables } from "../../app/context";
 
 export const requestRoutes = new Hono<ContextVariables>();
 

@@ -1,13 +1,13 @@
-import { serviceRepository } from "./service.repository.ts";
-import { prisma } from "../../core/db/prisma.ts";
-import { AppError } from "../../core/errors/AppError.ts";
-import { logger } from "../../core/logger/logger.ts";
+import { serviceRepository } from "./service.repository";
+import { prisma } from "../../core/db/prisma";
+import { AppError } from "../../core/errors/AppError";
+import { logger } from "../../core/logger/logger";
 import type {
   CreateServiceInput,
   QueryServiceInput,
   UpdateServiceInput,
-} from "./service.schema.ts";
-import type { RequestContext } from "../../core/types/context.types.ts";
+} from "./service.schema";
+import type { RequestContext } from "../../core/types/context.types";
 import type { PricingTier } from "@prisma/client";
 
 export class ServiceService {

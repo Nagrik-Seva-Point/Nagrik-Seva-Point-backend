@@ -1,7 +1,7 @@
-import { prisma } from "../core/db/prisma.ts";
-import { AppError } from "../core/errors/AppError.ts";
+import { prisma } from "../core/db/prisma";
+import { AppError } from "../core/errors/AppError";
 import type { MiddlewareHandler } from "hono";
-import type { ContextVariables } from "../app/context.ts";
+import type { ContextVariables } from "../app/context";
 
 export const organizationMiddleware = (): MiddlewareHandler<
   ContextVariables

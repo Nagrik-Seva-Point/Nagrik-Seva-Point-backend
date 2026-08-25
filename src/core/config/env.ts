@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getEnvVar } from "./env-helper.ts";
+import { getEnvVar } from "./env-helper";
 
 const envSchema = z.object({
   DATABASE_URL: z.string().url(),

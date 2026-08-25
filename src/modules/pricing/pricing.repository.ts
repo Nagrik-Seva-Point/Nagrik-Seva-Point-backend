@@ -1,5 +1,5 @@
-import { prisma } from "../../core/db/prisma.ts";
-import type { PricingTier } from "../../core/types/context.types.ts";
+import { prisma } from "../../core/db/prisma";
+import type { PricingTier } from "../../core/types/context.types";
 
 export class PricingRepository {
   async findPrice(serviceId: string, pricingTier: PricingTier) {

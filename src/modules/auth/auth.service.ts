@@ -1,12 +1,12 @@
-import { prisma } from "../../core/db/prisma.ts";
-import { auth } from "../../core/auth/better-auth.ts";
-import { AppError } from "../../core/errors/AppError.ts";
-import { logger } from "../../core/logger/logger.ts";
+import { prisma } from "../../core/db/prisma";
+import { auth } from "../../core/auth/better-auth";
+import { AppError } from "../../core/errors/AppError";
+import { logger } from "../../core/logger/logger";
 import type {
   CheckAvailabilityInput,
   RegisterRetailerInput,
   LoginInput,
-} from "./auth.schema.ts";
+} from "./auth.schema";
 
 export class AuthService {
   /**

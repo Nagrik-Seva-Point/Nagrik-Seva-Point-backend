@@ -1,7 +1,7 @@
-import { ezytmPanGateway } from "../../core/integrations/ezytm/ezytm-pan.gateway.ts";
-import { AppError } from "../../core/errors/AppError.ts";
-import { logger } from "../../core/logger/logger.ts";
-import type { PanDetailsOutput, PanFindOutput } from "./pan.schema.ts";
+import { ezytmPanGateway } from "../../core/integrations/ezytm/ezytm-pan.gateway";
+import { AppError } from "../../core/errors/AppError";
+import { logger } from "../../core/logger/logger";
+import type { PanDetailsOutput, PanFindOutput } from "./pan.schema";
 
 export class PanService {
   /**

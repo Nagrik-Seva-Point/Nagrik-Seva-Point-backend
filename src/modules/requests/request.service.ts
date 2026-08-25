@@ -1,17 +1,17 @@
-import { requestRepository } from "./request.repository.ts";
-import { customerService } from "../customers/customer.service.ts";
-import { serviceService } from "../services/service.service.ts";
-import { pricingService } from "../pricing/pricing.service.ts";
-import { paymentService } from "../payments/payment.service.ts";
-import { serviceEngine } from "../engine/service-engine.ts";
-import { AppError } from "../../core/errors/AppError.ts";
-import { logger } from "../../core/logger/logger.ts";
+import { requestRepository } from "./request.repository";
+import { customerService } from "../customers/customer.service";
+import { serviceService } from "../services/service.service";
+import { pricingService } from "../pricing/pricing.service";
+import { paymentService } from "../payments/payment.service";
+import { serviceEngine } from "../engine/service-engine";
+import { AppError } from "../../core/errors/AppError";
+import { logger } from "../../core/logger/logger";
 import type {
   CreateRequestInput,
   ConfirmRequestPaymentInput,
   QueryRequestInput,
-} from "./request.schema.ts";
-import type { RequestContext } from "../../core/types/context.types.ts";
+} from "./request.schema";
+import type { RequestContext } from "../../core/types/context.types";
 
 export class RequestService {
   async getRequestById(context: RequestContext, id: string) {

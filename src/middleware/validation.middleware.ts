@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { ZodSchema } from "zod";
-import { AppError } from "../core/errors/AppError.ts";
+import { AppError } from "../core/errors/AppError";
 
 export const validationMiddleware = (
   schema: ZodSchema,

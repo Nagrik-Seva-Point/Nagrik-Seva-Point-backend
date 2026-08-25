@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
-import type { ContextVariables } from "../app/context.ts";
-import { AppError } from "../core/errors/AppError.ts";
+import type { ContextVariables } from "../app/context";
+import { AppError } from "../core/errors/AppError";
 
 export const requireAdmin = (): MiddlewareHandler<ContextVariables> => {
   return async (c: Context<ContextVariables>, next) => {

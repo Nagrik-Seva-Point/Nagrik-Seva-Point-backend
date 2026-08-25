@@ -1,7 +1,7 @@
-import { prisma } from "../../core/db/prisma.ts";
+import { prisma } from "../../core/db/prisma";
 import type { Prisma, RequestStatus } from "@prisma/client";
-import type { QueryRequestInput } from "./request.schema.ts";
-import type { RequestContext } from "../../core/types/context.types.ts";
+import type { QueryRequestInput } from "./request.schema";
+import type { RequestContext } from "../../core/types/context.types";
 
 export class RequestRepository {
   async findById(id: string) {

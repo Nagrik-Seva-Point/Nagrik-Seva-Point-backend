@@ -1,6 +1,6 @@
-import { prisma } from "../../core/db/prisma.ts";
+import { prisma } from "../../core/db/prisma";
 import type { Prisma } from "@prisma/client";
-import type { QueryServiceInput } from "./service.schema.ts";
+import type { QueryServiceInput } from "./service.schema";
 
 export class ServiceRepository {
   async findMany(query: QueryServiceInput, isGuest = false) {

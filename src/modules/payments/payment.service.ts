@@ -1,7 +1,7 @@
-import { paymentRepository } from "./payment.repository.ts";
-import { AppError } from "../../core/errors/AppError.ts";
-import { logger } from "../../core/logger/logger.ts";
-import type { RequestContext } from "../../core/types/context.types.ts";
+import { paymentRepository } from "./payment.repository";
+import { AppError } from "../../core/errors/AppError";
+import { logger } from "../../core/logger/logger";
+import type { RequestContext } from "../../core/types/context.types";
 
 export class PaymentService {
   /**

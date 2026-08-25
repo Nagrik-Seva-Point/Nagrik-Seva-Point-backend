@@ -1,6 +1,6 @@
-import { panService } from "../pan/pan.service.ts";
-import { AppError } from "../../core/errors/AppError.ts";
-import { logger } from "../../core/logger/logger.ts";
+import { panService } from "../pan/pan.service";
+import { AppError } from "../../core/errors/AppError";
+import { logger } from "../../core/logger/logger";
 
 export interface ServiceExecutionResult {
   success: boolean;

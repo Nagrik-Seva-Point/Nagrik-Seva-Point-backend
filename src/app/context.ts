@@ -1,6 +1,6 @@
 import type { Organization } from "@prisma/client";
-import type { auth } from "../core/auth/better-auth.ts";
-import type { RequestContext } from "../core/types/context.types.ts";
+import type { auth } from "../core/auth/better-auth";
+import type { RequestContext } from "../core/types/context.types";
 
 type AuthSession = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
 

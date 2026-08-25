@@ -1,7 +1,7 @@
 import type { Context } from "hono";
-import type { ContextVariables } from "../../app/context.ts";
-import { AppError } from "./AppError.ts";
-import { logger } from "../logger/logger.ts";
+import type { ContextVariables } from "../../app/context";
+import { AppError } from "./AppError";
+import { logger } from "../logger/logger";
 
 type ErrorStatusCode = 400 | 401 | 403 | 404 | 409 | 500;
 

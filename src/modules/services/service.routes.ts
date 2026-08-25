@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { serviceService } from "./service.service.ts";
-import { pricingService } from "../pricing/pricing.service.ts";
+import { serviceService } from "./service.service";
+import { pricingService } from "../pricing/pricing.service";
 import {
   type CreateServiceInput,
   createServiceSchema,
@@ -8,10 +8,10 @@ import {
   queryServiceSchema,
   type UpdateServiceInput,
   updateServiceSchema,
-} from "./service.schema.ts";
-import { validationMiddleware } from "../../middleware/validation.middleware.ts";
-import { requireAdmin } from "../../middleware/admin.middleware.ts";
-import type { ContextVariables } from "../../app/context.ts";
+} from "./service.schema";
+import { validationMiddleware } from "../../middleware/validation.middleware";
+import { requireAdmin } from "../../middleware/admin.middleware";
+import type { ContextVariables } from "../../app/context";
 
 export const serviceRoutes = new Hono<ContextVariables>();
 

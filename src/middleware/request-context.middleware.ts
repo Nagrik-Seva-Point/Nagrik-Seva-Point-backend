@@ -1,9 +1,9 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { auth } from "../core/auth/better-auth.ts";
-import { prisma } from "../core/db/prisma.ts";
-import type { ContextVariables } from "../app/context.ts";
-import type { RequestContext } from "../core/types/context.types.ts";
-import { logger } from "../core/logger/logger.ts";
+import { auth } from "../core/auth/better-auth";
+import { prisma } from "../core/db/prisma";
+import type { ContextVariables } from "../app/context";
+import type { RequestContext } from "../core/types/context.types";
+import { logger } from "../core/logger/logger";
 
 export const requestContextMiddleware = (): MiddlewareHandler<ContextVariables> => {
   return async (c: Context<ContextVariables>, next) => {

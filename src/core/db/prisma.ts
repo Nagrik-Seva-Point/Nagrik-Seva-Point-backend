@@ -1,7 +1,7 @@
 import pkg from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
-import { getEnvVar } from "../config/env-helper.ts";
+import { getEnvVar } from "../config/env-helper";
 
 const { PrismaClient } = pkg;
 

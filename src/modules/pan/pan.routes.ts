@@ -1,13 +1,13 @@
 import { Hono } from "hono";
-import { validationMiddleware } from "../../middleware/validation.middleware.ts";
-import { panService } from "./pan.service.ts";
+import { validationMiddleware } from "../../middleware/validation.middleware";
+import { panService } from "./pan.service";
 import {
   type FindPanInput,
   findPanSchema,
   type PanDetailsInput,
   panDetailsSchema,
-} from "./pan.schema.ts";
-import type { ContextVariables } from "../../app/context.ts";
+} from "./pan.schema";
+import type { ContextVariables } from "../../app/context";
 
 export const panRoutes = new Hono<ContextVariables>();
 

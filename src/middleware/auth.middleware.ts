@@ -1,7 +1,7 @@
-import { auth } from "../core/auth/better-auth.ts";
-import { AppError } from "../core/errors/AppError.ts";
+import { auth } from "../core/auth/better-auth";
+import { AppError } from "../core/errors/AppError";
 import type { MiddlewareHandler } from "hono";
-import type { ContextVariables } from "../app/context.ts";
+import type { ContextVariables } from "../app/context";
 
 export const authMiddleware = (): MiddlewareHandler<ContextVariables> => {
   return async (c, next) => {

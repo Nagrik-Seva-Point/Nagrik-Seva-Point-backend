@@ -1,14 +1,14 @@
 import { Hono } from "hono";
-import { categoryService } from "./category.service.ts";
+import { categoryService } from "./category.service";
 import {
   type CreateCategoryInput,
   createCategorySchema,
   type UpdateCategoryInput,
   updateCategorySchema,
-} from "./category.schema.ts";
-import { validationMiddleware } from "../../middleware/validation.middleware.ts";
-import { requireAdmin } from "../../middleware/admin.middleware.ts";
-import type { ContextVariables } from "../../app/context.ts";
+} from "./category.schema";
+import { validationMiddleware } from "../../middleware/validation.middleware";
+import { requireAdmin } from "../../middleware/admin.middleware";
+import type { ContextVariables } from "../../app/context";
 
 export const categoryRouter = new Hono<ContextVariables>();
 export const adminCategoryRouter = new Hono<ContextVariables>();

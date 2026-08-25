@@ -1,4 +1,4 @@
-import { env } from "./env.ts";
+import { env } from "./env";
 
 export const CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
 

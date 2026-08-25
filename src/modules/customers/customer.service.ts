@@ -1,10 +1,10 @@
-import { customerRepository } from "./customer.repository.ts";
-import { AppError } from "../../core/errors/AppError.ts";
+import { customerRepository } from "./customer.repository";
+import { AppError } from "../../core/errors/AppError";
 import type {
   CreateCustomerInput,
   QueryCustomerInput,
   UpdateCustomerInput,
-} from "./customer.schema.ts";
+} from "./customer.schema";
 
 export class CustomerService {
   async createCustomer(organizationId: string, data: CreateCustomerInput) {

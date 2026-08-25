@@ -1,18 +1,18 @@
 import { Hono } from "hono";
-import { authRoutes } from "../modules/auth/auth.routes.ts";
-import { customerRoutes } from "../modules/customers/customer.routes.ts";
+import { authRoutes } from "../modules/auth/auth.routes";
+import { customerRoutes } from "../modules/customers/customer.routes";
 import {
   adminServiceRoutes,
   serviceRoutes,
-} from "../modules/services/service.routes.ts";
+} from "../modules/services/service.routes";
 import {
   adminCategoryRouter,
   categoryRouter,
-} from "../modules/categories/category.routes.ts";
-import { requestRoutes } from "../modules/requests/request.routes.ts";
-import { panRoutes } from "../modules/pan/pan.routes.ts";
-import { requestContextMiddleware } from "../middleware/request-context.middleware.ts";
-import type { ContextVariables } from "./context.ts";
+} from "../modules/categories/category.routes";
+import { requestRoutes } from "../modules/requests/request.routes";
+import { panRoutes } from "../modules/pan/pan.routes";
+import { requestContextMiddleware } from "../middleware/request-context.middleware";
+import type { ContextVariables } from "./context";
 
 export const apiRouter = new Hono<ContextVariables>();
 

@@ -1,10 +1,10 @@
-import { categoryRepository } from "./category.repository.ts";
-import { AppError } from "../../core/errors/AppError.ts";
-import { logger } from "../../core/logger/logger.ts";
+import { categoryRepository } from "./category.repository";
+import { AppError } from "../../core/errors/AppError";
+import { logger } from "../../core/logger/logger";
 import type {
   CreateCategoryInput,
   UpdateCategoryInput,
-} from "./category.schema.ts";
+} from "./category.schema";
 
 export class CategoryService {
   async getCategories(isActive = true) {

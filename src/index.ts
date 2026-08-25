@@ -1,6 +1,6 @@
-import { app } from "./app/app.ts";
-import { env } from "./core/config/env.ts";
-import { logger } from "./core/logger/logger.ts";
+import { app } from "./app/app";
+import { env } from "./core/config/env";
+import { logger } from "./core/logger/logger";
 
 logger.info(`Starting Nagrik Seva backend on port ${env.PORT}...`);
 

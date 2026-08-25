@@ -1,9 +1,9 @@
-import { prisma } from "../../core/db/prisma.ts";
+import { prisma } from "../../core/db/prisma";
 import type { Prisma } from "@prisma/client";
 import type {
   CreateCategoryInput,
   UpdateCategoryInput,
-} from "./category.schema.ts";
+} from "./category.schema";
 
 export class CategoryRepository {
   async findMany(isActive?: boolean) {

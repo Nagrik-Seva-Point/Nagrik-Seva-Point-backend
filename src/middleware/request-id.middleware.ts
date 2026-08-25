@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import type { ContextVariables } from "../app/context.ts";
+import type { ContextVariables } from "../app/context";
 
 export const requestIdMiddleware = (): MiddlewareHandler<ContextVariables> => {
   return async (c, next) => {

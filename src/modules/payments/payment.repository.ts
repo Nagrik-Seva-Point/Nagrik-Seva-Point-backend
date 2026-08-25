@@ -1,4 +1,4 @@
-import { prisma } from "../../core/db/prisma.ts";
+import { prisma } from "../../core/db/prisma";
 import type { PaymentMethod, PaymentStatus } from "@prisma/client";
 
 export class PaymentRepository {

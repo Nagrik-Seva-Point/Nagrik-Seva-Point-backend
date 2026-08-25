@@ -1,17 +1,17 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { CONSTANTS } from "../core/config/constants.ts";
-import { errorHandler } from "../core/errors/error-handler.ts";
-import { requestIdMiddleware } from "../middleware/request-id.middleware.ts";
+import { CONSTANTS } from "../core/config/constants";
+import { errorHandler } from "../core/errors/error-handler";
+import { requestIdMiddleware } from "../middleware/request-id.middleware";
 import {
   CORS_ALLOW_HEADERS,
   CORS_ALLOW_METHODS,
   getAllowedCorsOrigin,
-} from "../core/config/cors.ts";
-import { auth } from "../core/auth/better-auth.ts";
-import { apiRouter } from "./routes.ts";
-import type { ContextVariables } from "./context.ts";
+} from "../core/config/cors";
+import { auth } from "../core/auth/better-auth";
+import { apiRouter } from "./routes";
+import type { ContextVariables } from "./context";
 
 export const app = new Hono<ContextVariables>();
 

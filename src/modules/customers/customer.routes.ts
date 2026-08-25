@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import { authMiddleware } from "../../middleware/auth.middleware.ts";
-import { organizationMiddleware } from "../../middleware/organization.middleware.ts";
-import { validationMiddleware } from "../../middleware/validation.middleware.ts";
-import { customerService } from "./customer.service.ts";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { organizationMiddleware } from "../../middleware/organization.middleware";
+import { validationMiddleware } from "../../middleware/validation.middleware";
+import { customerService } from "./customer.service";
 import {
   type CreateCustomerInput,
   createCustomerSchema,
@@ -10,8 +10,8 @@ import {
   queryCustomerSchema,
   type UpdateCustomerInput,
   updateCustomerSchema,
-} from "./customer.schema.ts";
-import type { ContextVariables } from "../../app/context.ts";
+} from "./customer.schema";
+import type { ContextVariables } from "../../app/context";
 
 export const customerRoutes = new Hono<ContextVariables>();
 
