@@ -1,8 +1,9 @@
-import { handle } from "hono/vercel";
 import { app } from "./app/app";
 
 export const config = {
   runtime: "nodejs",
 };
 
-export default handle(app);
+export default (req: Request) => {
+  return app.fetch(req);
+};
