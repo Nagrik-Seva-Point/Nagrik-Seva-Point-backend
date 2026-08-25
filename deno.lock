@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "npm:@hono/node-server@^1.13.0": "1.19.17_hono@4.13.2",
     "npm:@prisma/adapter-pg@7.9.1": "7.9.1",
     "npm:@prisma/client@7.9.1": "7.9.1_prisma@7.9.1__typescript@5.9.3_typescript@5.9.3",
     "npm:@types/node@^20.14.0": "20.19.43",
@@ -115,6 +116,12 @@
     },
     "@electric-sql/pglite@0.4.3": {
       "integrity": "sha512-ichuWTgtd4mOM1G4SpyGJa5trT03lWbMypDV0fUXUCXg5hiHqVAz/bZyV68NqmkLB7WcYmj1RMJVSp8HV/v/ZQ=="
+    },
+    "@hono/node-server@1.19.17_hono@4.13.2": {
+      "integrity": "sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==",
+      "dependencies": [
+        "hono"
+      ]
     },
     "@noble/ciphers@2.3.0": {
       "integrity": "sha512-Clu/xdfgVTf9o7ngLOURaxePwR0j8sjclKEtVij10/jGulwFsPWCvvRgG/XjUVf8Nei+jLG6uwyXzUTGY1DQrw=="
@@ -1306,6 +1313,7 @@
     ],
     "packageJson": {
       "dependencies": [
+        "npm:@hono/node-server@^1.13.0",
         "npm:@prisma/adapter-pg@7.9.1",
         "npm:@prisma/client@7.9.1",
         "npm:@types/node@^20.14.0",
