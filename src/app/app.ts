@@ -60,6 +60,14 @@ app.all("/api/auth/*", async (c) => {
 // API Routes (Prefix: /api/v1)
 app.route(CONSTANTS.API_PREFIX, apiRouter);
 
+app.get("/", (c) => {
+  return c.json({
+    name: "Nagrik Seva API",
+    status: "ok",
+    health: "/health",
+  });
+});
+
 // Health Check
 app.get("/health", (c) => {
   return c.json({
