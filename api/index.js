@@ -7125,6 +7125,7 @@ var prisma = new PrismaClient({ adapter });
 // src/core/auth/better-auth.ts
 import { bearer, organization } from "better-auth/plugins";
 var auth = betterAuth({
+  baseURL: env.BETTER_AUTH_URL,
   database: prismaAdapter(prisma, {
     provider: "postgresql"
   }),
@@ -7176,6 +7177,7 @@ var auth = betterAuth({
     })
   },
   advanced: {
+    trustHost: true,
     defaultCookieAttributes: {
       sameSite: "none",
       secure: true,

@@ -6,6 +6,7 @@ import { bearer, organization } from "better-auth/plugins";
 import { env } from "../config/env";
 
 export const auth = betterAuth({
+  baseURL: env.BETTER_AUTH_URL,
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
@@ -61,6 +62,7 @@ export const auth = betterAuth({
     }),
   },
   advanced: {
+    trustHost: true,
     defaultCookieAttributes: {
       sameSite: "none",
       secure: true,
