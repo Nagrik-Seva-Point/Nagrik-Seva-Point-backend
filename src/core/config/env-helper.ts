@@ -1,18 +1,19 @@
+import "dotenv/config";
+
 /**
- * Safe utility to retrieve environment variables across multiple runtimes (Deno and Node.js/Vercel).
+ * Cross-runtime utility to retrieve environment variables (Node.js, Vercel, Deno).
  */
 export const getEnvVar = (key: string): string | undefined => {
+  if (typeof process !== "undefined" && process.env && process.env[key] !== undefined) {
+    return process.env[key];
+  }
+
   const runtime = globalThis as typeof globalThis & {
     Deno?: { env?: { get: (key: string) => string | undefined } };
-    process?: { env?: Record<string, string | undefined> };
   };
 
   if (runtime.Deno?.env) {
     return runtime.Deno.env.get(key);
-  }
-
-  if (runtime.process?.env) {
-    return runtime.process.env[key];
   }
 
   return undefined;

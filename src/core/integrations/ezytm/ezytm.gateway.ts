@@ -63,11 +63,11 @@ export class EzytmGateway {
     params: Record<string, string>,
   ): Promise<T> {
     if (!this.isConfigured()) {
-      // In local dev/test environment without vendor credentials:
-      if (
+      const isTestEnv =
         getEnvVar("DENO_TESTING") === "true" ||
-        getEnvVar("NODE_ENV") === "test" || !this.isConfigured()
-      ) {
+        getEnvVar("NODE_ENV") === "test";
+
+      if (isTestEnv) {
         logger.warn(`[EzyTM Gateway] Test simulation active for ${endpoint}`);
         if (endpoint.includes("AadharToPanFind")) {
           return {

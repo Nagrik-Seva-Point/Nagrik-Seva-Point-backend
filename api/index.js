@@ -2196,10 +2196,10 @@ var cors = (options) => {
 
 // node_modules/.deno/hono@4.13.2/node_modules/hono/dist/utils/color.js
 function getColorEnabled() {
-  const { process, Deno } = globalThis;
-  const isNoColor = typeof Deno?.noColor === "boolean" ? Deno.noColor : process !== void 0 ? (
+  const { process: process2, Deno } = globalThis;
+  const isNoColor = typeof Deno?.noColor === "boolean" ? Deno.noColor : process2 !== void 0 ? (
     // eslint-disable-next-line no-unsafe-optional-chaining
-    "NO_COLOR" in process?.env
+    "NO_COLOR" in process2?.env
   ) : false;
   return !isNoColor;
 }
@@ -6399,13 +6399,14 @@ var coerce = {
 var NEVER = INVALID;
 
 // src/core/config/env-helper.ts
+import "dotenv/config";
 var getEnvVar = (key) => {
+  if (typeof process !== "undefined" && process.env && process.env[key] !== void 0) {
+    return process.env[key];
+  }
   const runtime = globalThis;
   if (runtime.Deno?.env) {
     return runtime.Deno.env.get(key);
-  }
-  if (runtime.process?.env) {
-    return runtime.process.env[key];
   }
   return void 0;
 };
@@ -6495,11 +6496,21 @@ var databaseUrl = getEnvVar("DATABASE_URL");
 if (!databaseUrl) {
   throw new Error("DATABASE_URL environment variable is required");
 }
-var pool = new pg.Pool({
-  connectionString: databaseUrl
-});
-var adapter = new PrismaPg(pool);
-var prisma = new PrismaClient({ adapter });
+var globalCtx = globalThis;
+if (!globalCtx.__prismaPool) {
+  globalCtx.__prismaPool = new pg.Pool({
+    connectionString: databaseUrl,
+    max: 10,
+    idleTimeoutMillis: 3e4,
+    connectionTimeoutMillis: 1e4
+  });
+}
+var pool = globalCtx.__prismaPool;
+if (!globalCtx.__prismaClient) {
+  const adapter = new PrismaPg(pool);
+  globalCtx.__prismaClient = new PrismaClient({ adapter });
+}
+var prisma = globalCtx.__prismaClient;
 
 // src/core/auth/better-auth.ts
 import { bearer, organization } from "better-auth/plugins";
@@ -8276,7 +8287,8 @@ var EzytmGateway = class {
    */
   async postForm(endpoint, params) {
     if (!this.isConfigured()) {
-      if (getEnvVar("DENO_TESTING") === "true" || getEnvVar("NODE_ENV") === "test" || !this.isConfigured()) {
+      const isTestEnv = getEnvVar("DENO_TESTING") === "true" || getEnvVar("NODE_ENV") === "test";
+      if (isTestEnv) {
         logger2.warn(`[EzyTM Gateway] Test simulation active for ${endpoint}`);
         if (endpoint.includes("AadharToPanFind")) {
           return {
@@ -8973,6 +8985,14 @@ app.all("/api/auth/*", async (c) => {
   });
 });
 app.route(CONSTANTS.API_PREFIX, apiRouter);
+app.get("/", (c) => {
+  return c.json({
+    name: "Nagrik Seva API",
+    status: "ok",
+    health: "/health",
+    version: "1.0.0"
+  });
+});
 app.get("/health", (c) => {
   return c.json({
     status: "ok",
