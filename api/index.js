@@ -8,7 +8,7 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/env/env-impl.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/env/env-impl.mjs
 function toBoolean(val) {
   return val ? val !== "false" : false;
 }
@@ -25,7 +25,7 @@ function getBooleanEnvVar(key, fallback = true) {
 }
 var _envShim, _getEnv, env2, nodeENV, isProduction, isDevelopment, isTest, ENV;
 var init_env_impl = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/env/env-impl.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/env/env-impl.mjs"() {
     _envShim = /* @__PURE__ */ Object.create(null);
     _getEnv = (useShim) => globalThis.process?.env || globalThis.Deno?.env.toObject() || globalThis.__env__ || (useShim ? _envShim : globalThis);
     env2 = new Proxy(_envShim, {
@@ -81,7 +81,7 @@ var init_env_impl = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/env/color-depth.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/env/color-depth.mjs
 function getColorDepth() {
   if (getEnvVar2("FORCE_COLOR") !== void 0) switch (getEnvVar2("FORCE_COLOR")) {
     case "":
@@ -127,7 +127,7 @@ function getColorDepth() {
 }
 var COLORS_2, COLORS_16, COLORS_256, COLORS_16m, TERM_ENVS, CI_ENVS_MAP, TERM_ENVS_REG_EXP;
 var init_color_depth = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/env/color-depth.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/env/color-depth.mjs"() {
     init_env_impl();
     COLORS_2 = 1;
     COLORS_16 = 4;
@@ -177,13 +177,13 @@ var init_color_depth = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/env/logger.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/env/logger.mjs
 function shouldPublishLog(currentLogLevel, logLevel) {
   return levels.indexOf(logLevel) >= levels.indexOf(currentLogLevel);
 }
 var TTY_COLORS, levels, levelColors, formatMessage, createLogger, logger3;
 var init_logger = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/env/logger.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/env/logger.mjs"() {
     init_color_depth();
     TTY_COLORS = {
       reset: "\x1B[0m",
@@ -260,15 +260,15 @@ var init_logger = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/env/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/env/index.mjs
 var init_env = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/env/index.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/env/index.mjs"() {
     init_env_impl();
     init_logger();
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/error-codes.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/error-codes.mjs
 function defineErrorCodes(codes) {
   return Object.fromEntries(Object.entries(codes).map(([key, value]) => [key, {
     code: key,
@@ -277,14 +277,14 @@ function defineErrorCodes(codes) {
   }]));
 }
 var init_error_codes = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/error-codes.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/error-codes.mjs"() {
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/error/codes.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/error/codes.mjs
 var BASE_ERROR_CODES;
 var init_codes = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/error/codes.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/error/codes.mjs"() {
     init_error_codes();
     BASE_ERROR_CODES = defineErrorCodes({
       USER_NOT_FOUND: "User not found",
@@ -475,10 +475,10 @@ var init_error = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/error/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/error/index.mjs
 var BetterAuthError, APIError2;
 var init_error2 = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/error/index.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/error/index.mjs"() {
     init_codes();
     init_error();
     BetterAuthError = class extends Error {
@@ -563,10 +563,10 @@ var init_random = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/get-tables.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/get-tables.mjs
 var getAuthTables;
 var init_get_tables = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/get-tables.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/get-tables.mjs"() {
     getAuthTables = (options) => {
       const pluginSchema = (options.plugins ?? []).reduce((acc, plugin) => {
         const schema2 = plugin.schema;
@@ -833,7 +833,7 @@ var init_get_tables = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/json.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/json.mjs
 function reviveDate(value) {
   if (typeof value === "string" && iso8601Regex.test(value)) {
     const date5 = new Date(value);
@@ -867,13 +867,13 @@ function safeJSONParse(data) {
 }
 var iso8601Regex;
 var init_json = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/json.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/json.mjs"() {
     init_logger();
     iso8601Regex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/context/global.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/context/global.mjs
 function __getBetterAuthGlobal() {
   if (!globalThis[symbol2]) {
     globalThis[symbol2] = {
@@ -895,15 +895,15 @@ function getBetterAuthVersion() {
 }
 var symbol2, bind, __context, __betterAuthVersion;
 var init_global = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/context/global.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/context/global.mjs"() {
     symbol2 = Symbol.for("better-auth:global");
     bind = null;
     __context = {};
-    __betterAuthVersion = "1.6.28";
+    __betterAuthVersion = "1.6.29";
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/async_hooks/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/async_hooks/index.mjs
 async function getAsyncLocalStorage() {
   const mod = await AsyncLocalStoragePromise;
   if (mod === null) throw new Error("getAsyncLocalStorage is only available in server code");
@@ -911,7 +911,7 @@ async function getAsyncLocalStorage() {
 }
 var AsyncLocalStoragePromise;
 var init_async_hooks = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/async_hooks/index.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/async_hooks/index.mjs"() {
     AsyncLocalStoragePromise = import(
       /* @vite-ignore */
       /* webpackIgnore: true */
@@ -927,10 +927,10 @@ var init_async_hooks = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/context/transaction.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/context/transaction.mjs
 var ensureAsyncStorage3, getCurrentAdapter, runWithAdapter, runWithTransaction, queueAfterTransactionHook;
 var init_transaction = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/context/transaction.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/context/transaction.mjs"() {
     init_global();
     init_async_hooks();
     ensureAsyncStorage3 = async () => {
@@ -1075,10 +1075,10 @@ var init_esm = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/attributes.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/attributes.mjs
 var ATTR_OPERATION_ID, ATTR_HOOK_TYPE, ATTR_CONTEXT;
 var init_attributes = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/attributes.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/attributes.mjs"() {
     init_esm();
     ATTR_OPERATION_ID = "better_auth.operation_id";
     ATTR_HOOK_TYPE = "better_auth.hook.type";
@@ -1086,7 +1086,7 @@ var init_attributes = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/noop.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/noop.mjs
 function createNoopSpan() {
   const span = {
     end() {
@@ -1132,12 +1132,12 @@ function createNoopOpenTelemetryAPI() {
 }
 var noopOpenTelemetryAPI;
 var init_noop = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/noop.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/noop.mjs"() {
     noopOpenTelemetryAPI = createNoopOpenTelemetryAPI();
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/api.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/api.mjs
 function getOpenTelemetryAPI() {
   if (!openTelemetryAPIPromise) openTelemetryAPIPromise = import("@opentelemetry/api").then((mod) => {
     openTelemetryAPI = mod;
@@ -1146,12 +1146,12 @@ function getOpenTelemetryAPI() {
 }
 var openTelemetryAPIPromise, openTelemetryAPI;
 var init_api = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/api.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/api.mjs"() {
     init_noop();
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/tracer.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/tracer.mjs
 function isRedirectError(err) {
   if (err != null && typeof err === "object" && "name" in err && err.name === "APIError" && "statusCode" in err) {
     const status = err.statusCode;
@@ -1195,26 +1195,26 @@ function withSpan(name, attributes, fn) {
 }
 var INSTRUMENTATION_SCOPE, INSTRUMENTATION_VERSION;
 var init_tracer = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/tracer.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/tracer.mjs"() {
     init_attributes();
     init_api();
     INSTRUMENTATION_SCOPE = "better-auth";
-    INSTRUMENTATION_VERSION = "1.6.28";
+    INSTRUMENTATION_VERSION = "1.6.29";
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/index.mjs
 var init_instrumentation = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/instrumentation/index.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/instrumentation/index.mjs"() {
     init_attributes();
     init_tracer();
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/id.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/id.mjs
 var generateId;
 var init_id = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/id.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/id.mjs"() {
     init_random();
     generateId = (size) => {
       return createRandomStringGenerator("a-z", "A-Z", "0-9")(size || 32);
@@ -1222,10 +1222,10 @@ var init_id = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-default-model-name.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-default-model-name.mjs
 var initGetDefaultModelName;
 var init_get_default_model_name = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-default-model-name.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-default-model-name.mjs"() {
     init_error2();
     initGetDefaultModelName = ({ usePlural, schema: schema2 }) => {
       const getDefaultModelName = (model) => {
@@ -1246,10 +1246,10 @@ var init_get_default_model_name = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-default-field-name.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-default-field-name.mjs
 var initGetDefaultFieldName;
 var init_get_default_field_name = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-default-field-name.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-default-field-name.mjs"() {
     init_error2();
     init_get_default_model_name();
     initGetDefaultFieldName = ({ schema: schema2, usePlural }) => {
@@ -1276,10 +1276,10 @@ var init_get_default_field_name = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-id-field.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-id-field.mjs
 var initGetIdField;
 var init_get_id_field = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-id-field.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-id-field.mjs"() {
     init_logger();
     init_id();
     init_get_default_model_name();
@@ -1344,10 +1344,10 @@ var init_get_id_field = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-field-attributes.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-field-attributes.mjs
 var initGetFieldAttributes;
 var init_get_field_attributes = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-field-attributes.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-field-attributes.mjs"() {
     init_error2();
     init_get_default_model_name();
     init_get_default_field_name();
@@ -1385,10 +1385,10 @@ var init_get_field_attributes = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-field-name.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-field-name.mjs
 var initGetFieldName;
 var init_get_field_name = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-field-name.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-field-name.mjs"() {
     init_get_default_model_name();
     init_get_default_field_name();
     initGetFieldName = ({ schema: schema2, usePlural }) => {
@@ -1413,10 +1413,10 @@ var init_get_field_name = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-model-name.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-model-name.mjs
 var initGetModelName;
 var init_get_model_name = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/get-model-name.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/get-model-name.mjs"() {
     init_get_default_model_name();
     initGetModelName = ({ usePlural, schema: schema2 }) => {
       const getDefaultModelName = initGetDefaultModelName({
@@ -1433,7 +1433,7 @@ var init_get_model_name = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/utils.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/utils.mjs
 function withApplyDefault(value, field, action) {
   if (action === "update") {
     if (value === void 0 && field.onUpdate !== void 0) {
@@ -1453,11 +1453,11 @@ function withApplyDefault(value, field, action) {
   return value;
 }
 var init_utils = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/utils.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/utils.mjs"() {
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/factory.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/factory.mjs
 function formatTransactionId(transactionId2) {
   if (getColorDepth() < 8) return `#${transactionId2}`;
   return `${TTY_COLORS.fg.magenta}#${transactionId2}${TTY_COLORS.reset}`;
@@ -1473,12 +1473,12 @@ function formatAction(action) {
 }
 var debugLogs, transactionId, createAsIsTransaction, createAdapterFactory;
 var init_factory = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/factory.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/factory.mjs"() {
     init_transaction();
     init_error2();
+    init_get_tables();
     init_color_depth();
     init_logger();
-    init_get_tables();
     init_json();
     init_get_default_model_name();
     init_get_default_field_name();
@@ -2365,10 +2365,10 @@ ${separator}`]);
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/index.mjs
 var whereOperators;
 var init_adapter = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/adapter/index.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/adapter/index.mjs"() {
     init_get_field_name();
     init_get_model_name();
     init_factory();
@@ -2388,7 +2388,7 @@ var init_adapter = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+memory-adapter@1.6.28/node_modules/@better-auth/memory-adapter/dist/index.mjs
+// node_modules/.deno/@better-auth+memory-adapter@1.6.29/node_modules/@better-auth/memory-adapter/dist/index.mjs
 var dist_exports = {};
 __export(dist_exports, {
   memoryAdapter: () => memoryAdapter
@@ -2453,7 +2453,7 @@ function rowChanged(baseRow, cloneRow) {
 }
 var memoryAdapter;
 var init_dist = __esm({
-  "node_modules/.deno/@better-auth+memory-adapter@1.6.28/node_modules/@better-auth/memory-adapter/dist/index.mjs"() {
+  "node_modules/.deno/@better-auth+memory-adapter@1.6.29/node_modules/@better-auth/memory-adapter/dist/index.mjs"() {
     init_adapter();
     init_env();
     memoryAdapter = (db, config4) => {
@@ -21795,34 +21795,34 @@ var init_dist2 = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/string.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/string.mjs
 function capitalizeFirstLetter(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 var WORD_PATTERN;
 var init_string = __esm({
-  "node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/string.mjs"() {
+  "node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/string.mjs"() {
     WORD_PATTERN = new RegExp("[\\p{Ll}\\d]+|\\p{Lu}+(?!\\p{Ll})|\\p{Lu}[\\p{Ll}\\d]+|\\p{Lo}+", "gu");
   }
 });
 
-// node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/kysely-migration-tables-JkVUjPF_.mjs
+// node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/kysely-migration-tables-JkVUjPF_.mjs
 var DEFAULT_MIGRATION_TABLE2, DEFAULT_MIGRATION_LOCK_TABLE2;
 var init_kysely_migration_tables_JkVUjPF = __esm({
-  "node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/kysely-migration-tables-JkVUjPF_.mjs"() {
+  "node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/kysely-migration-tables-JkVUjPF_.mjs"() {
     DEFAULT_MIGRATION_TABLE2 = "kysely_migration";
     DEFAULT_MIGRATION_LOCK_TABLE2 = "kysely_migration_lock";
   }
 });
 
-// node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/bun-sqlite-dialect-BW9W1_Ps.mjs
+// node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/bun-sqlite-dialect-BW9W1_Ps.mjs
 var bun_sqlite_dialect_BW9W1_Ps_exports = {};
 __export(bun_sqlite_dialect_BW9W1_Ps_exports, {
   BunSqliteDialect: () => BunSqliteDialect
 });
 var BunSqliteAdapter, BunSqliteDriver, BunSqliteConnection, ConnectionMutex2, BunSqliteIntrospector, BunSqliteQueryCompiler, BunSqliteDialect;
 var init_bun_sqlite_dialect_BW9W1_Ps = __esm({
-  "node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/bun-sqlite-dialect-BW9W1_Ps.mjs"() {
+  "node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/bun-sqlite-dialect-BW9W1_Ps.mjs"() {
     init_kysely_migration_tables_JkVUjPF();
     init_dist2();
     BunSqliteAdapter = class {
@@ -21987,14 +21987,14 @@ var init_bun_sqlite_dialect_BW9W1_Ps = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/node-sqlite-dialect.mjs
+// node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/node-sqlite-dialect.mjs
 var node_sqlite_dialect_exports = {};
 __export(node_sqlite_dialect_exports, {
   NodeSqliteDialect: () => NodeSqliteDialect
 });
 var NodeSqliteAdapter, NodeSqliteDriver, NodeSqliteConnection, ConnectionMutex3, NodeSqliteIntrospector, NodeSqliteQueryCompiler, NodeSqliteDialect;
 var init_node_sqlite_dialect = __esm({
-  "node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/node-sqlite-dialect.mjs"() {
+  "node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/node-sqlite-dialect.mjs"() {
     init_kysely_migration_tables_JkVUjPF();
     init_dist2();
     NodeSqliteAdapter = class {
@@ -22159,14 +22159,14 @@ var init_node_sqlite_dialect = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/d1-sqlite-dialect-BLC8LXE6.mjs
+// node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/d1-sqlite-dialect-BLC8LXE6.mjs
 var d1_sqlite_dialect_BLC8LXE6_exports = {};
 __export(d1_sqlite_dialect_BLC8LXE6_exports, {
   D1SqliteDialect: () => D1SqliteDialect
 });
 var D1SqliteAdapter, D1SqliteDriver, D1SqliteConnection, D1SqliteIntrospector, D1SqliteQueryCompiler, D1SqliteDialect;
 var init_d1_sqlite_dialect_BLC8LXE6 = __esm({
-  "node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/d1-sqlite-dialect-BLC8LXE6.mjs"() {
+  "node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/d1-sqlite-dialect-BLC8LXE6.mjs"() {
     init_kysely_migration_tables_JkVUjPF();
     init_dist2();
     D1SqliteAdapter = class extends SqliteAdapter {
@@ -22283,7 +22283,7 @@ var init_d1_sqlite_dialect_BLC8LXE6 = __esm({
   }
 });
 
-// node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/index.mjs
+// node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/index.mjs
 function getKyselyDatabaseType(db) {
   if (!db) return null;
   if ("dialect" in db) return getKyselyDatabaseType(db.dialect);
@@ -22330,7 +22330,7 @@ function insensitiveNe(columnRef, value) {
 }
 var createKyselyAdapter, kyselyAdapter;
 var init_dist3 = __esm({
-  "node_modules/.deno/@better-auth+kysely-adapter@1.6.28/node_modules/@better-auth/kysely-adapter/dist/index.mjs"() {
+  "node_modules/.deno/@better-auth+kysely-adapter@1.6.29/node_modules/@better-auth/kysely-adapter/dist/index.mjs"() {
     init_dist2();
     init_adapter();
     init_env();
@@ -22842,7 +22842,7 @@ var init_dist3 = __esm({
   }
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/adapters/kysely-adapter/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/adapters/kysely-adapter/index.mjs
 var kysely_adapter_exports = {};
 __export(kysely_adapter_exports, {
   createKyselyAdapter: () => createKyselyAdapter,
@@ -22850,7 +22850,7 @@ __export(kysely_adapter_exports, {
   kyselyAdapter: () => kyselyAdapter
 });
 var init_kysely_adapter = __esm({
-  "node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/adapters/kysely-adapter/index.mjs"() {
+  "node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/adapters/kysely-adapter/index.mjs"() {
     init_dist3();
   }
 });
@@ -29336,7 +29336,7 @@ var getAllowedCorsOrigin = (origin) => {
   return env.CORS_ORIGIN.some((o) => o.toLowerCase() === cleanOrigin) ? origin : void 0;
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/wildcard.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/wildcard.mjs
 function escapeRegExpChar(char) {
   if (char === "-" || char === "^" || char === "$" || char === "+" || char === "." || char === "(" || char === ")" || char === "|" || char === "[" || char === "]" || char === "{" || char === "}" || char === "*" || char === "?" || char === "\\") return `\\${char}`;
   else return char;
@@ -29416,7 +29416,7 @@ function wildcardMatch(pattern, options) {
   return fn;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/url.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/url.mjs
 init_env();
 init_error2();
 var SLASH_CHAR_CODE = "/".charCodeAt(0);
@@ -29582,7 +29582,7 @@ function resolveBaseURL(config4, basePath, source, loadEnv, trustedProxyHeaders)
   return getBaseURL(void 0, basePath, request, loadEnv, trustedProxyHeaders);
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/crypto/random.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/crypto/random.mjs
 init_random();
 var generateRandomString = createRandomStringGenerator("a-z", "0-9", "A-Z", "-_");
 
@@ -32556,7 +32556,7 @@ function decodeJwt(jwt2) {
   return result;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/crypto/jwt.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/crypto/jwt.mjs
 async function signJWT(payload, secret, expiresIn = 3600) {
   return await new SignJWT(payload).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime(Math.floor(Date.now() / 1e3) + expiresIn).sign(new TextEncoder().encode(secret));
 }
@@ -32736,7 +32736,7 @@ async function verifyPassword(hash2, password) {
   return targetKey.toString("hex") === key;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/crypto/password.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/crypto/password.mjs
 var hashPassword$1 = hashPassword;
 var verifyPassword$1 = async ({ hash: hash2, password }) => {
   return verifyPassword(hash2, password);
@@ -33688,7 +33688,7 @@ var xchacha20poly1305 = /* @__PURE__ */ wrapCipher(
   /* @__PURE__ */ _poly1305_aead(xchacha20)
 );
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/crypto/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/crypto/index.mjs
 var ENVELOPE_PREFIX = "$ba$";
 function parseEnvelope(data) {
   if (!data.startsWith(ENVELOPE_PREFIX)) return null;
@@ -33735,7 +33735,7 @@ var symmetricDecrypt = async ({ key, data }) => {
   throw new Error("Cannot decrypt legacy bare-hex payload: no legacy secret available. Set BETTER_AUTH_SECRET for backwards compatibility.");
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/context/store-capabilities.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/context/store-capabilities.mjs
 function hasServerSessionStore(options) {
   return !!options.database || !!options.secondaryStorage;
 }
@@ -33746,7 +33746,7 @@ function shouldBindAccountCookieToSessionUser(options) {
   return hasServerAccountStore(options);
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/db/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/db/index.mjs
 init_get_tables();
 
 // node_modules/.deno/zod@4.4.3/node_modules/zod/index.js
@@ -48511,10 +48511,10 @@ config2(en_default2());
 // node_modules/.deno/zod@4.4.3/node_modules/zod/index.js
 var zod_default = external_exports2;
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/schema.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/schema.mjs
 init_error2();
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/db.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/db.mjs
 function filterOutputFields(data, additionalFields) {
   if (!data || !additionalFields) return data;
   const returnFiltered = Object.entries(additionalFields).filter(([, { returned }]) => returned === false).map(([key]) => key);
@@ -48524,7 +48524,7 @@ function filterOutputFields(data, additionalFields) {
   }), {});
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/schema.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/schema.mjs
 var cache2 = /* @__PURE__ */ new WeakMap();
 function getFields(options, modelName, mode) {
   const cacheKey = `${modelName}:${mode}`;
@@ -48649,17 +48649,17 @@ function getSessionDefaultFields(options) {
   return defaults;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/date.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/date.mjs
 var getDate = (span, unit = "ms") => {
   return new Date(Date.now() + (unit === "sec" ? span * 1e3 : span));
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/is-promise.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/is-promise.mjs
 function isPromise(obj) {
   return !!obj && (typeof obj === "object" || typeof obj === "function") && typeof obj.then === "function";
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/time.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/time.mjs
 var SEC = 1e3;
 var MIN = SEC * 60;
 var HOUR = MIN * 60;
@@ -48728,7 +48728,7 @@ function sec(value) {
   return Math.round(parse3(value) / 1e3);
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/cookies/cookie-utils.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/cookies/cookie-utils.mjs
 function tryDecode2(str) {
   if (str.indexOf("%") === -1) return str;
   try {
@@ -48848,7 +48848,7 @@ function setRequestCookie(headers, name, value) {
   headers.set("cookie", Array.from(cookieMap, ([k, v]) => `${k}=${encodeURIComponent(v)}`).join("; "));
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/cookies/session-store.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/cookies/session-store.mjs
 init_json();
 
 // node_modules/.deno/better-call@1.4.0/node_modules/better-call/dist/index.mjs
@@ -50157,7 +50157,7 @@ var createRouter$1 = (endpoints, config4) => {
   };
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/cookies/session-store.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/cookies/session-store.mjs
 var MAX_COOKIE_SIZE = 4050;
 var MAX_COOKIE_CHUNKS = 100;
 function getMaxCookieValueSize(name, options) {
@@ -50291,7 +50291,7 @@ var getSessionQuerySchema = optional(object({
   disableRefresh: coerce_exports.boolean().meta({ description: "Disable session refresh. Useful for checking session status, without updating the session" }).optional()
 }));
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/cookies/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/cookies/index.mjs
 init_env();
 init_error2();
 
@@ -50399,7 +50399,7 @@ var createHMAC = (algorithm2 = "SHA-256", encoding = "none") => {
   return hmac3;
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/cookies/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/cookies/index.mjs
 function createCookieGetter(options) {
   const baseURLString = typeof options.baseURL === "string" ? options.baseURL : void 0;
   const dynamicProtocol = typeof options.baseURL === "object" && options.baseURL !== null ? options.baseURL.protocol : void 0;
@@ -50567,7 +50567,7 @@ function deleteSessionCookie(ctx, skipDontRememberMe) {
   if (!skipDontRememberMe) expireCookie(ctx, ctx.context.authCookies.dontRememberToken);
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/state.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/state.mjs
 init_error2();
 var stateDataSchema = looseObject({
   callbackURL: string2(),
@@ -50700,7 +50700,7 @@ async function parseGenericState(c, state, settings) {
   return parsedData;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/oauth2/errors.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/oauth2/errors.mjs
 var HANDLING_DOCS_URL = "https://www.better-auth.com/docs/concepts/oauth#handling-providers-without-email";
 function redirectOnError(ctx, errorURL, error52, description) {
   const params = new URLSearchParams({ error: error52 });
@@ -50712,10 +50712,10 @@ function missingEmailLogMessage(providerId, options) {
   return `${options?.source === "generic" ? `Generic OAuth provider "${providerId}"` : `Provider "${providerId}"`} did not return an email${options?.source === "id_token" ? " in the id token" : ""}. Either request the provider's email scope, or synthesize one via \`mapProfileToUser\`. See ${HANDLING_DOCS_URL}`;
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/context/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/context/index.mjs
 init_global();
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/context/endpoint-context.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/context/endpoint-context.mjs
 init_global();
 init_async_hooks();
 var ensureAsyncStorage = async () => {
@@ -50735,7 +50735,7 @@ async function runWithEndpointContext(context, fn) {
   return (await ensureAsyncStorage()).run(context, fn);
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/context/request-state.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/context/request-state.mjs
 init_global();
 init_async_hooks();
 var asyncStorageInit = null;
@@ -50781,13 +50781,13 @@ function defineRequestState(initFn) {
   };
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/context/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/context/index.mjs
 init_transaction();
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/state/oauth.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/state/oauth.mjs
 var { get: getOAuthState, set: setOAuthState } = defineRequestState(() => null);
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/oauth2/state.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/oauth2/state.mjs
 init_error2();
 async function generateState(c, link, additionalData) {
   const callbackURL = c.body?.callbackURL || c.context.options.baseURL;
@@ -50835,16 +50835,16 @@ async function parseState(c) {
   return parsedData;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/hide-metadata.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/hide-metadata.mjs
 var HIDE_METADATA = { scope: "server" };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/is-api-error.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/is-api-error.mjs
 init_error2();
 function isAPIError2(error52) {
   return error52 instanceof APIError || error52 instanceof APIError2 || error52?.name === "APIError";
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/api/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/api/index.mjs
 function attachResponseHeadersToAPIError(responseHeaders, e) {
   if (!isAPIError2(e) || !responseHeaders) return;
   Object.defineProperty(e, kAPIErrorHeaderSymbol, {
@@ -50890,7 +50890,7 @@ function withServerOnly(options) {
 }
 createAuthEndpoint.serverOnly = (options, handler) => createAuthEndpoint(withServerOnly(options), handler);
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/auth/trusted-origins.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/auth/trusted-origins.mjs
 var matchesOriginPattern = (url2, pattern, settings) => {
   if (url2.startsWith("/")) {
     if (settings?.allowRelativePaths) return url2.startsWith("/") && /^\/(?!\/|\\|%2f|%5c)[\w\-.\+/@]*(?:\?[\w\-.\+/=&%@]*)?$/.test(url2);
@@ -50906,10 +50906,10 @@ var matchesOriginPattern = (url2, pattern, settings) => {
   return protocol === "http:" || protocol === "https:" || !protocol ? pattern === getOrigin(url2) : url2.startsWith(pattern);
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/middlewares/origin-check.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/middlewares/origin-check.mjs
 init_error2();
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/url.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/url.mjs
 function normalizePathname(requestUrl, basePath) {
   let pathname;
   try {
@@ -50924,7 +50924,7 @@ function normalizePathname(requestUrl, basePath) {
   return pathname;
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/deprecate.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/deprecate.mjs
 function deprecate(fn, message2, logger4) {
   let warned = false;
   return function(...args) {
@@ -50936,7 +50936,7 @@ function deprecate(fn, message2, logger4) {
   };
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/middlewares/origin-check.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/middlewares/origin-check.mjs
 function shouldSkipCSRFForBackwardCompat(ctx) {
   return ctx.context.skipOriginCheck === true && ctx.context.options.advanced?.disableCSRFCheck === void 0;
 }
@@ -51055,10 +51055,10 @@ async function validateFormCsrf(ctx) {
   if (headers.get("origin") || headers.get("referer")) return await validateOrigin(ctx, true);
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/rate-limiter/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/rate-limiter/index.mjs
 init_json();
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/ip.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/ip.mjs
 init_env_impl();
 function isValidIP2(ip) {
   return ipv42().safeParse(ip).success || ipv62().safeParse(ip).success;
@@ -51214,7 +51214,7 @@ function createRateLimitKey(ip, path2) {
   return `${ip}|${path2}`;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/rate-limiter/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/rate-limiter/index.mjs
 var memory = /* @__PURE__ */ new Map();
 var MEMORY_STORE_MAX_ENTRIES = 1e5;
 function pruneMemoryStore() {
@@ -51574,10 +51574,10 @@ function getDefaultSpecialRules() {
   }];
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/state/should-session-refresh.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/state/should-session-refresh.mjs
 var { get: getShouldSkipSessionRefresh, set: setShouldSkipSessionRefresh } = defineRequestState(() => false);
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/session.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/session.mjs
 init_error2();
 init_json();
 var getSession = () => createAuthEndpoint("/get-session", {
@@ -52009,7 +52009,7 @@ var revokeOtherSessions = createAuthEndpoint("/revoke-other-sessions", {
   return ctx.json({ status: true });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/verification-token-storage.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/verification-token-storage.mjs
 var defaultKeyHasher = async (identifier) => {
   const hash2 = await createHash("SHA-256").digest(new TextEncoder().encode(identifier));
   return base64Url.encode(new Uint8Array(hash2), { padding: false });
@@ -52031,7 +52031,7 @@ function getStorageOption(identifier, config4) {
   return config4;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/with-hooks.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/with-hooks.mjs
 init_instrumentation();
 function getWithHooks(adapter2, ctx) {
   const hooksEntries = ctx.hooks;
@@ -52270,7 +52270,7 @@ function getWithHooks(adapter2, ctx) {
   };
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/internal-adapter.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/internal-adapter.mjs
 init_id();
 init_json();
 function getTTLSeconds(expiresAt, now2 = Date.now()) {
@@ -52681,9 +52681,7 @@ var createInternalAdapter = (adapter2, ctx) => {
       if (databaseStoresSessions && !preservesDatabaseSessions) await deleteDatabaseSessions(userId);
     },
     deleteSessions: async (sessionTokens) => {
-      if (secondaryStorage) {
-        for (const sessionToken of sessionTokens) if (await secondaryStorage.get(sessionToken)) await secondaryStorage.delete(sessionToken);
-      }
+      if (secondaryStorage) await Promise.all(sessionTokens.map((token) => secondaryStorage.delete(token)));
       if (databaseStoresSessions && !preservesDatabaseSessions) await deleteManyWithHooks([{
         field: "token",
         value: sessionTokens,
@@ -53119,7 +53117,7 @@ var createInternalAdapter = (adapter2, ctx) => {
   };
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/context/helpers.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/context/helpers.mjs
 init_env();
 init_error2();
 
@@ -53191,7 +53189,7 @@ var defuArrayFn = createDefu((object2, key, currentValue) => {
   }
 });
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/utils/host.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/utils/host.mjs
 var CLOUD_METADATA_HOSTS = /* @__PURE__ */ new Set([
   "metadata.google.internal",
   "metadata.goog",
@@ -53340,7 +53338,7 @@ function isLoopbackHost(host) {
   return kind === "loopback" || kind === "localhost";
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/context/helpers.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/context/helpers.mjs
 async function runPluginInit(context) {
   let options = context.options;
   const plugins = options.plugins || [];
@@ -53472,7 +53470,7 @@ async function getTrustedProviders(options, request) {
   return (await trustedProviders(request) ?? []).filter((v) => Boolean(v));
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/oauth2/utils.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/oauth2/utils.mjs
 function isLikelyEncrypted(token) {
   if (token.startsWith("$ba$")) return true;
   return token.length % 2 === 0 && /^[0-9a-f]+$/i.test(token);
@@ -53496,7 +53494,7 @@ function setTokenUtil(token, ctx) {
   return token;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/request.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/request.mjs
 function safeCloneRequest(request) {
   if (!request) return;
   try {
@@ -53518,7 +53516,7 @@ function safeCloneRequest(request) {
   }
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/email-verification.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/email-verification.mjs
 init_error2();
 async function createEmailVerificationToken(secret, email3, updateTo, expiresIn = 3600, extraPayload) {
   return await signJWT({
@@ -53820,7 +53818,7 @@ var verifyEmail = createAuthEndpoint("/verify-email", {
   });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/oauth2/link-account.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/oauth2/link-account.mjs
 init_env();
 async function handleOAuthUserInfo(c, opts) {
   const { userInfo, account, callbackURL, disableSignUp, overrideUserInfo } = opts;
@@ -53978,14 +53976,14 @@ async function applyUpdateUserInfoOnLink(c, userId, userInfo) {
   }
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/account.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/account.mjs
 init_error2();
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/apple.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/apple.mjs
 init_error2();
 init_logger();
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/oauth2/utils.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/oauth2/utils.mjs
 function getOAuth2Tokens(data) {
   const getDate2 = (seconds) => {
     return new Date((/* @__PURE__ */ new Date()).getTime() + seconds * 1e3);
@@ -54011,7 +54009,7 @@ async function generateCodeChallenge(codeVerifier) {
   return base64Url.encode(new Uint8Array(hash2), { padding: false });
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/oauth2/create-authorization-url.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/oauth2/create-authorization-url.mjs
 async function createAuthorizationURL({ id, options, authorizationEndpoint: authorizationEndpoint2, state, codeVerifier, scopes, claims, redirectURI, duration: duration3, prompt, accessType, responseType, display, loginHint, hd, responseMode, additionalParams, scopeJoiner }) {
   options = typeof options === "function" ? await options() : options;
   const url2 = new URL(options.authorizationEndpoint || authorizationEndpoint2);
@@ -54050,7 +54048,7 @@ async function createAuthorizationURL({ id, options, authorizationEndpoint: auth
   return url2;
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/oauth2/reject-redirects.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/oauth2/reject-redirects.mjs
 init_error2();
 
 // node_modules/.deno/@better-fetch+fetch@1.3.1/node_modules/@better-fetch/fetch/dist/index.js
@@ -54589,7 +54587,7 @@ var betterFetch = async (url2, options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/oauth2/reject-redirects.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/oauth2/reject-redirects.mjs
 var HTTP_REDIRECT_STATUSES = /* @__PURE__ */ new Set([
   301,
   302,
@@ -54617,7 +54615,7 @@ async function fetchRefusingRedirects(url2, options) {
   return result;
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/oauth2/refresh-access-token.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/oauth2/refresh-access-token.mjs
 function createRefreshAccessTokenRequest({ refreshToken: refreshToken2, options, authentication, extraParams, resource }) {
   const body = new URLSearchParams();
   const headers = {
@@ -54668,7 +54666,7 @@ async function refreshAccessToken({ refreshToken: refreshToken2, options, tokenE
   return tokens;
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/oauth2/validate-authorization-code.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/oauth2/validate-authorization-code.mjs
 async function authorizationCodeRequest({ code, codeVerifier, redirectURI, options, authentication, deviceId, headers, additionalParams = {}, resource }) {
   options = typeof options === "function" ? await options() : options;
   return createAuthorizationCodeRequest({
@@ -54733,7 +54731,7 @@ async function validateAuthorizationCode({ code, codeVerifier, redirectURI, opti
   return getOAuth2Tokens(data);
 }
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/apple.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/apple.mjs
 async function sha256Hex(value) {
   const data = new TextEncoder().encode(value);
   const digest2 = await crypto.subtle.digest("SHA-256", data);
@@ -54842,7 +54840,7 @@ var getApplePublicKey = async (kid) => {
   return await importJWK(jwk, jwk.alg);
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/atlassian.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/atlassian.mjs
 init_error2();
 init_logger();
 var atlassian = (options) => {
@@ -54917,7 +54915,7 @@ var atlassian = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/cognito.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/cognito.mjs
 init_error2();
 init_logger();
 var cognito = (options) => {
@@ -55072,7 +55070,7 @@ var getCognitoPublicKey = async (kid, region, userPoolId) => {
   }
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/discord.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/discord.mjs
 var discord = (options) => {
   const tokenEndpoint2 = "https://discord.com/api/oauth2/token";
   return {
@@ -55130,7 +55128,7 @@ var discord = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/dropbox.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/dropbox.mjs
 var dropbox = (options) => {
   const tokenEndpoint2 = "https://api.dropboxapi.com/oauth2/token";
   return {
@@ -55197,7 +55195,7 @@ var dropbox = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/facebook.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/facebook.mjs
 init_error2();
 init_logger();
 async function verifyFacebookAccessToken(accessToken, options) {
@@ -55332,7 +55330,7 @@ var facebook = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/figma.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/figma.mjs
 init_error2();
 init_logger();
 var figma = (options) => {
@@ -55410,7 +55408,7 @@ var figma = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/github.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/github.mjs
 init_logger();
 var github = (options) => {
   const tokenEndpoint2 = "https://github.com/login/oauth/access_token";
@@ -55496,7 +55494,7 @@ var github = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/gitlab.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/gitlab.mjs
 var cleanDoubleSlashes = (input = "") => {
   return input.split("://").map((str) => str.replace(/\/{2,}/g, "/")).join("://");
 };
@@ -55570,7 +55568,7 @@ var gitlab = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/google.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/google.mjs
 init_error2();
 init_logger();
 var GOOGLE_ID_TOKEN_MAX_AGE = "1h";
@@ -55692,7 +55690,7 @@ var getGooglePublicKey = async (kid) => {
   return await importJWK(jwk, jwk.alg);
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/huggingface.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/huggingface.mjs
 var huggingface = (options) => {
   const tokenEndpoint2 = "https://huggingface.co/oauth/token";
   return {
@@ -55760,7 +55758,7 @@ var huggingface = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/kakao.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/kakao.mjs
 var kakao = (options) => {
   const tokenEndpoint2 = "https://kauth.kakao.com/oauth/token";
   return {
@@ -55825,7 +55823,7 @@ var kakao = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/kick.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/kick.mjs
 var kick = (options) => {
   return {
     id: "kick",
@@ -55888,7 +55886,7 @@ var kick = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/line.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/line.mjs
 var line = (options) => {
   const authorizationEndpoint2 = "https://access.line.me/oauth2/v2.1/authorize";
   const tokenEndpoint2 = "https://api.line.me/oauth2/v2.1/token";
@@ -55984,7 +55982,7 @@ var line = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/linear.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/linear.mjs
 var linear = (options) => {
   const tokenEndpoint2 = "https://api.linear.app/oauth/token";
   return {
@@ -56064,7 +56062,7 @@ var linear = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/linkedin.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/linkedin.mjs
 var linkedin = (options) => {
   const authorizationEndpoint2 = "https://www.linkedin.com/oauth/v2/authorization";
   const tokenEndpoint2 = "https://www.linkedin.com/oauth/v2/accessToken";
@@ -56132,7 +56130,7 @@ var linkedin = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/microsoft-entra-id.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/microsoft-entra-id.mjs
 init_error2();
 init_logger();
 var MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad";
@@ -56266,7 +56264,7 @@ var getMicrosoftPublicKey = async (kid, tenant, authority) => {
   return await importJWK(jwk, jwk.alg);
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/naver.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/naver.mjs
 var naver = (options) => {
   const tokenEndpoint2 = "https://nid.naver.com/oauth2.0/token";
   return {
@@ -56326,7 +56324,7 @@ var naver = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/notion.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/notion.mjs
 var notion = (options) => {
   const tokenEndpoint2 = "https://api.notion.com/v1/oauth/token";
   return {
@@ -56393,7 +56391,7 @@ var notion = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/paybin.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/paybin.mjs
 init_error2();
 init_logger();
 var paybin = (options) => {
@@ -56469,7 +56467,7 @@ var paybin = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/paypal.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/paypal.mjs
 init_error2();
 init_logger();
 var PAYPAL_ID_TOKEN_ALGORITHMS = ["RS256", "HS256"];
@@ -56637,7 +56635,7 @@ var getPayPalPublicKey = async (kid, jwksUri) => {
   return await importJWK(jwk, jwk.alg);
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/polar.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/polar.mjs
 var polar = (options) => {
   const tokenEndpoint2 = "https://api.polar.sh/v1/oauth2/token";
   return {
@@ -56703,7 +56701,7 @@ var polar = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/railway.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/railway.mjs
 var authorizationEndpoint = "https://backboard.railway.com/oauth/auth";
 var tokenEndpoint = "https://backboard.railway.com/oauth/token";
 var userinfoEndpoint = "https://backboard.railway.com/oauth/me";
@@ -56772,7 +56770,7 @@ var railway = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/reddit.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/reddit.mjs
 var reddit = (options) => {
   return {
     id: "reddit",
@@ -56847,7 +56845,7 @@ var reddit = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/roblox.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/roblox.mjs
 var roblox = (options) => {
   const tokenEndpoint2 = "https://apis.roblox.com/oauth/v1/token";
   return {
@@ -56900,7 +56898,7 @@ var roblox = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/salesforce.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/salesforce.mjs
 init_error2();
 init_logger();
 var salesforce = (options) => {
@@ -56982,7 +56980,7 @@ var salesforce = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/slack.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/slack.mjs
 var slack = (options) => {
   const tokenEndpoint2 = "https://slack.com/api/openid.connect.token";
   return {
@@ -57044,7 +57042,7 @@ var slack = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/spotify.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/spotify.mjs
 var spotify = (options) => {
   const tokenEndpoint2 = "https://accounts.spotify.com/api/token";
   return {
@@ -57108,7 +57106,7 @@ var spotify = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/tiktok.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/tiktok.mjs
 var tiktok = (options) => {
   const tokenEndpoint2 = "https://open.tiktokapis.com/v2/oauth/token/";
   return {
@@ -57164,7 +57162,7 @@ var tiktok = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/twitch.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/twitch.mjs
 init_logger();
 var twitch = (options) => {
   const tokenEndpoint2 = "https://id.twitch.tv/oauth2/token";
@@ -57234,7 +57232,7 @@ var twitch = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/twitter.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/twitter.mjs
 var twitter = (options) => {
   const tokenEndpoint2 = "https://api.x.com/2/oauth2/token";
   return {
@@ -57314,7 +57312,7 @@ var twitter = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/vercel.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/vercel.mjs
 init_error2();
 var vercel = (options) => {
   return {
@@ -57368,7 +57366,7 @@ var vercel = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/vk.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/vk.mjs
 var vk = (options) => {
   const tokenEndpoint2 = "https://id.vk.com/oauth2/auth";
   return {
@@ -57443,7 +57441,7 @@ var vk = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/wechat.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/wechat.mjs
 var wechat = (options) => {
   return {
     id: "wechat",
@@ -57522,7 +57520,7 @@ var wechat = (options) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/zoom.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/zoom.mjs
 var zoom = (userOptions) => {
   const options = {
     pkce: true,
@@ -57586,7 +57584,7 @@ var zoom = (userOptions) => {
   };
 };
 
-// node_modules/.deno/@better-auth+core@1.6.28/node_modules/@better-auth/core/dist/social-providers/index.mjs
+// node_modules/.deno/@better-auth+core@1.6.29/node_modules/@better-auth/core/dist/social-providers/index.mjs
 var socialProviders = {
   apple,
   atlassian,
@@ -57627,7 +57625,7 @@ var socialProviders = {
 var socialProviderList = Object.keys(socialProviders);
 var SocialProviderListEnum = _enum2(socialProviderList).or(string2());
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/account.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/account.mjs
 var listUserAccounts = createAuthEndpoint("/list-accounts", {
   method: "GET",
   use: [sessionMiddleware],
@@ -58154,7 +58152,7 @@ var accountInfo = createAuthEndpoint("/account-info", {
   return ctx.json(info2);
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/callback.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/callback.mjs
 init_json();
 var schema = object({
   code: string2().optional(),
@@ -58322,7 +58320,7 @@ var callbackOAuth = createAuthEndpoint("/callback/:id", {
   throw c.redirect(toRedirectTo);
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/error.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/error.mjs
 init_env();
 function sanitize(input) {
   return input.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/&(?!amp;|lt;|gt;|quot;|#39;|#x[0-9a-fA-F]+;|#[0-9]+;)/g, "&amp;");
@@ -58702,7 +58700,7 @@ var error51 = createAuthEndpoint("/error", {
   return new Response(html(c.context.options, safeCode, safeDescription), { headers: { "Content-Type": "text/html" } });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/ok.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/ok.mjs
 var ok = createAuthEndpoint("/ok", {
   method: "GET",
   metadata: {
@@ -58726,7 +58724,7 @@ var ok = createAuthEndpoint("/ok", {
   return ctx.json({ ok: true });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/password.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/password.mjs
 init_error2();
 async function validatePassword(ctx, data) {
   const credentialAccount = (await ctx.context.internalAdapter.findAccounts(data.userId))?.find((account) => account.providerId === "credential");
@@ -58752,7 +58750,7 @@ async function checkPassword(userId, c) {
   return true;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/password.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/password.mjs
 init_error2();
 init_id();
 function redirectError(ctx, callbackURL, query) {
@@ -58949,7 +58947,7 @@ var verifyPassword2 = createAuthEndpoint("/verify-password", {
   return ctx.json({ status: true });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/sign-in.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/sign-in.mjs
 init_error2();
 var socialSignInBodySchema = object({
   /**
@@ -59280,7 +59278,7 @@ var signInEmail = () => createAuthEndpoint("/sign-in/email", {
   });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/sign-out.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/sign-out.mjs
 var signOut = createAuthEndpoint("/sign-out", {
   method: "POST",
   operationId: "signOut",
@@ -59307,7 +59305,7 @@ var signOut = createAuthEndpoint("/sign-out", {
   return ctx.json({ success: true });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/sign-up.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/sign-up.mjs
 init_env();
 init_error2();
 init_id();
@@ -59554,7 +59552,7 @@ var signUpEmail = () => createAuthEndpoint("/sign-up/email", {
   });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/update-session.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/update-session.mjs
 init_error2();
 var updateSessionBodySchema = record(string2().meta({ description: "Field name must be a string" }), any());
 var updateSession = () => createAuthEndpoint("/update-session", {
@@ -59605,7 +59603,7 @@ var updateSession = () => createAuthEndpoint("/update-session", {
   return ctx.json({ session: parseSessionOutput(ctx.context.options, newSession) });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/routes/update-user.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/routes/update-user.mjs
 init_error2();
 var updateUserBodySchema = record(string2().meta({ description: "Field name must be a string" }), any());
 var updateUser = () => createAuthEndpoint("/update-user", {
@@ -60100,7 +60098,7 @@ var changeEmail = createAuthEndpoint("/change-email", {
   return ctx.json({ status: true });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/dispatch.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/dispatch.mjs
 init_env();
 init_error2();
 init_instrumentation();
@@ -60331,7 +60329,7 @@ async function dispatchAuthEndpoint(endpoint, input) {
   }));
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/to-auth-endpoints.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/to-auth-endpoints.mjs
 init_error2();
 async function resolveDynamicContext(rawCtx, input) {
   if (rawCtx.baseURL) return rawCtx;
@@ -60370,7 +60368,7 @@ function toAuthEndpoints(endpoints, ctx) {
   return api;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/api/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/api/index.mjs
 init_env();
 init_error2();
 init_instrumentation();
@@ -60561,7 +60559,7 @@ var router = (ctx, options) => {
   });
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/adapter-base.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/adapter-base.mjs
 init_env();
 async function getBaseAdapter(options, handleDirectDatabase) {
   let adapter2;
@@ -60584,7 +60582,7 @@ async function getBaseAdapter(options, handleDirectDatabase) {
   return adapter2;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/adapter-kysely.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/adapter-kysely.mjs
 init_error2();
 async function getAdapter(options) {
   return getBaseAdapter(options, async (opts) => {
@@ -60600,7 +60598,7 @@ async function getAdapter(options) {
   });
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/get-schema.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/get-schema.mjs
 function getSchema(config4) {
   const tables = getAuthTables(config4);
   const schema2 = {};
@@ -60636,7 +60634,7 @@ function getSchema(config4) {
   return schema2;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/get-migration.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/get-migration.mjs
 init_env();
 init_dist3();
 init_adapter();
@@ -60973,10 +60971,10 @@ async function getMigrations(config4) {
   };
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/constants.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/constants.mjs
 var DEFAULT_SECRET = "better-auth-secret-12345678901234567890";
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/context/secret-utils.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/context/secret-utils.mjs
 init_error2();
 function estimateEntropy(str) {
   const unique = new Set(str).size;
@@ -61023,12 +61021,12 @@ function buildSecretConfig(secrets, legacySecret) {
   };
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/context/create-context.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/context/create-context.mjs
 init_env();
 init_error2();
 init_id();
 
-// node_modules/.deno/@better-auth+telemetry@1.6.28/node_modules/@better-auth/telemetry/dist/node.mjs
+// node_modules/.deno/@better-auth+telemetry@1.6.29/node_modules/@better-auth/telemetry/dist/node.mjs
 init_env();
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
@@ -61495,7 +61493,7 @@ async function createTelemetry(options, context) {
   } };
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/context/create-context.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/context/create-context.mjs
 function estimateEntropy2(str) {
   const unique = new Set(str).size;
   if (unique === 0) return 0;
@@ -61697,7 +61695,7 @@ Most of the features of Better Auth will not work correctly.`);
   return ctx;
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/context/init.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/context/init.mjs
 init_error2();
 init_dist3();
 var init = async (options) => {
@@ -61712,7 +61710,7 @@ var init = async (options) => {
   return ctx;
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/auth/base.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/auth/base.mjs
 init_error2();
 var createBetterAuth = (options, initFn) => {
   const authContext = initFn(options);
@@ -61758,19 +61756,19 @@ var createBetterAuth = (options, initFn) => {
   };
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/auth/full.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/auth/full.mjs
 var betterAuth = (options) => {
   return createBetterAuth(options, init);
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/index.mjs
 init_env();
 init_error2();
 init_error_codes();
 init_id();
 init_json();
 
-// node_modules/.deno/@better-auth+prisma-adapter@1.6.28/node_modules/@better-auth/prisma-adapter/dist/index.mjs
+// node_modules/.deno/@better-auth+prisma-adapter@1.6.29/node_modules/@better-auth/prisma-adapter/dist/index.mjs
 init_adapter();
 init_error2();
 function isPrismaNotFoundError(e) {
@@ -62228,7 +62226,7 @@ var pool = new pg.Pool({
 var adapter = new PrismaPg(pool);
 var prisma = new PrismaClient({ adapter });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/access/access.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/access/access.mjs
 init_error2();
 function unknownResourceResponse(requestedResource) {
   return {
@@ -62305,13 +62303,13 @@ function createAccessControl(s) {
   };
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/package.mjs
-var version2 = "1.6.28";
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/package.mjs
+var version2 = "1.6.29";
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/version.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/version.mjs
 var PACKAGE_VERSION = version2;
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/bearer/index.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/bearer/index.mjs
 var BEARER_SCHEME = "bearer ";
 function tryDecode4(str) {
   try {
@@ -62376,7 +62374,7 @@ var bearer = (options) => {
   };
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/client/parser.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/client/parser.mjs
 var PROTO_POLLUTION_PATTERNS = {
   proto: /"(?:_|\\u0{2}5[Ff]){2}(?:p|\\u0{2}70)(?:r|\\u0{2}72)(?:o|\\u0{2}6[Ff])(?:t|\\u0{2}74)(?:o|\\u0{2}6[Ff])(?:_|\\u0{2}5[Ff]){2}"\s*:/,
   constructor: /"(?:c|\\u0063)(?:o|\\u006[Ff])(?:n|\\u006[Ee])(?:s|\\u0073)(?:t|\\u0074)(?:r|\\u0072)(?:u|\\u0075)(?:c|\\u0063)(?:t|\\u0074)(?:o|\\u006[Ff])(?:r|\\u0072)"\s*:/,
@@ -62445,7 +62443,7 @@ function parseJSON(value, options = { strict: true }) {
   return betterJSONParse(value, options);
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/db/to-zod.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/db/to-zod.mjs
 function toZodSchema({ fields, isClientSide }) {
   const zodFields = Object.keys(fields).reduce((acc, key) => {
     const field = fields[key];
@@ -62466,7 +62464,7 @@ function toZodSchema({ fields, isClientSide }) {
   return object(zodFields);
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/adapter.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/adapter.mjs
 init_error2();
 async function resolveMaximumMembersPerTeam(teams, context) {
   const maximumMembersPerTeam = teams?.maximumMembersPerTeam;
@@ -63160,7 +63158,7 @@ var getOrgAdapter = (context, options) => {
   };
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/access/statement.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/access/statement.mjs
 var defaultStatements = {
   organization: ["update", "delete"],
   member: [
@@ -63235,7 +63233,7 @@ var defaultRoles = {
   member: memberAc
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/permission.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/permission.mjs
 var hasPermissionFn = (input, acRoles) => {
   if (!input.permissions) return false;
   const roles = input.role.split(",");
@@ -63248,7 +63246,7 @@ var hasPermissionFn = (input, acRoles) => {
 };
 var cacheAllRoles = /* @__PURE__ */ new Map();
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/has-permission.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/has-permission.mjs
 var hasPermission = async (input, ctx) => {
   let acRoles = { ...input.options.roles || defaultRoles };
   if (ctx && input.organizationId && input.options.dynamicAccessControl?.enabled && input.options.ac && !input.useMemoryCache) {
@@ -63275,7 +63273,7 @@ var hasPermission = async (input, ctx) => {
   return hasPermissionFn(input, acRoles);
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/error-codes.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/error-codes.mjs
 init_error_codes();
 var ORGANIZATION_ERROR_CODES = defineErrorCodes({
   YOU_ARE_NOT_ALLOWED_TO_CREATE_A_NEW_ORGANIZATION: "You are not allowed to create a new organization",
@@ -63339,7 +63337,7 @@ var ORGANIZATION_ERROR_CODES = defineErrorCodes({
   INVALID_TEAM_ID: "Team id contains a reserved character"
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/utils/shim.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/utils/shim.mjs
 var shimContext = (originalObject, newContext) => {
   const shimmedObj = {};
   for (const [key, value] of Object.entries(originalObject)) {
@@ -63360,7 +63358,7 @@ var shimContext = (originalObject, newContext) => {
   return shimmedObj;
 };
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/call.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/call.mjs
 var orgMiddleware = createAuthMiddleware(async () => {
   return {};
 });
@@ -63368,7 +63366,7 @@ var orgSessionMiddleware = createAuthMiddleware({ use: [sessionMiddleware] }, as
   return { session: ctx.context.session };
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/routes/crud-access-control.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/routes/crud-access-control.mjs
 init_error2();
 var normalizeRoleName = (role2) => role2.toLowerCase();
 var DEFAULT_MAXIMUM_ROLES_PER_ORGANIZATION = Number.POSITIVE_INFINITY;
@@ -64038,7 +64036,7 @@ async function checkIfRoleNameIsTakenByRoleInDB({ organizationId, role: role2, c
   }
 }
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/routes/crud-invites.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/routes/crud-invites.mjs
 init_error2();
 var baseInvitationSchema = object({
   email: string2().meta({ description: "The email address of the user to invite" }),
@@ -64622,7 +64620,7 @@ var listUserInvitations = (options) => createAuthEndpoint("/organization/list-us
   return ctx.json(pendingInvitations);
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/routes/crud-members.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/routes/crud-members.mjs
 init_error2();
 init_adapter();
 var baseMemberSchema = object({
@@ -65112,7 +65110,7 @@ var getActiveMemberRole = (options) => createAuthEndpoint("/organization/get-act
   return ctx.json({ role: member?.role });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/routes/crud-org.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/routes/crud-org.mjs
 init_error2();
 var baseOrganizationSchema = object({
   name: string2().min(1).meta({ description: "The name of the organization" }),
@@ -65517,7 +65515,7 @@ var listOrganizations = (options) => createAuthEndpoint("/organization/list", {
   return ctx.json(organizations);
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/schema.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/schema.mjs
 init_id();
 var roleSchema = string2();
 var invitationStatus = _enum2([
@@ -65580,7 +65578,7 @@ var defaultRoles2 = [
 ];
 union([_enum2(defaultRoles2), array(_enum2(defaultRoles2))]);
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/routes/crud-team.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/routes/crud-team.mjs
 init_error2();
 var teamBaseSchema = object({
   name: string2().meta({ description: 'The name of the team. Eg: "my-team"' }),
@@ -66295,7 +66293,7 @@ var removeTeamMember = (options) => createAuthEndpoint("/organization/remove-tea
   return ctx.json({ message: "Team member removed successfully." });
 });
 
-// node_modules/.deno/better-auth@1.6.28/node_modules/better-auth/dist/plugins/organization/organization.mjs
+// node_modules/.deno/better-auth@1.6.29/node_modules/better-auth/dist/plugins/organization/organization.mjs
 init_error2();
 function parseRoles(roles) {
   return Array.isArray(roles) ? roles.join(",") : roles;
@@ -69612,14 +69610,14 @@ app.get("/health", (c) => {
 });
 app.onError(errorHandler2);
 
-// api/index.ts
+// src/api.ts
 var config3 = {
   runtime: "nodejs"
 };
-var index_default = handle(app);
+var api_default = handle(app);
 export {
   config3 as config,
-  index_default as default
+  api_default as default
 };
 /*! Bundled license information:
 
