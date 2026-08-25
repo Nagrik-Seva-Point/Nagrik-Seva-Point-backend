@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "prisma generate",
+    "test-build": "prisma generate && tsc --noEmit",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
