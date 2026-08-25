@@ -62,7 +62,6 @@ export const auth = betterAuth({
   },
   advanced: {
     defaultCookieAttributes: {
-      domain: ".nagriksevapoint.in", // Set the domain to your main domain
       sameSite: "none",
       secure: true,
       httpOnly: true,

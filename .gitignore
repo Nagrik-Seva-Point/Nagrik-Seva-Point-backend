@@ -23,5 +23,4 @@ Thumbs.db
 /src/seed.ts
 deno.lock
 /api/index.js
-api/index.js
 \n# Vercel Build Artifacts\napi/index.js
