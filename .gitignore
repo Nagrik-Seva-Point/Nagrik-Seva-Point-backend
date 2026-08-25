@@ -21,6 +21,5 @@ Thumbs.db
 /tests
 /scripts
 /src/seed.ts
-/api/index.js
 dist/
 
