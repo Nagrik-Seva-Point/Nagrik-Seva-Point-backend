@@ -11,5 +11,5 @@
     "noEmit": true
   },
   "include": ["src/**/*", "api/**/*"],
-  "exclude": ["src/index.ts", "src/seed.ts", "tests/**/*"]
+  "exclude": ["src/seed.ts", "tests/**/*"]
 }
