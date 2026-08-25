@@ -11,7 +11,10 @@ export const findPanSchema = z.object({
 export type FindPanInput = z.infer<typeof findPanSchema>;
 
 export const panDetailsSchema = z.object({
-  pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i, "Invalid PAN number format"),
+  pan: z.string().regex(
+    /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i,
+    "Invalid PAN number format",
+  ),
 });
 
 export type PanDetailsInput = z.infer<typeof panDetailsSchema>;

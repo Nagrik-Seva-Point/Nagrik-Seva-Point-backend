@@ -4,7 +4,10 @@ export const checkAvailabilitySchema = z.object({
   email: z.string().email("Invalid email format").optional(),
   phone: z
     .string()
-    .regex(/^[6-9]\d{9}$/, "Mobile number must be a valid 10-digit Indian phone number")
+    .regex(
+      /^[6-9]\d{9}$/,
+      "Mobile number must be a valid 10-digit Indian phone number",
+    )
     .optional(),
 });
 
@@ -12,7 +15,10 @@ export const registerRetailerSchema = z.object({
   name: z.string().min(2, "Full name must be at least 2 characters").max(100),
   phone: z
     .string()
-    .regex(/^[6-9]\d{9}$/, "Mobile number must be a valid 10-digit Indian phone number"),
+    .regex(
+      /^[6-9]\d{9}$/,
+      "Mobile number must be a valid 10-digit Indian phone number",
+    ),
   email: z.string().email("Invalid email format"),
   password: z.string().min(8, "Password must be at least 8 characters"),
   cyberCafeName: z

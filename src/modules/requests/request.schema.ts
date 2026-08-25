@@ -40,5 +40,7 @@ export const queryRequestSchema = z.object({
 });
 
 export type CreateRequestInput = z.infer<typeof createRequestSchema>;
-export type ConfirmRequestPaymentInput = z.infer<typeof confirmRequestPaymentSchema>;
+export type ConfirmRequestPaymentInput = z.infer<
+  typeof confirmRequestPaymentSchema
+>;
 export type QueryRequestInput = z.infer<typeof queryRequestSchema>;

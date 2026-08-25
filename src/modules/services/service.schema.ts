@@ -14,7 +14,9 @@ export const createServiceSchema = z.object({
       /^[A-Z0-9_]+$/,
       "Service code must be uppercase alphanumeric and underscores only (e.g. PAN_FIND)",
     ),
-  name: z.string().min(2, "Service name must be at least 2 characters").max(150),
+  name: z.string().min(2, "Service name must be at least 2 characters").max(
+    150,
+  ),
   description: z.string().optional(),
   categoryId: z.string().optional(),
   category: z.string().optional(), // Can pass categoryId or categoryCode

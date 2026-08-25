@@ -7,8 +7,8 @@ import { serviceEngine } from "../engine/service-engine";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import type {
-  CreateRequestInput,
   ConfirmRequestPaymentInput,
+  CreateRequestInput,
   QueryRequestInput,
 } from "./request.schema";
 import type { RequestContext } from "../../core/types/context.types";
@@ -22,12 +22,20 @@ export class RequestService {
 
     // Scoped Authorization Enforcement
     if (context.accessMode === "RETAILER") {
-      if (!context.organizationId || request.organizationId !== context.organizationId) {
-        throw AppError.forbidden("You do not have access to this service request");
+      if (
+        !context.organizationId ||
+        request.organizationId !== context.organizationId
+      ) {
+        throw AppError.forbidden(
+          "You do not have access to this service request",
+        );
       }
     } else {
       // Guest verification
-      if (!context.guestSessionId || request.guestSessionId !== context.guestSessionId) {
+      if (
+        !context.guestSessionId ||
+        request.guestSessionId !== context.guestSessionId
+      ) {
         throw AppError.forbidden("Unauthorized guest session access");
       }
     }
@@ -37,7 +45,9 @@ export class RequestService {
 
   async queryRequests(context: RequestContext, query: QueryRequestInput) {
     if (context.accessMode !== "RETAILER" || !context.organizationId) {
-      throw AppError.forbidden("Request history is only available for authenticated retailers");
+      throw AppError.forbidden(
+        "Request history is only available for authenticated retailers",
+      );
     }
     return await requestRepository.findMany(context.organizationId, query);
   }
@@ -48,15 +58,22 @@ export class RequestService {
   async createRequest(context: RequestContext, data: CreateRequestInput) {
     // 1. Check idempotency first
     if (data.idempotencyKey) {
-      const existing = await requestRepository.findByIdempotencyKey(data.idempotencyKey);
+      const existing = await requestRepository.findByIdempotencyKey(
+        data.idempotencyKey,
+      );
       if (existing) {
-        logger.info(`Idempotent request matched for key: ${data.idempotencyKey}`);
+        logger.info(
+          `Idempotent request matched for key: ${data.idempotencyKey}`,
+        );
         return existing;
       }
     }
 
     // 2. Validate Service exists & is active
-    const service = await serviceService.getServiceByCode(data.serviceCode, context);
+    const service = await serviceService.getServiceByCode(
+      data.serviceCode,
+      context,
+    );
     if (!service.isActive) {
       throw AppError.badRequest(
         "Requested service is currently disabled",
@@ -66,15 +83,24 @@ export class RequestService {
 
     // Check capability: isPublicAllowed vs isRetailerAllowed
     if (context.accessMode === "GUEST" && !service.isPublicAllowed) {
-      throw AppError.forbidden("This service requires retailer login", "AUTH_REQUIRED");
+      throw AppError.forbidden(
+        "This service requires retailer login",
+        "AUTH_REQUIRED",
+      );
     }
 
     if (context.accessMode === "RETAILER" && !service.isRetailerAllowed) {
-      throw AppError.forbidden("This service is not available for retailer workspace", "SERVICE_NOT_ALLOWED");
+      throw AppError.forbidden(
+        "This service is not available for retailer workspace",
+        "SERVICE_NOT_ALLOWED",
+      );
     }
 
     // Check capability: requiresCustomer
-    if (context.accessMode === "RETAILER" && service.requiresCustomer && !data.customerId) {
+    if (
+      context.accessMode === "RETAILER" && service.requiresCustomer &&
+      !data.customerId
+    ) {
       throw AppError.badRequest(
         "A customer profile must be selected for this service",
         "CUSTOMER_REQUIRED",
@@ -83,7 +109,10 @@ export class RequestService {
 
     // 3. Customer Authorization Check (BOLA Protection)
     let validatedCustomerId: string | null = null;
-    if (context.accessMode === "RETAILER" && data.customerId && context.organizationId) {
+    if (
+      context.accessMode === "RETAILER" && data.customerId &&
+      context.organizationId
+    ) {
       const customer = await customerService.getCustomerById(
         data.customerId,
         context.organizationId,

@@ -14,7 +14,10 @@ export class ServiceEngine {
   /**
    * Validates service-specific input payload before dispatching.
    */
-  validateServiceInput(serviceCode: string, inputData: Record<string, unknown>) {
+  validateServiceInput(
+    serviceCode: string,
+    inputData: Record<string, unknown>,
+  ) {
     if (serviceCode === "PAN_FIND") {
       const aadhaar = String(inputData.aadhaar || "").trim();
       if (!aadhaar || !/^\d{12}$/.test(aadhaar)) {

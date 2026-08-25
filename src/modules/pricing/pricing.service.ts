@@ -57,7 +57,9 @@ export class PricingService {
   async getPricingMatrix(serviceCode: string) {
     const prices = await pricingRepository.findPricesByServiceCode(serviceCode);
     if (!prices || prices.length === 0) {
-      throw AppError.notFound(`No pricing configured for service code: ${serviceCode}`);
+      throw AppError.notFound(
+        `No pricing configured for service code: ${serviceCode}`,
+      );
     }
     return prices.map((p) => ({
       tier: p.pricingTier,

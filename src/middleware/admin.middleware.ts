@@ -10,8 +10,9 @@ export const requireAdmin = (): MiddlewareHandler<ContextVariables> => {
       throw AppError.unauthorized("Authentication required", "AUTH_REQUIRED");
     }
 
-    const role =
-      typeof user.role === "string" ? user.role.toUpperCase() : user.role;
+    const role = typeof user.role === "string"
+      ? user.role.toUpperCase()
+      : user.role;
 
     if (role !== "ADMIN" && role !== "SUPER_ADMIN") {
       throw AppError.forbidden(

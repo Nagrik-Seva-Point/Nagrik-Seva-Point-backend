@@ -76,7 +76,8 @@ export class RequestRepository {
   }
 
   async updateStatus(id: string, status: RequestStatus, note?: string) {
-    const isTerminal = status === "COMPLETED" || status === "PROVIDER_FAILED" || status === "FAILED";
+    const isTerminal = status === "COMPLETED" || status === "PROVIDER_FAILED" ||
+      status === "FAILED";
 
     return await prisma.serviceRequest.update({
       where: { id },

@@ -14,7 +14,9 @@ export class PaymentService {
     currency = "INR",
   ) {
     // Generate an order ID (Simulated Razorpay order format)
-    const gatewayOrderId = `order_${crypto.randomUUID().replace(/-/g, "").substring(0, 14)}`;
+    const gatewayOrderId = `order_${
+      crypto.randomUUID().replace(/-/g, "").substring(0, 14)
+    }`;
 
     const payment = await paymentRepository.create({
       serviceRequestId,
@@ -26,7 +28,9 @@ export class PaymentService {
       gatewayOrderId,
     });
 
-    logger.info(`Payment order created: ${payment.id} for request: ${serviceRequestId}`);
+    logger.info(
+      `Payment order created: ${payment.id} for request: ${serviceRequestId}`,
+    );
     return payment;
   }
 

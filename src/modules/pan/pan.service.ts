@@ -8,10 +8,12 @@ export class PanService {
    * 1. Find PAN Number by 12-digit Aadhaar
    */
   async findPanByAadhaar(aadhaar: string): Promise<PanFindOutput> {
-    logger.info(`[PanService] Finding PAN for Aadhaar ending in ${aadhaar.slice(-4)}`);
+    logger.info(
+      `[PanService] Finding PAN for Aadhaar ending in ${aadhaar.slice(-4)}`,
+    );
 
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
-    
+
     if (response.Errorcode === 100 && response.Data?.PanNumber) {
       const pan = response.Data.PanNumber.trim().toUpperCase();
       const maskedPan = `XXXXX${pan.substring(5, 9)}${pan.substring(9)}`;
@@ -24,7 +26,8 @@ export class PanService {
       };
     }
 
-    const failureReason = response.Message || "No PAN found linked with this Aadhaar number in official registries.";
+    const failureReason = response.Message ||
+      "No PAN found linked with this Aadhaar number in official registries.";
     logger.warn(`[PanService] Find PAN failed: ${failureReason}`);
     throw AppError.badRequest(failureReason, "PAN_NOT_FOUND");
   }
@@ -45,13 +48,20 @@ export class PanService {
         fullName: d.full_name || "N/A",
         maskedAadhaar: d.masked_aadhaar || "N/A",
         dob: d.dob || "N/A",
-        gender: d.gender === "M" ? "Male (M)" : d.gender === "F" ? "Female (F)" : (d.gender || "N/A"),
+        gender: d.gender === "M"
+          ? "Male (M)"
+          : d.gender === "F"
+          ? "Female (F)"
+          : (d.gender || "N/A"),
         aadhaarLinked: Boolean(d.aadhaar_linked),
-        category: d.category ? `${d.category.charAt(0).toUpperCase() + d.category.slice(1)}` : "Individual",
+        category: d.category
+          ? `${d.category.charAt(0).toUpperCase() + d.category.slice(1)}`
+          : "Individual",
       };
     }
 
-    const failureReason = response.msg || "Failed to retrieve PAN details from official registry.";
+    const failureReason = response.msg ||
+      "Failed to retrieve PAN details from official registry.";
     logger.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
     throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
   }

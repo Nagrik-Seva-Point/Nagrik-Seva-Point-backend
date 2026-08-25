@@ -1,6 +1,14 @@
 import { env } from "./env";
 
-export const CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
+export const CORS_ALLOW_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+  "HEAD",
+];
 
 export const CORS_ALLOW_HEADERS = [
   "Content-Type",
@@ -15,7 +23,9 @@ export const CORS_ALLOW_HEADERS = [
   "Set-Cookie",
 ];
 
-export const getAllowedCorsOrigin = (origin?: string | null): string | undefined => {
+export const getAllowedCorsOrigin = (
+  origin?: string | null,
+): string | undefined => {
   if (!origin) {
     return undefined;
   }
@@ -23,5 +33,7 @@ export const getAllowedCorsOrigin = (origin?: string | null): string | undefined
   const cleanOrigin = origin.trim().toLowerCase();
 
   // Read strictly from CORS_ORIGIN environment variable
-  return env.CORS_ORIGIN.some((o) => o.toLowerCase() === cleanOrigin) ? origin : undefined;
+  return env.CORS_ORIGIN.some((o) => o.toLowerCase() === cleanOrigin)
+    ? origin
+    : undefined;
 };

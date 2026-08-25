@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { createAuthMiddleware, APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "../db/prisma";
 import { bearer, organization } from "better-auth/plugins";
 import { env } from "../config/env";
@@ -30,12 +30,12 @@ export const auth = betterAuth({
   },
   socialProviders: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
     ? {
-        google: {
-          clientId: env.GOOGLE_CLIENT_ID,
-          clientSecret: env.GOOGLE_CLIENT_SECRET,
-          disableSignUp: true, // Only allow existing registered users to log in with Google
-        },
-      }
+      google: {
+        clientId: env.GOOGLE_CLIENT_ID,
+        clientSecret: env.GOOGLE_CLIENT_SECRET,
+        disableSignUp: true, // Only allow existing registered users to log in with Google
+      },
+    }
     : undefined,
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
@@ -50,7 +50,8 @@ export const auth = betterAuth({
 
           if (existing) {
             throw new APIError("BAD_REQUEST", {
-              message: `An account with mobile number ${cleanPhone} already exists. Please sign in instead.`,
+              message:
+                `An account with mobile number ${cleanPhone} already exists. Please sign in instead.`,
             });
           }
 
@@ -61,7 +62,7 @@ export const auth = betterAuth({
   },
   advanced: {
     defaultCookieAttributes: {
-      domain: '.nagriksevapoint.in', // Set the domain to your main domain
+      domain: ".nagriksevapoint.in", // Set the domain to your main domain
       sameSite: "none",
       secure: true,
       httpOnly: true,

@@ -11,12 +11,21 @@ export class EzytmGateway {
   private proxyUrl?: string;
 
   constructor() {
-    this.baseUrl = (getEnvVar("EZYTM_BASE_URL") || "https://planapi.in").replace(/\/+$/, "");
-    this.tokenId = (getEnvVar("EZYTM_TOKEN_ID") || getEnvVar("PLANAPI_TOKEN_ID") || "").replace(/["']/g, "").trim();
-    this.apiUserId = (getEnvVar("EZYTM_API_USER_ID") || getEnvVar("PLANAPI_API_USER_ID") || "").replace(/["']/g, "").trim();
-    this.apiPassword = (getEnvVar("EZYTM_API_PASSWORD") || getEnvVar("PLANAPI_API_PASSWORD") || "").replace(/["']/g, "").trim();
-    this.apiMode = (getEnvVar("EZYTM_API_MODE") || "1").replace(/["']/g, "").trim();
-    this.proxyUrl = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY");
+    this.baseUrl = (getEnvVar("EZYTM_BASE_URL") || "https://planapi.in")
+      .replace(/\/+$/, "");
+    this.tokenId =
+      (getEnvVar("EZYTM_TOKEN_ID") || getEnvVar("PLANAPI_TOKEN_ID") || "")
+        .replace(/["']/g, "").trim();
+    this.apiUserId =
+      (getEnvVar("EZYTM_API_USER_ID") || getEnvVar("PLANAPI_API_USER_ID") || "")
+        .replace(/["']/g, "").trim();
+    this.apiPassword =
+      (getEnvVar("EZYTM_API_PASSWORD") || getEnvVar("PLANAPI_API_PASSWORD") ||
+        "").replace(/["']/g, "").trim();
+    this.apiMode = (getEnvVar("EZYTM_API_MODE") || "1").replace(/["']/g, "")
+      .trim();
+    this.proxyUrl = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") ||
+      getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY");
   }
 
   public isConfigured(): boolean {
@@ -36,7 +45,9 @@ export class EzytmGateway {
     ];
 
     for (const marker of dummyMarkers) {
-      if (token.includes(marker) || user.includes(marker) || pass.includes(marker)) {
+      if (
+        token.includes(marker) || user.includes(marker) || pass.includes(marker)
+      ) {
         return false;
       }
     }
@@ -47,10 +58,16 @@ export class EzytmGateway {
    * Generic form POST dispatcher with standard EzyTM/PlanAPI headers & form encoding.
    * Throws typed AppError on failure. No dummy fallback on live failure.
    */
-  async postForm<T>(endpoint: string, params: Record<string, string>): Promise<T> {
+  async postForm<T>(
+    endpoint: string,
+    params: Record<string, string>,
+  ): Promise<T> {
     if (!this.isConfigured()) {
       // In local dev/test environment without vendor credentials:
-      if (getEnvVar("DENO_TESTING") === "true" || getEnvVar("NODE_ENV") === "test" || !this.isConfigured()) {
+      if (
+        getEnvVar("DENO_TESTING") === "true" ||
+        getEnvVar("NODE_ENV") === "test" || !this.isConfigured()
+      ) {
         logger.warn(`[EzyTM Gateway] Test simulation active for ${endpoint}`);
         if (endpoint.includes("AadharToPanFind")) {
           return {
@@ -80,14 +97,18 @@ export class EzytmGateway {
         }
       }
 
-      logger.error("[EzyTM Gateway] API credentials not configured in environment variables.");
+      logger.error(
+        "[EzyTM Gateway] API credentials not configured in environment variables.",
+      );
       throw AppError.badGateway(
         "EzyTM vendor credentials (EZYTM_TOKEN_ID, EZYTM_API_USER_ID, EZYTM_API_PASSWORD) are not configured.",
         "GATEWAY_NOT_CONFIGURED",
       );
     }
 
-    const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+    const url = `${this.baseUrl}${
+      endpoint.startsWith("/") ? endpoint : `/${endpoint}`
+    }`;
     const headers: Record<string, string> = {
       "TokenID": this.tokenId,
       "ApiUserID": this.apiUserId,
@@ -126,8 +147,13 @@ export class EzytmGateway {
       clearTimeout(timeoutId);
       if (err instanceof AppError) throw err;
       if (err.name === "AbortError") {
-        logger.error(`[EzyTM Gateway] Timeout after 15s communicating with ${url}`);
-        throw AppError.badGateway("EzyTM gateway connection timed out", "GATEWAY_TIMEOUT");
+        logger.error(
+          `[EzyTM Gateway] Timeout after 15s communicating with ${url}`,
+        );
+        throw AppError.badGateway(
+          "EzyTM gateway connection timed out",
+          "GATEWAY_TIMEOUT",
+        );
       }
       logger.error(`[EzyTM Gateway] Connection error to ${url}:`, err);
       throw AppError.badGateway(

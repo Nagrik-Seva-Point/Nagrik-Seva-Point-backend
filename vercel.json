@@ -1,11 +1,16 @@
 {
   "version": 2,
-  "buildCommand": "prisma generate",
+  "functions": {
+    "api/index.ts": {
+      "runtime": "vercel-deno@3.2.0"
+    }
+  },
+  "buildCommand": "npx prisma generate",
   "outputDirectory": "public",
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/api"
+      "destination": "/api/index.ts"
     }
   ]
 }

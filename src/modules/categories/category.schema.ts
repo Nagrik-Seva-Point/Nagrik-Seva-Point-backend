@@ -9,7 +9,9 @@ export const createCategorySchema = z.object({
       /^[A-Z0-9_]+$/,
       "Category code must be uppercase alphanumeric and underscores only (e.g. AGRICULTURE)",
     ),
-  name: z.string().min(2, "Category name must be at least 2 characters").max(100),
+  name: z.string().min(2, "Category name must be at least 2 characters").max(
+    100,
+  ),
   description: z.string().optional(),
   icon: z.string().optional(),
   displayOrder: z.number().int().default(0),

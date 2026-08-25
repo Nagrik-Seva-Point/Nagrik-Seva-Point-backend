@@ -5,7 +5,9 @@ import type { ContextVariables } from "../app/context";
 import type { RequestContext } from "../core/types/context.types";
 import { logger } from "../core/logger/logger";
 
-export const requestContextMiddleware = (): MiddlewareHandler<ContextVariables> => {
+export const requestContextMiddleware = (): MiddlewareHandler<
+  ContextVariables
+> => {
   return async (c: Context<ContextVariables>, next) => {
     try {
       // 1. Check for authenticated session via Better Auth
@@ -64,7 +66,9 @@ export const requestContextMiddleware = (): MiddlewareHandler<ContextVariables> 
           if (membership) {
             c.set("organization", membership.organization);
           } else {
-            logger.warn(`User ${userId} attempted to access unauthorized org ${organizationId}`);
+            logger.warn(
+              `User ${userId} attempted to access unauthorized org ${organizationId}`,
+            );
             organizationId = null;
           }
         }
@@ -86,7 +90,9 @@ export const requestContextMiddleware = (): MiddlewareHandler<ContextVariables> 
         // 3. Resolve Guest Context
         let guestSessionId = c.req.header("x-guest-session-id");
         if (!guestSessionId) {
-          guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
+          guestSessionId = `gst_${
+            crypto.randomUUID().replace(/-/g, "").substring(0, 16)
+          }`;
         }
 
         const requestContext: RequestContext = {
@@ -107,7 +113,9 @@ export const requestContextMiddleware = (): MiddlewareHandler<ContextVariables> 
     } catch (error) {
       logger.error("Error resolving request context:", error);
       // Fallback to Guest on session error
-      const guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
+      const guestSessionId = `gst_${
+        crypto.randomUUID().replace(/-/g, "").substring(0, 16)
+      }`;
       c.set("requestContext", {
         accessMode: "GUEST",
         userId: null,

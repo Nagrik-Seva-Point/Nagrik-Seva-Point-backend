@@ -4,10 +4,10 @@ import { authService } from "./auth.service";
 import {
   type CheckAvailabilityInput,
   checkAvailabilitySchema,
-  type RegisterRetailerInput,
-  registerRetailerSchema,
   type LoginInput,
   loginSchema,
+  type RegisterRetailerInput,
+  registerRetailerSchema,
 } from "./auth.schema";
 import type { ContextVariables } from "../../app/context";
 

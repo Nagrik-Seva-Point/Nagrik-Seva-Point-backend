@@ -2,9 +2,8 @@
   "name": "nagrik-seva-backend",
   "version": "1.0.0",
   "description": "Nagrik Seva Platform Backend API",
-  "main": "api/index.ts",
+  "type": "module",
   "scripts": {
-    "vercel-build": "prisma generate",
     "build": "prisma generate",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
@@ -14,7 +13,6 @@
   "dependencies": {
     "@prisma/adapter-pg": "7.9.1",
     "@prisma/client": "7.9.1",
-    "@hono/node-server": "^1.13.0",
     "better-auth": "^1.1.0",
     "dotenv": "^16.4.5",
     "hono": "^4.6.0",

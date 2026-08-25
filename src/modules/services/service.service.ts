@@ -14,7 +14,9 @@ export class ServiceService {
   /**
    * Helper to resolve category ID from input (supports UUID or code string)
    */
-  private async resolveCategoryId(categoryIdOrCode?: string): Promise<string | null> {
+  private async resolveCategoryId(
+    categoryIdOrCode?: string,
+  ): Promise<string | null> {
     if (!categoryIdOrCode) {
       const defaultCat = await prisma.serviceCategory.findFirst({
         where: { code: "IDENTITY_TAX" },
@@ -50,22 +52,39 @@ export class ServiceService {
 
     return services.map((service) => {
       // Extract all tier price snapshots
-      const publicPriceRecord = service.prices.find((p) => p.pricingTier === "PUBLIC");
-      const partnerPriceRecord = service.prices.find((p) => p.pricingTier === "PARTNER");
-      const goldPriceRecord = service.prices.find((p) => p.pricingTier === "PARTNER_GOLD");
-      const enterprisePriceRecord = service.prices.find((p) => p.pricingTier === "ENTERPRISE");
+      const publicPriceRecord = service.prices.find((p) =>
+        p.pricingTier === "PUBLIC"
+      );
+      const partnerPriceRecord = service.prices.find((p) =>
+        p.pricingTier === "PARTNER"
+      );
+      const goldPriceRecord = service.prices.find((p) =>
+        p.pricingTier === "PARTNER_GOLD"
+      );
+      const enterprisePriceRecord = service.prices.find((p) =>
+        p.pricingTier === "ENTERPRISE"
+      );
 
-      const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 40.0;
-      const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 25.0;
+      const publicPrice = publicPriceRecord
+        ? Number(publicPriceRecord.amount)
+        : 40.0;
+      const partnerPrice = partnerPriceRecord
+        ? Number(partnerPriceRecord.amount)
+        : 25.0;
 
       // Find matching price for caller's tier, fallback to PARTNER or default
-      const matchedPrice =
-        service.prices.find((p) => p.pricingTier === context.pricingTier) ||
-        (context.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) ||
+      const matchedPrice = service.prices.find((p) =>
+        p.pricingTier === context.pricingTier
+      ) ||
+        (context.accessMode === "GUEST"
+          ? publicPriceRecord
+          : partnerPriceRecord) ||
         partnerPriceRecord ||
         publicPriceRecord;
 
-      const defaultAmount = context.accessMode === "GUEST" ? publicPrice : partnerPrice;
+      const defaultAmount = context.accessMode === "GUEST"
+        ? publicPrice
+        : partnerPrice;
 
       return {
         id: service.id,
@@ -75,10 +94,10 @@ export class ServiceService {
         categoryId: service.categoryId,
         category: service.category
           ? {
-              id: service.category.id,
-              code: service.category.code,
-              name: service.category.name,
-            }
+            id: service.category.id,
+            code: service.category.code,
+            name: service.category.name,
+          }
           : null,
         isActive: service.isActive,
         isPublicAllowed: service.isPublicAllowed,
@@ -94,7 +113,9 @@ export class ServiceService {
           public: publicPrice,
           partner: partnerPrice,
           partnerGold: goldPriceRecord ? Number(goldPriceRecord.amount) : null,
-          enterprise: enterprisePriceRecord ? Number(enterprisePriceRecord.amount) : null,
+          enterprise: enterprisePriceRecord
+            ? Number(enterprisePriceRecord.amount)
+            : null,
         },
         pricing: {
           amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
@@ -124,25 +145,42 @@ export class ServiceService {
       context.accessMode === "RETAILER" &&
       !service.isRetailerAllowed
     ) {
-      throw AppError.forbidden("This service is not enabled for retailer workspace");
+      throw AppError.forbidden(
+        "This service is not enabled for retailer workspace",
+      );
     }
 
-    const publicPriceRecord = service.prices.find((p) => p.pricingTier === "PUBLIC");
-    const partnerPriceRecord = service.prices.find((p) => p.pricingTier === "PARTNER");
-    const goldPriceRecord = service.prices.find((p) => p.pricingTier === "PARTNER_GOLD");
-    const enterprisePriceRecord = service.prices.find((p) => p.pricingTier === "ENTERPRISE");
+    const publicPriceRecord = service.prices.find((p) =>
+      p.pricingTier === "PUBLIC"
+    );
+    const partnerPriceRecord = service.prices.find((p) =>
+      p.pricingTier === "PARTNER"
+    );
+    const goldPriceRecord = service.prices.find((p) =>
+      p.pricingTier === "PARTNER_GOLD"
+    );
+    const enterprisePriceRecord = service.prices.find((p) =>
+      p.pricingTier === "ENTERPRISE"
+    );
 
-    const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 40.0;
-    const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 25.0;
+    const publicPrice = publicPriceRecord
+      ? Number(publicPriceRecord.amount)
+      : 40.0;
+    const partnerPrice = partnerPriceRecord
+      ? Number(partnerPriceRecord.amount)
+      : 25.0;
 
     const tier = context?.pricingTier || "PARTNER";
-    const matchedPrice =
-      service.prices.find((p) => p.pricingTier === tier) ||
-      (context?.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) ||
+    const matchedPrice = service.prices.find((p) => p.pricingTier === tier) ||
+      (context?.accessMode === "GUEST"
+        ? publicPriceRecord
+        : partnerPriceRecord) ||
       partnerPriceRecord ||
       publicPriceRecord;
 
-    const defaultAmount = context?.accessMode === "GUEST" ? publicPrice : partnerPrice;
+    const defaultAmount = context?.accessMode === "GUEST"
+      ? publicPrice
+      : partnerPrice;
 
     return {
       id: service.id,
@@ -152,10 +190,10 @@ export class ServiceService {
       categoryId: service.categoryId,
       category: service.category
         ? {
-            id: service.category.id,
-            code: service.category.code,
-            name: service.category.name,
-          }
+          id: service.category.id,
+          code: service.category.code,
+          name: service.category.name,
+        }
         : null,
       isActive: service.isActive,
       isPublicAllowed: service.isPublicAllowed,
@@ -171,7 +209,9 @@ export class ServiceService {
         public: publicPrice,
         partner: partnerPrice,
         partnerGold: goldPriceRecord ? Number(goldPriceRecord.amount) : null,
-        enterprise: enterprisePriceRecord ? Number(enterprisePriceRecord.amount) : null,
+        enterprise: enterprisePriceRecord
+          ? Number(enterprisePriceRecord.amount)
+          : null,
       },
       pricing: {
         amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
@@ -209,10 +249,10 @@ export class ServiceService {
         categoryId: s.categoryId,
         category: s.category
           ? {
-              id: s.category.id,
-              code: s.category.code,
-              name: s.category.name,
-            }
+            id: s.category.id,
+            code: s.category.code,
+            name: s.category.name,
+          }
           : null,
         isActive: s.isActive,
         isPublicAllowed: s.isPublicAllowed,
@@ -467,7 +507,9 @@ export class ServiceService {
       });
     });
 
-    logger.info(`Admin permanently deleted service: ${existing.code} (ID: ${id})`);
+    logger.info(
+      `Admin permanently deleted service: ${existing.code} (ID: ${id})`,
+    );
     return {
       success: true,
       message: `Service ${existing.code} has been permanently deleted.`,

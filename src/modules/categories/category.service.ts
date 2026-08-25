@@ -65,7 +65,9 @@ export class CategoryService {
     }
 
     const created = await categoryRepository.create(input);
-    logger.info(`Admin created new category: ${created.code} (${created.name})`);
+    logger.info(
+      `Admin created new category: ${created.code} (${created.name})`,
+    );
     return await this.getCategoryById(created.id);
   }
 
@@ -90,7 +92,8 @@ export class CategoryService {
     logger.info(`Admin deleted category: ${existing.code} (${existing.name})`);
     return {
       success: true,
-      message: `Category "${existing.name}" (${existing.code}) deleted successfully.`,
+      message:
+        `Category "${existing.name}" (${existing.code}) deleted successfully.`,
     };
   }
 }

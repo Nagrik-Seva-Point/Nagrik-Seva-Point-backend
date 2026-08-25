@@ -4,8 +4,8 @@ import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import type {
   CheckAvailabilityInput,
-  RegisterRetailerInput,
   LoginInput,
+  RegisterRetailerInput,
 } from "./auth.schema";
 
 export class AuthService {
@@ -22,7 +22,8 @@ export class AuthService {
         return {
           available: false,
           field: "email",
-          message: "An account with this email address already exists. Please sign in instead.",
+          message:
+            "An account with this email address already exists. Please sign in instead.",
         };
       }
     }
@@ -36,7 +37,8 @@ export class AuthService {
         return {
           available: false,
           field: "phone",
-          message: "An account with this mobile number already exists. Please sign in instead.",
+          message:
+            "An account with this mobile number already exists. Please sign in instead.",
         };
       }
     }
@@ -89,7 +91,9 @@ export class AuthService {
     });
 
     if (!signUpResult || !signUpResult.user) {
-      throw AppError.internal("Failed to initialize user authentication credentials");
+      throw AppError.internal(
+        "Failed to initialize user authentication credentials",
+      );
     }
 
     const userId = signUpResult.user.id;
@@ -168,7 +172,10 @@ export class AuthService {
       });
 
       if (!user) {
-        throw AppError.unauthorized("Invalid mobile number or password", "AUTH_FAILED");
+        throw AppError.unauthorized(
+          "Invalid mobile number or password",
+          "AUTH_FAILED",
+        );
       }
 
       targetEmail = user.email;
@@ -221,14 +228,14 @@ export class AuthService {
         },
         organization: membership
           ? {
-              id: membership.organization.id,
-              name: membership.organization.name,
-              slug: membership.organization.slug,
-              role: membership.role,
-              walletBalance: membership.organization.wallet
-                ? Number(membership.organization.wallet.balance)
-                : 0.00,
-            }
+            id: membership.organization.id,
+            name: membership.organization.name,
+            slug: membership.organization.slug,
+            role: membership.role,
+            walletBalance: membership.organization.wallet
+              ? Number(membership.organization.wallet.balance)
+              : 0.00,
+          }
           : null,
         token: signInResult.token,
       };
@@ -237,7 +244,10 @@ export class AuthService {
         throw error;
       }
       logger.error("Login verification error:", error);
-      throw AppError.unauthorized("Invalid email, mobile number or password", "AUTH_FAILED");
+      throw AppError.unauthorized(
+        "Invalid email, mobile number or password",
+        "AUTH_FAILED",
+      );
     }
   }
 }
