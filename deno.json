@@ -23,6 +23,7 @@
     "@types/pg": "npm:@types/pg@^8.11.10",
     "qrcode": "npm:qrcode@^1.5.4",
     "zod": "npm:zod@^3.23.8",
+    "undici": "npm:undici@^6.19.0",
     "dotenv": "npm:dotenv@^16.4.5"
   },
   "nodeModulesDir": "auto",

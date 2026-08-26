@@ -1,3 +1,4 @@
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { getEnvVar } from "../../config/env-helper";
 import { AppError } from "../../errors/AppError";
 import { logger } from "../../logger/logger";
@@ -142,43 +143,22 @@ export class EzytmGateway {
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const activeProxyUrl = this.getProxyUrl() || this.proxyUrl;
-    let dispatcher: any = undefined;
-    let client: any = undefined;
-    let undiciInstance: any = undefined;
+    let dispatcher: ProxyAgent | undefined = undefined;
 
     if (activeProxyUrl) {
       try {
-        // @ts-ignore
-        const undici = await import("undici").catch(() => null);
-        if (undici?.ProxyAgent) {
-          undiciInstance = undici;
-          dispatcher = new undici.ProxyAgent(activeProxyUrl);
-          const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
-          logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy: ${maskedProxy}`);
-        }
-      } catch (e) {
-        logger.warn("[EzyTM Gateway] undici not available for proxy.");
-      }
-
-      // @ts-ignore
-      if (typeof Deno !== "undefined" && typeof Deno.createHttpClient === "function") {
-        try {
-          // @ts-ignore
-          client = Deno.createHttpClient({ proxy: { url: activeProxyUrl } });
-          logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy (Deno)`);
-        } catch (e) {
-          logger.warn("[EzyTM Gateway] Deno proxy client initialization failed:", e);
-        }
+        dispatcher = new ProxyAgent(activeProxyUrl);
+        const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
+        logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy: ${maskedProxy}`);
+      } catch (err) {
+        logger.error(`[EzyTM Gateway] Failed to create ProxyAgent with URL "${activeProxyUrl}":`, err);
       }
     } else {
       logger.warn("[EzyTM Gateway] ⚠️ NO PROXY URL found in environment (checked EZYTM_PROXY_URL, WEBSHARE_URL, PROXY_URL, HTTPS_PROXY). Using direct connection.");
     }
 
     try {
-      // Use undici.fetch directly if available with dispatcher to ensure proxy routing
-      const fetchFunction = (dispatcher && typeof undiciInstance?.fetch === "function")
-        ? undiciInstance.fetch
-        : fetch;
+      const fetchFunction = dispatcher ? undiciFetch : fetch;
 
       const response = await fetchFunction(url, {
         method: "POST",
@@ -187,8 +167,6 @@ export class EzytmGateway {
         signal: controller.signal,
         // @ts-ignore
         dispatcher,
-        // @ts-ignore
-        client,
       });
 
       clearTimeout(timeoutId);

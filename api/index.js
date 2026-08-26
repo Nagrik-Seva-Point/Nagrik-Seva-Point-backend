@@ -8435,7 +8435,7 @@ var require_proxy_agent = __commonJS({
         return this.#client.destroy(err);
       }
     };
-    var ProxyAgent = class extends DispatcherBase {
+    var ProxyAgent2 = class extends DispatcherBase {
       constructor(opts) {
         super();
         if (!opts || typeof opts === "object" && !(opts instanceof URL2) && !opts.uri) {
@@ -8576,7 +8576,7 @@ var require_proxy_agent = __commonJS({
         throw new InvalidArgumentError("Proxy-Authorization should be sent in ProxyAgent constructor");
       }
     }
-    module.exports = ProxyAgent;
+    module.exports = ProxyAgent2;
   }
 });
 
@@ -8586,7 +8586,7 @@ var require_env_http_proxy_agent = __commonJS({
     "use strict";
     var DispatcherBase = require_dispatcher_base();
     var { kClose, kDestroy, kClosed, kDestroyed, kDispatch, kNoProxyAgent, kHttpProxyAgent, kHttpsProxyAgent } = require_symbols();
-    var ProxyAgent = require_proxy_agent();
+    var ProxyAgent2 = require_proxy_agent();
     var Agent = require_agent();
     var DEFAULT_PORTS = {
       "http:": 80,
@@ -8610,13 +8610,13 @@ var require_env_http_proxy_agent = __commonJS({
         this[kNoProxyAgent] = new Agent(agentOpts);
         const HTTP_PROXY = httpProxy ?? process.env.http_proxy ?? process.env.HTTP_PROXY;
         if (HTTP_PROXY) {
-          this[kHttpProxyAgent] = new ProxyAgent({ ...agentOpts, uri: HTTP_PROXY });
+          this[kHttpProxyAgent] = new ProxyAgent2({ ...agentOpts, uri: HTTP_PROXY });
         } else {
           this[kHttpProxyAgent] = this[kNoProxyAgent];
         }
         const HTTPS_PROXY = httpsProxy ?? process.env.https_proxy ?? process.env.HTTPS_PROXY;
         if (HTTPS_PROXY) {
-          this[kHttpsProxyAgent] = new ProxyAgent({ ...agentOpts, uri: HTTPS_PROXY });
+          this[kHttpsProxyAgent] = new ProxyAgent2({ ...agentOpts, uri: HTTPS_PROXY });
         } else {
           this[kHttpsProxyAgent] = this[kHttpProxyAgent];
         }
@@ -18466,7 +18466,7 @@ var require_undici = __commonJS({
     var Pool = require_pool();
     var BalancedPool = require_balanced_pool();
     var Agent = require_agent();
-    var ProxyAgent = require_proxy_agent();
+    var ProxyAgent2 = require_proxy_agent();
     var EnvHttpProxyAgent = require_env_http_proxy_agent();
     var RetryAgent = require_retry_agent();
     var errors = require_errors();
@@ -18489,7 +18489,7 @@ var require_undici = __commonJS({
     module.exports.Pool = Pool;
     module.exports.BalancedPool = BalancedPool;
     module.exports.Agent = Agent;
-    module.exports.ProxyAgent = ProxyAgent;
+    module.exports.ProxyAgent = ProxyAgent2;
     module.exports.EnvHttpProxyAgent = EnvHttpProxyAgent;
     module.exports.RetryAgent = RetryAgent;
     module.exports.RetryHandler = RetryHandler;
@@ -26873,6 +26873,7 @@ var PaymentService = class {
 var paymentService = new PaymentService();
 
 // src/core/integrations/ezytm/ezytm.gateway.ts
+var import_undici = __toESM(require_undici(), 1);
 var EzytmGateway = class {
   baseUrl;
   tokenId;
@@ -26970,42 +26971,26 @@ var EzytmGateway = class {
     const timeoutId = setTimeout(() => controller.abort(), 15e3);
     const activeProxyUrl = this.getProxyUrl() || this.proxyUrl;
     let dispatcher = void 0;
-    let client = void 0;
-    let undiciInstance = void 0;
     if (activeProxyUrl) {
       try {
-        const undici = await Promise.resolve().then(() => __toESM(require_undici(), 1)).catch(() => null);
-        if (undici?.ProxyAgent) {
-          undiciInstance = undici;
-          dispatcher = new undici.ProxyAgent(activeProxyUrl);
-          const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
-          logger2.info(`[EzyTM Gateway] Routing request through Static IP Proxy: ${maskedProxy}`);
-        }
-      } catch (e) {
-        logger2.warn("[EzyTM Gateway] undici not available for proxy.");
-      }
-      if (typeof Deno !== "undefined" && typeof Deno.createHttpClient === "function") {
-        try {
-          client = Deno.createHttpClient({ proxy: { url: activeProxyUrl } });
-          logger2.info(`[EzyTM Gateway] Routing request through Static IP Proxy (Deno)`);
-        } catch (e) {
-          logger2.warn("[EzyTM Gateway] Deno proxy client initialization failed:", e);
-        }
+        dispatcher = new import_undici.ProxyAgent(activeProxyUrl);
+        const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
+        logger2.info(`[EzyTM Gateway] Routing request through Static IP Proxy: ${maskedProxy}`);
+      } catch (err) {
+        logger2.error(`[EzyTM Gateway] Failed to create ProxyAgent with URL "${activeProxyUrl}":`, err);
       }
     } else {
       logger2.warn("[EzyTM Gateway] \u26A0\uFE0F NO PROXY URL found in environment (checked EZYTM_PROXY_URL, WEBSHARE_URL, PROXY_URL, HTTPS_PROXY). Using direct connection.");
     }
     try {
-      const fetchFunction = dispatcher && typeof undiciInstance?.fetch === "function" ? undiciInstance.fetch : fetch;
+      const fetchFunction = dispatcher ? import_undici.fetch : fetch;
       const response = await fetchFunction(url, {
         method: "POST",
         headers,
         body: body.toString(),
         signal: controller.signal,
         // @ts-ignore
-        dispatcher,
-        // @ts-ignore
-        client
+        dispatcher
       });
       clearTimeout(timeoutId);
       const text = await response.text();
