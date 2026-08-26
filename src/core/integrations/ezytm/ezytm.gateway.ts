@@ -24,8 +24,9 @@ export class EzytmGateway {
         "").replace(/["']/g, "").trim();
     this.apiMode = (getEnvVar("EZYTM_API_MODE") || "1").replace(/["']/g, "")
       .trim();
-    this.proxyUrl = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") ||
-      getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY");
+    const rawProxy = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") ||
+      getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY") || getEnvVar("HTTP_PROXY");
+    this.proxyUrl = rawProxy ? rawProxy.replace(/["']/g, "").trim() : undefined;
   }
 
   public isConfigured(): boolean {
@@ -124,11 +125,14 @@ export class EzytmGateway {
 
     let dispatcher: any = undefined;
     let client: any = undefined;
+    let undiciInstance: any = undefined;
+
     if (this.proxyUrl) {
       try {
         // @ts-ignore
         const undici = await import("undici").catch(() => null);
         if (undici?.ProxyAgent) {
+          undiciInstance = undici;
           dispatcher = new undici.ProxyAgent(this.proxyUrl);
           logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy (Undici)`);
         }
@@ -146,10 +150,17 @@ export class EzytmGateway {
           logger.warn("[EzyTM Gateway] Deno proxy client initialization failed:", e);
         }
       }
+    } else {
+      logger.warn("[EzyTM Gateway] No proxy URL configured, using direct connection.");
     }
 
     try {
-      const response = await fetch(url, {
+      // Use undici.fetch directly if available with dispatcher to ensure proxy routing
+      const fetchFunction = (dispatcher && typeof undiciInstance?.fetch === "function")
+        ? undiciInstance.fetch
+        : fetch;
+
+      const response = await fetchFunction(url, {
         method: "POST",
         headers,
         body: body.toString(),

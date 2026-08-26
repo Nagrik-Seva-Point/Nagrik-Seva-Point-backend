@@ -26886,7 +26886,8 @@ var EzytmGateway = class {
     this.apiUserId = (getEnvVar("EZYTM_API_USER_ID") || getEnvVar("PLANAPI_API_USER_ID") || "").replace(/["']/g, "").trim();
     this.apiPassword = (getEnvVar("EZYTM_API_PASSWORD") || getEnvVar("PLANAPI_API_PASSWORD") || "").replace(/["']/g, "").trim();
     this.apiMode = (getEnvVar("EZYTM_API_MODE") || "1").replace(/["']/g, "").trim();
-    this.proxyUrl = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY");
+    const rawProxy = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY") || getEnvVar("HTTP_PROXY");
+    this.proxyUrl = rawProxy ? rawProxy.replace(/["']/g, "").trim() : void 0;
   }
   isConfigured() {
     const token = this.tokenId.toLowerCase();
@@ -26965,10 +26966,12 @@ var EzytmGateway = class {
     const timeoutId = setTimeout(() => controller.abort(), 15e3);
     let dispatcher = void 0;
     let client = void 0;
+    let undiciInstance = void 0;
     if (this.proxyUrl) {
       try {
         const undici = await Promise.resolve().then(() => __toESM(require_undici(), 1)).catch(() => null);
         if (undici?.ProxyAgent) {
+          undiciInstance = undici;
           dispatcher = new undici.ProxyAgent(this.proxyUrl);
           logger2.info(`[EzyTM Gateway] Routing request through Static IP Proxy (Undici)`);
         }
@@ -26983,9 +26986,12 @@ var EzytmGateway = class {
           logger2.warn("[EzyTM Gateway] Deno proxy client initialization failed:", e);
         }
       }
+    } else {
+      logger2.warn("[EzyTM Gateway] No proxy URL configured, using direct connection.");
     }
     try {
-      const response = await fetch(url, {
+      const fetchFunction = dispatcher && typeof undiciInstance?.fetch === "function" ? undiciInstance.fetch : fetch;
+      const response = await fetchFunction(url, {
         method: "POST",
         headers,
         body: body.toString(),
@@ -27063,9 +27069,7 @@ var PanService = class {
     logger2.info(
       `[PanService] Finding PAN for Aadhaar ending in ${aadhaar.slice(-4)}`
     );
-    console.log("Calling ezytmPanGateway.findPanByAadhaar with aadhaar:", aadhaar);
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
-    logger2.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
     const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
     if (response.Errorcode === 100) {
       if (panNumber) {
@@ -27098,10 +27102,7 @@ var PanService = class {
    */
   async getPanDetails(pan) {
     const cleanPan = pan.trim().toUpperCase();
-    logger2.info(`[PanService] Fetching details for PAN: ${cleanPan}`);
-    console.log("Calling ezytmPanGateway.getPanDetails with pan:", cleanPan);
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
-    logger2.info(`[PanService] Raw PAN Details response received: ${JSON.stringify(response)}`);
     if (response.Errorcode === 100 && response.data) {
       const d = response.data;
       return {
