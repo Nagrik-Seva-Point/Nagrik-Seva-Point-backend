@@ -147,21 +147,24 @@ export class RequestService {
     // 6.5 Fetch User for Cashfree
     let customerName = "Customer";
     let customerEmail = "customer@nagriksevapoint.in";
+    let customerPhone = "9999999999";
     if (context.userId) {
       const user = await prisma.user.findUnique({ where: { id: context.userId } });
       if (user) {
         customerName = user.name || customerName;
         customerEmail = user.email || customerEmail;
+        if ((user as any).phone) customerPhone = (user as any).phone;
       }
     }
 
     // 7. Generate Payment Order (Cashfree)
     const paymentSession = await paymentService.createCashfreeOrderFromRequest(
       request,
-      context.userId || context.guestSessionId || "unknown",
+      context.userId || null,
+      context.guestSessionId || null,
       customerName,
       customerEmail,
-      "9999999999" // Use user.phone if available
+      customerPhone
     );
 
     // 8. Transition status to PRICE_LOCKED & PAYMENT_PENDING
@@ -176,6 +179,7 @@ export class RequestService {
       payment: {
         payment_session_id: paymentSession.payment_session_id,
         order_id: paymentSession.order_id,
+        mode: paymentSession.mode,
         amount: Number(priceSnapshot.amount),
         currency: priceSnapshot.currency,
       },

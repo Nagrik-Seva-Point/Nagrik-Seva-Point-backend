@@ -12,21 +12,23 @@ export class PaymentService {
    */
   async createCashfreeOrderFromRequest(
     serviceRequest: any,
-    userId: string,
+    userId: string | null,
+    guestSessionId: string | null,
     customerName: string,
     customerEmail: string,
     customerPhone: string
   ) {
     const amount = Number(serviceRequest.amount);
-    const organizationId = serviceRequest.organizationId;
+    const organizationId = serviceRequest.organizationId || null;
     const generatedOrderId = `CF_ORD_${Date.now()}_${randomUUID().slice(0, 6).toUpperCase()}`;
 
     // Create Payment Record (PENDING) with industry-standard fields
+    // NOTE: userId MUST be a real User ID from context.userId, or null for guests (foreign key constraint)
     const payment = await prisma.payment.create({
       data: {
         serviceRequestId: serviceRequest.id,
         organizationId,
-        userId: userId !== "unknown" ? userId : null,
+        userId: userId || null,
         amount: amount,
         currency: "INR",
         method: "CASHFREE",
@@ -35,12 +37,16 @@ export class PaymentService {
       },
     });
 
+    // Determine Cashfree customerId (alphanumeric, underscore, hyphen, max 45 chars)
+    const rawCustomerId = userId || guestSessionId || `GUEST_${randomUUID().slice(0, 8)}`;
+    const cfCustomerId = rawCustomerId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 45);
+
     // Call Cashfree Gateway
     try {
       const orderData = await cashfreeGateway.createOrder({
         orderId: generatedOrderId,
         orderAmount: amount,
-        customerId: userId !== "unknown" ? userId : `GUEST_${randomUUID().slice(0, 8)}`,
+        customerId: cfCustomerId,
         customerName: customerName,
         customerEmail: customerEmail,
         customerPhone: customerPhone,
@@ -55,9 +61,16 @@ export class PaymentService {
         },
       });
 
+      const mode =
+        process.env.CASHFREE_ENVIRONMENT ||
+        ((process.env.CASHFREE_API_URL || "").includes("sandbox")
+          ? "sandbox"
+          : "production");
+
       return {
         payment_session_id: orderData.payment_session_id,
         order_id: orderData.order_id,
+        mode,
       };
     } catch (err: any) {
       await prisma.payment.update({

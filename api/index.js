@@ -8200,7 +8200,10 @@ var CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || "";
 var API_VERSION = "2023-08-01";
 var CashfreeGateway = class {
   async createOrder(params) {
-    if (!CASHFREE_CLIENT_ID || !CASHFREE_CLIENT_SECRET) {
+    const clientId = process.env.CASHFREE_CLIENT_ID || CASHFREE_CLIENT_ID;
+    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
+    const apiUrl = process.env.CASHFREE_API_URL || CASHFREE_API_URL;
+    if (!clientId || !clientSecret) {
       throw AppError.internal("Cashfree credentials not configured");
     }
     const payload = {
@@ -8218,15 +8221,15 @@ var CashfreeGateway = class {
         notify_url: params.notifyUrl || `https://api.nagriksevapoint.in/api/v1/payments/cashfree/webhook`
       }
     };
-    logger2.info(`[CashfreeGateway] Creating order: ${params.orderId} for ${params.orderAmount} INR`);
+    logger2.info(`[CashfreeGateway] Creating order: ${params.orderId} for ${params.orderAmount} INR (URL: ${apiUrl})`);
     try {
-      const response = await fetch(`${CASHFREE_API_URL}/orders`, {
+      const response = await fetch(`${apiUrl}/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-api-version": API_VERSION,
-          "x-client-id": CASHFREE_CLIENT_ID,
-          "x-client-secret": CASHFREE_CLIENT_SECRET
+          "x-client-id": clientId,
+          "x-client-secret": clientSecret
         },
         body: JSON.stringify(payload)
       });
@@ -8242,16 +8245,19 @@ var CashfreeGateway = class {
     }
   }
   async getOrder(orderId) {
-    if (!CASHFREE_CLIENT_ID || !CASHFREE_CLIENT_SECRET) {
+    const clientId = process.env.CASHFREE_CLIENT_ID || CASHFREE_CLIENT_ID;
+    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
+    const apiUrl = process.env.CASHFREE_API_URL || CASHFREE_API_URL;
+    if (!clientId || !clientSecret) {
       throw AppError.internal("Cashfree credentials not configured");
     }
     try {
-      const response = await fetch(`${CASHFREE_API_URL}/orders/${orderId}`, {
+      const response = await fetch(`${apiUrl}/orders/${orderId}`, {
         method: "GET",
         headers: {
           "x-api-version": API_VERSION,
-          "x-client-id": CASHFREE_CLIENT_ID,
-          "x-client-secret": CASHFREE_CLIENT_SECRET
+          "x-client-id": clientId,
+          "x-client-secret": clientSecret
         }
       });
       const data = await response.json();
@@ -8266,11 +8272,12 @@ var CashfreeGateway = class {
     }
   }
   verifyWebhookSignature(rawBody, signature, timestamp) {
-    if (!signature || !timestamp || !CASHFREE_CLIENT_SECRET) {
+    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
+    if (!signature || !timestamp || !clientSecret) {
       return false;
     }
     try {
-      const generatedSignature = crypto2.createHmac("sha256", CASHFREE_CLIENT_SECRET).update(timestamp + rawBody).digest("base64");
+      const generatedSignature = crypto2.createHmac("sha256", clientSecret).update(timestamp + rawBody).digest("base64");
       return generatedSignature === signature;
     } catch (err) {
       logger2.error("[CashfreeGateway] Signature verification exception");
@@ -8605,15 +8612,15 @@ var PaymentService = class {
   /**
    * Generates a Cashfree Order from a newly created Service Request
    */
-  async createCashfreeOrderFromRequest(serviceRequest, userId, customerName, customerEmail, customerPhone) {
+  async createCashfreeOrderFromRequest(serviceRequest, userId, guestSessionId, customerName, customerEmail, customerPhone) {
     const amount = Number(serviceRequest.amount);
-    const organizationId = serviceRequest.organizationId;
+    const organizationId = serviceRequest.organizationId || null;
     const generatedOrderId = `CF_ORD_${Date.now()}_${randomUUID().slice(0, 6).toUpperCase()}`;
     const payment = await prisma.payment.create({
       data: {
         serviceRequestId: serviceRequest.id,
         organizationId,
-        userId: userId !== "unknown" ? userId : null,
+        userId: userId || null,
         amount,
         currency: "INR",
         method: "CASHFREE",
@@ -8621,11 +8628,13 @@ var PaymentService = class {
         orderId: generatedOrderId
       }
     });
+    const rawCustomerId = userId || guestSessionId || `GUEST_${randomUUID().slice(0, 8)}`;
+    const cfCustomerId = rawCustomerId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 45);
     try {
       const orderData = await cashfreeGateway.createOrder({
         orderId: generatedOrderId,
         orderAmount: amount,
-        customerId: userId !== "unknown" ? userId : `GUEST_${randomUUID().slice(0, 8)}`,
+        customerId: cfCustomerId,
         customerName,
         customerEmail,
         customerPhone
@@ -8637,9 +8646,11 @@ var PaymentService = class {
           paymentSessionId: orderData.payment_session_id
         }
       });
+      const mode = process.env.CASHFREE_ENVIRONMENT || ((process.env.CASHFREE_API_URL || "").includes("sandbox") ? "sandbox" : "production");
       return {
         payment_session_id: orderData.payment_session_id,
-        order_id: orderData.order_id
+        order_id: orderData.order_id,
+        mode
       };
     } catch (err) {
       await prisma.payment.update({
@@ -8914,20 +8925,22 @@ var RequestService = class {
     });
     let customerName = "Customer";
     let customerEmail = "customer@nagriksevapoint.in";
+    let customerPhone = "9999999999";
     if (context.userId) {
       const user = await prisma.user.findUnique({ where: { id: context.userId } });
       if (user) {
         customerName = user.name || customerName;
         customerEmail = user.email || customerEmail;
+        if (user.phone) customerPhone = user.phone;
       }
     }
     const paymentSession = await paymentService.createCashfreeOrderFromRequest(
       request,
-      context.userId || context.guestSessionId || "unknown",
+      context.userId || null,
+      context.guestSessionId || null,
       customerName,
       customerEmail,
-      "9999999999"
-      // Use user.phone if available
+      customerPhone
     );
     const lockedRequest = await requestRepository.updateStatus(
       request.id,
@@ -8939,6 +8952,7 @@ var RequestService = class {
       payment: {
         payment_session_id: paymentSession.payment_session_id,
         order_id: paymentSession.order_id,
+        mode: paymentSession.mode,
         amount: Number(priceSnapshot.amount),
         currency: priceSnapshot.currency
       }

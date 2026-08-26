@@ -31,7 +31,11 @@ export interface CashfreeOrderResponse {
 export class CashfreeGateway {
   
   async createOrder(params: CreateOrderParams): Promise<CashfreeOrderResponse> {
-    if (!CASHFREE_CLIENT_ID || !CASHFREE_CLIENT_SECRET) {
+    const clientId = process.env.CASHFREE_CLIENT_ID || CASHFREE_CLIENT_ID;
+    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
+    const apiUrl = process.env.CASHFREE_API_URL || CASHFREE_API_URL;
+
+    if (!clientId || !clientSecret) {
       throw AppError.internal("Cashfree credentials not configured");
     }
 
@@ -51,16 +55,16 @@ export class CashfreeGateway {
       },
     };
 
-    logger.info(`[CashfreeGateway] Creating order: ${params.orderId} for ${params.orderAmount} INR`);
+    logger.info(`[CashfreeGateway] Creating order: ${params.orderId} for ${params.orderAmount} INR (URL: ${apiUrl})`);
 
     try {
-      const response = await fetch(`${CASHFREE_API_URL}/orders`, {
+      const response = await fetch(`${apiUrl}/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-api-version": API_VERSION,
-          "x-client-id": CASHFREE_CLIENT_ID,
-          "x-client-secret": CASHFREE_CLIENT_SECRET,
+          "x-client-id": clientId,
+          "x-client-secret": clientSecret,
         },
         body: JSON.stringify(payload),
       });
@@ -80,17 +84,21 @@ export class CashfreeGateway {
   }
 
   async getOrder(orderId: string): Promise<CashfreeOrderResponse> {
-    if (!CASHFREE_CLIENT_ID || !CASHFREE_CLIENT_SECRET) {
+    const clientId = process.env.CASHFREE_CLIENT_ID || CASHFREE_CLIENT_ID;
+    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
+    const apiUrl = process.env.CASHFREE_API_URL || CASHFREE_API_URL;
+
+    if (!clientId || !clientSecret) {
       throw AppError.internal("Cashfree credentials not configured");
     }
 
     try {
-      const response = await fetch(`${CASHFREE_API_URL}/orders/${orderId}`, {
+      const response = await fetch(`${apiUrl}/orders/${orderId}`, {
         method: "GET",
         headers: {
           "x-api-version": API_VERSION,
-          "x-client-id": CASHFREE_CLIENT_ID,
-          "x-client-secret": CASHFREE_CLIENT_SECRET,
+          "x-client-id": clientId,
+          "x-client-secret": clientSecret,
         },
       });
 
@@ -108,13 +116,14 @@ export class CashfreeGateway {
   }
 
   verifyWebhookSignature(rawBody: string, signature: string, timestamp: string): boolean {
-    if (!signature || !timestamp || !CASHFREE_CLIENT_SECRET) {
+    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
+    if (!signature || !timestamp || !clientSecret) {
       return false;
     }
     
     try {
       const generatedSignature = crypto
-        .createHmac("sha256", CASHFREE_CLIENT_SECRET)
+        .createHmac("sha256", clientSecret)
         .update(timestamp + rawBody)
         .digest("base64");
 
