@@ -29,6 +29,21 @@ export class EzytmGateway {
     this.proxyUrl = rawProxy ? rawProxy.replace(/["']/g, "").trim() : undefined;
   }
 
+  public getProxyUrl(): string | undefined {
+    const rawProxy =
+      getEnvVar("EZYTM_PROXY_URL") ||
+      getEnvVar("WEBSHARE_URL") ||
+      getEnvVar("WEBSHARE_PROXY_URL") ||
+      getEnvVar("PROXY_URL") ||
+      getEnvVar("STATIC_PROXY_URL") ||
+      getEnvVar("FIXIE_URL") ||
+      getEnvVar("QUOTAGUARDSTATIC_URL") ||
+      getEnvVar("HTTPS_PROXY") ||
+      getEnvVar("HTTP_PROXY");
+
+    return rawProxy ? rawProxy.replace(/["']/g, "").trim() : undefined;
+  }
+
   public isConfigured(): boolean {
     const token = this.tokenId.toLowerCase();
     const user = this.apiUserId.toLowerCase();
@@ -59,15 +74,18 @@ export class EzytmGateway {
    * Generic form POST dispatcher with standard EzyTM/PlanAPI headers & form encoding.
    * Throws typed AppError on failure. No dummy fallback on live failure.
    */
-  async postForm<T>(
+  public async postForm<T>(
     endpoint: string,
     params: Record<string, string>,
   ): Promise<T> {
-    if (!this.isConfigured()) {
-      const isTestEnv =
-        getEnvVar("DENO_TESTING") === "true" ||
-        getEnvVar("NODE_ENV") === "test";
+    const isTestEnv = typeof process !== "undefined"
+      ? process.env.NODE_ENV === "test" || process.env.DENO_TESTING === "1"
+      : typeof Deno !== "undefined"
+      ? Deno.env.get("NODE_ENV") === "test" ||
+        Deno.env.get("DENO_TESTING") === "1"
+      : false;
 
+    if (!this.isConfigured()) {
       if (isTestEnv) {
         logger.warn(`[EzyTM Gateway] Test simulation active for ${endpoint}`);
         if (endpoint.includes("AadharToPanFind")) {
@@ -123,18 +141,20 @@ export class EzytmGateway {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
+    const activeProxyUrl = this.getProxyUrl() || this.proxyUrl;
     let dispatcher: any = undefined;
     let client: any = undefined;
     let undiciInstance: any = undefined;
 
-    if (this.proxyUrl) {
+    if (activeProxyUrl) {
       try {
         // @ts-ignore
         const undici = await import("undici").catch(() => null);
         if (undici?.ProxyAgent) {
           undiciInstance = undici;
-          dispatcher = new undici.ProxyAgent(this.proxyUrl);
-          logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy (Undici)`);
+          dispatcher = new undici.ProxyAgent(activeProxyUrl);
+          const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
+          logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy: ${maskedProxy}`);
         }
       } catch (e) {
         logger.warn("[EzyTM Gateway] undici not available for proxy.");
@@ -144,14 +164,14 @@ export class EzytmGateway {
       if (typeof Deno !== "undefined" && typeof Deno.createHttpClient === "function") {
         try {
           // @ts-ignore
-          client = Deno.createHttpClient({ proxy: { url: this.proxyUrl } });
+          client = Deno.createHttpClient({ proxy: { url: activeProxyUrl } });
           logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy (Deno)`);
         } catch (e) {
           logger.warn("[EzyTM Gateway] Deno proxy client initialization failed:", e);
         }
       }
     } else {
-      logger.warn("[EzyTM Gateway] No proxy URL configured, using direct connection.");
+      logger.warn("[EzyTM Gateway] ⚠️ NO PROXY URL found in environment (checked EZYTM_PROXY_URL, WEBSHARE_URL, PROXY_URL, HTTPS_PROXY). Using direct connection.");
     }
 
     try {

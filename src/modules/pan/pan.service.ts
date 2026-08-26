@@ -13,7 +13,7 @@ export class PanService {
     );
 
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
-    // logger.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
+    logger.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
 
     const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
 
