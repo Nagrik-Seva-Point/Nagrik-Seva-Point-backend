@@ -16,7 +16,9 @@ export class PaymentService {
     guestSessionId: string | null,
     customerName: string,
     customerEmail: string,
-    customerPhone: string
+    customerPhone: string,
+    orderNote?: string,
+    orderTags?: Record<string, string>
   ) {
     const amount = Number(serviceRequest.amount);
     const organizationId = serviceRequest.organizationId || null;
@@ -50,6 +52,8 @@ export class PaymentService {
         customerName: customerName,
         customerEmail: customerEmail,
         customerPhone: customerPhone,
+        orderNote,
+        orderTags,
       });
 
       // Update Order ID and Payment Session ID

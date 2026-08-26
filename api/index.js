@@ -4,6 +4,9 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/serverless.ts
+import "dotenv/config";
+
 // node_modules/.deno/hono@4.13.2/node_modules/hono/dist/compose.js
 var compose = (middleware, onError, onNotFound) => {
   return (context, next) => {
@@ -6432,8 +6435,36 @@ var envSchema = external_exports.object({
   }),
   PORT: external_exports.string().default("8000").transform((v) => parseInt(v, 10)),
   GOOGLE_CLIENT_ID: external_exports.string().optional(),
-  GOOGLE_CLIENT_SECRET: external_exports.string().optional()
+  GOOGLE_CLIENT_SECRET: external_exports.string().optional(),
+  CASHFREE_CLIENT_ID: external_exports.string().optional(),
+  CASHFREE_CLIENT_SECRET: external_exports.string().optional(),
+  CASHFREE_API_URL: external_exports.string().optional(),
+  CASHFREE_ENVIRONMENT: external_exports.enum(["sandbox", "production"]).optional()
 });
+var getCashfreeConfig = () => {
+  const clientId = getEnvVar("CASHFREE_CLIENT_ID") || "";
+  const clientSecret = getEnvVar("CASHFREE_CLIENT_SECRET") || "";
+  let environment = getEnvVar("CASHFREE_ENVIRONMENT");
+  let apiUrl = getEnvVar("CASHFREE_API_URL");
+  if (!environment) {
+    if (apiUrl?.includes("sandbox") || clientId.toUpperCase().startsWith("TEST")) {
+      environment = "sandbox";
+    } else if (apiUrl?.includes("api.cashfree.com") || clientId) {
+      environment = "production";
+    } else {
+      environment = "sandbox";
+    }
+  }
+  if (!apiUrl) {
+    apiUrl = environment === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
+  }
+  return {
+    clientId,
+    clientSecret,
+    apiUrl,
+    environment
+  };
+};
 var getEnv = () => {
   const result = envSchema.safeParse({
     DATABASE_URL: getEnvVar("DATABASE_URL"),
@@ -6442,7 +6473,11 @@ var getEnv = () => {
     CORS_ORIGIN: getEnvVar("CORS_ORIGIN"),
     PORT: getEnvVar("PORT") || "8000",
     GOOGLE_CLIENT_ID: getEnvVar("GOOGLE_CLIENT_ID"),
-    GOOGLE_CLIENT_SECRET: getEnvVar("GOOGLE_CLIENT_SECRET")
+    GOOGLE_CLIENT_SECRET: getEnvVar("GOOGLE_CLIENT_SECRET"),
+    CASHFREE_CLIENT_ID: getEnvVar("CASHFREE_CLIENT_ID"),
+    CASHFREE_CLIENT_SECRET: getEnvVar("CASHFREE_CLIENT_SECRET"),
+    CASHFREE_API_URL: getEnvVar("CASHFREE_API_URL"),
+    CASHFREE_ENVIRONMENT: getEnvVar("CASHFREE_ENVIRONMENT")
   });
   if (!result.success) {
     console.error("\u274C Invalid environment variables:", result.error.format());
@@ -8194,15 +8229,10 @@ var requestRepository = new RequestRepository();
 
 // src/core/integrations/cashfree/cashfree.gateway.ts
 import crypto2 from "crypto";
-var CASHFREE_API_URL = process.env.CASHFREE_API_URL || "https://sandbox.cashfree.com/pg";
-var CASHFREE_CLIENT_ID = process.env.CASHFREE_CLIENT_ID || "";
-var CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || "";
 var API_VERSION = "2023-08-01";
 var CashfreeGateway = class {
   async createOrder(params) {
-    const clientId = process.env.CASHFREE_CLIENT_ID || CASHFREE_CLIENT_ID;
-    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
-    const apiUrl = process.env.CASHFREE_API_URL || CASHFREE_API_URL;
+    const { clientId, clientSecret, apiUrl } = getCashfreeConfig();
     if (!clientId || !clientSecret) {
       throw AppError.internal("Cashfree credentials not configured");
     }
@@ -8210,6 +8240,7 @@ var CashfreeGateway = class {
       order_id: params.orderId,
       order_amount: params.orderAmount,
       order_currency: "INR",
+      order_note: params.orderNote || "Nagrik Seva Service Verification",
       customer_details: {
         customer_id: params.customerId,
         customer_phone: params.customerPhone || "9999999999",
@@ -8221,6 +8252,9 @@ var CashfreeGateway = class {
         notify_url: params.notifyUrl || `https://api.nagriksevapoint.in/api/v1/payments/cashfree/webhook`
       }
     };
+    if (params.orderTags) {
+      payload.order_tags = params.orderTags;
+    }
     logger2.info(`[CashfreeGateway] Creating order: ${params.orderId} for ${params.orderAmount} INR (URL: ${apiUrl})`);
     try {
       const response = await fetch(`${apiUrl}/orders`, {
@@ -8245,9 +8279,7 @@ var CashfreeGateway = class {
     }
   }
   async getOrder(orderId) {
-    const clientId = process.env.CASHFREE_CLIENT_ID || CASHFREE_CLIENT_ID;
-    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
-    const apiUrl = process.env.CASHFREE_API_URL || CASHFREE_API_URL;
+    const { clientId, clientSecret, apiUrl } = getCashfreeConfig();
     if (!clientId || !clientSecret) {
       throw AppError.internal("Cashfree credentials not configured");
     }
@@ -8272,7 +8304,7 @@ var CashfreeGateway = class {
     }
   }
   verifyWebhookSignature(rawBody, signature, timestamp) {
-    const clientSecret = process.env.CASHFREE_CLIENT_SECRET || CASHFREE_CLIENT_SECRET;
+    const { clientSecret } = getCashfreeConfig();
     if (!signature || !timestamp || !clientSecret) {
       return false;
     }
@@ -8612,7 +8644,7 @@ var PaymentService = class {
   /**
    * Generates a Cashfree Order from a newly created Service Request
    */
-  async createCashfreeOrderFromRequest(serviceRequest, userId, guestSessionId, customerName, customerEmail, customerPhone) {
+  async createCashfreeOrderFromRequest(serviceRequest, userId, guestSessionId, customerName, customerEmail, customerPhone, orderNote, orderTags) {
     const amount = Number(serviceRequest.amount);
     const organizationId = serviceRequest.organizationId || null;
     const generatedOrderId = `CF_ORD_${Date.now()}_${randomUUID().slice(0, 6).toUpperCase()}`;
@@ -8637,7 +8669,9 @@ var PaymentService = class {
         customerId: cfCustomerId,
         customerName,
         customerEmail,
-        customerPhone
+        customerPhone,
+        orderNote,
+        orderTags
       });
       await prisma.payment.update({
         where: { id: payment.id },
@@ -8899,12 +8933,41 @@ var RequestService = class {
       );
     }
     let validatedCustomerId = null;
+    let customerName = "Citizen Applicant";
+    let customerEmail = "citizen@nagriksevapoint.in";
+    let customerPhone = "9876543210";
+    const rawInput = data.input || {};
+    if (rawInput.phone || rawInput.customerPhone || rawInput.mobile) {
+      const p = String(rawInput.phone || rawInput.customerPhone || rawInput.mobile).replace(/[^0-9]/g, "").slice(-10);
+      if (p.length === 10) customerPhone = p;
+    }
+    if (rawInput.name || rawInput.customerName || rawInput.fullName) {
+      customerName = String(rawInput.name || rawInput.customerName || rawInput.fullName);
+    }
+    if (rawInput.email || rawInput.customerEmail) {
+      customerEmail = String(rawInput.email || rawInput.customerEmail);
+    }
+    if (context.userId) {
+      const user = await prisma.user.findUnique({ where: { id: context.userId } });
+      if (user) {
+        if (user.name) customerName = user.name;
+        if (user.email) customerEmail = user.email;
+        if (user.phone) {
+          const p = user.phone.replace(/[^0-9]/g, "").slice(-10);
+          if (p.length === 10) customerPhone = p;
+        }
+      }
+    }
     if (context.accessMode === "RETAILER" && data.customerId && context.organizationId) {
       const customer = await customerService.getCustomerById(
         data.customerId,
         context.organizationId
       );
       validatedCustomerId = customer.id;
+      if (customer.phone && customerPhone === "9876543210") {
+        const p = customer.phone.replace(/[^0-9]/g, "").slice(-10);
+        if (p.length === 10) customerPhone = p;
+      }
     }
     const priceSnapshot = await pricingService.calculatePrice(
       service.id,
@@ -8923,24 +8986,21 @@ var RequestService = class {
       inputData: data.input,
       idempotencyKey: data.idempotencyKey
     });
-    let customerName = "Customer";
-    let customerEmail = "customer@nagriksevapoint.in";
-    let customerPhone = "9999999999";
-    if (context.userId) {
-      const user = await prisma.user.findUnique({ where: { id: context.userId } });
-      if (user) {
-        customerName = user.name || customerName;
-        customerEmail = user.email || customerEmail;
-        if (user.phone) customerPhone = user.phone;
-      }
-    }
+    const serviceName = service.name || "PAN Find Service";
+    const orderNote = `${serviceName} (Ref: ${referenceNumber})`;
     const paymentSession = await paymentService.createCashfreeOrderFromRequest(
       request,
       context.userId || null,
       context.guestSessionId || null,
       customerName,
       customerEmail,
-      customerPhone
+      customerPhone,
+      orderNote,
+      {
+        service_code: service.code,
+        reference_number: referenceNumber,
+        access_mode: context.accessMode || "RETAILER"
+      }
     );
     const lockedRequest = await requestRepository.updateStatus(
       request.id,

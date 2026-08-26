@@ -108,8 +108,38 @@ export class RequestService {
       );
     }
 
-    // 3. Customer Authorization Check (BOLA Protection)
+    // 3. Customer Authorization Check (BOLA Protection) & User Identity Resolution
     let validatedCustomerId: string | null = null;
+    let customerName = "Citizen Applicant";
+    let customerEmail = "citizen@nagriksevapoint.in";
+    let customerPhone = "9876543210";
+
+    const rawInput = (data.input || {}) as Record<string, any>;
+    if (rawInput.phone || rawInput.customerPhone || rawInput.mobile) {
+      const p = String(rawInput.phone || rawInput.customerPhone || rawInput.mobile).replace(/[^0-9]/g, "").slice(-10);
+      if (p.length === 10) customerPhone = p;
+    }
+    if (rawInput.name || rawInput.customerName || rawInput.fullName) {
+      customerName = String(rawInput.name || rawInput.customerName || rawInput.fullName);
+    }
+    if (rawInput.email || rawInput.customerEmail) {
+      customerEmail = String(rawInput.email || rawInput.customerEmail);
+    }
+
+    // Fetch Authenticated Retailer User details from DB
+    if (context.userId) {
+      const user = await prisma.user.findUnique({ where: { id: context.userId } });
+      if (user) {
+        if (user.name) customerName = user.name;
+        if (user.email) customerEmail = user.email;
+        if (user.phone) {
+          const p = user.phone.replace(/[^0-9]/g, "").slice(-10);
+          if (p.length === 10) customerPhone = p;
+        }
+      }
+    }
+
+    // Validate Selected Customer Profile if provided
     if (
       context.accessMode === "RETAILER" && data.customerId &&
       context.organizationId
@@ -119,6 +149,10 @@ export class RequestService {
         context.organizationId,
       );
       validatedCustomerId = customer.id;
+      if (customer.phone && customerPhone === "9876543210") {
+        const p = customer.phone.replace(/[^0-9]/g, "").slice(-10);
+        if (p.length === 10) customerPhone = p;
+      }
     }
 
     // 4. Calculate Authoritative Server Price Snapshot (Client price is ignored)
@@ -144,27 +178,23 @@ export class RequestService {
       idempotencyKey: data.idempotencyKey,
     });
 
-    // 6.5 Fetch User for Cashfree
-    let customerName = "Customer";
-    let customerEmail = "customer@nagriksevapoint.in";
-    let customerPhone = "9999999999";
-    if (context.userId) {
-      const user = await prisma.user.findUnique({ where: { id: context.userId } });
-      if (user) {
-        customerName = user.name || customerName;
-        customerEmail = user.email || customerEmail;
-        if ((user as any).phone) customerPhone = (user as any).phone;
-      }
-    }
+    // 7. Generate Payment Order (Cashfree) with Service Description
+    const serviceName = service.name || "PAN Find Service";
+    const orderNote = `${serviceName} (Ref: ${referenceNumber})`;
 
-    // 7. Generate Payment Order (Cashfree)
     const paymentSession = await paymentService.createCashfreeOrderFromRequest(
       request,
       context.userId || null,
       context.guestSessionId || null,
       customerName,
       customerEmail,
-      customerPhone
+      customerPhone,
+      orderNote,
+      {
+        service_code: service.code,
+        reference_number: referenceNumber,
+        access_mode: context.accessMode || "RETAILER",
+      }
     );
 
     // 8. Transition status to PRICE_LOCKED & PAYMENT_PENDING

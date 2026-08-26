@@ -27,7 +27,41 @@ const envSchema = z.object({
   PORT: z.string().default("8000").transform((v) => parseInt(v, 10)),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  CASHFREE_CLIENT_ID: z.string().optional(),
+  CASHFREE_CLIENT_SECRET: z.string().optional(),
+  CASHFREE_API_URL: z.string().optional(),
+  CASHFREE_ENVIRONMENT: z.enum(["sandbox", "production"]).optional(),
 });
+
+export const getCashfreeConfig = () => {
+  const clientId = getEnvVar("CASHFREE_CLIENT_ID") || "";
+  const clientSecret = getEnvVar("CASHFREE_CLIENT_SECRET") || "";
+  let environment = getEnvVar("CASHFREE_ENVIRONMENT") as "sandbox" | "production" | undefined;
+  let apiUrl = getEnvVar("CASHFREE_API_URL");
+
+  // Determine environment if not explicitly set
+  if (!environment) {
+    if (apiUrl?.includes("sandbox") || clientId.toUpperCase().startsWith("TEST")) {
+      environment = "sandbox";
+    } else if (apiUrl?.includes("api.cashfree.com") || clientId) {
+      environment = "production";
+    } else {
+      environment = "sandbox";
+    }
+  }
+
+  // Determine API URL based on environment
+  if (!apiUrl) {
+    apiUrl = environment === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
+  }
+
+  return {
+    clientId,
+    clientSecret,
+    apiUrl,
+    environment,
+  };
+};
 
 const getEnv = () => {
   const result = envSchema.safeParse({
@@ -38,6 +72,10 @@ const getEnv = () => {
     PORT: getEnvVar("PORT") || "8000",
     GOOGLE_CLIENT_ID: getEnvVar("GOOGLE_CLIENT_ID"),
     GOOGLE_CLIENT_SECRET: getEnvVar("GOOGLE_CLIENT_SECRET"),
+    CASHFREE_CLIENT_ID: getEnvVar("CASHFREE_CLIENT_ID"),
+    CASHFREE_CLIENT_SECRET: getEnvVar("CASHFREE_CLIENT_SECRET"),
+    CASHFREE_API_URL: getEnvVar("CASHFREE_API_URL"),
+    CASHFREE_ENVIRONMENT: getEnvVar("CASHFREE_ENVIRONMENT"),
   });
 
   if (!result.success) {
