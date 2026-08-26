@@ -47,7 +47,7 @@ enum PaymentStatus {
 }
 
 enum PaymentMethod {
-  RAZORPAY
+  CASHFREE
   WALLET
   FREE_PILOT
 }
@@ -78,6 +78,7 @@ model User {
   accounts      Account[]
   members       Member[]
   requests      ServiceRequest[]
+  payments      Payment[]
 }
 
 model Session {
@@ -290,20 +291,32 @@ model Payment {
 
   organizationId   String?
   organization     Organization?   @relation(fields: [organizationId], references: [id])
+  userId           String?
+  user             User?           @relation(fields: [userId], references: [id])
   guestSessionId   String?
 
   amount           Decimal         @db.Decimal(10, 2)
   currency         String          @default("INR")
-  method           PaymentMethod   @default(RAZORPAY)
+  method           PaymentMethod   @default(CASHFREE)
   status           PaymentStatus   @default(PENDING)
 
-  // Razorpay Gateway fields
-  gatewayOrderId   String?
-  gatewayPaymentId String?
-  gatewaySignature String?
+  // Standard Gateway & Transaction Fields
+  orderId          String?         // Cashfree Order ID (e.g. "CF_ORD_...")
+  transactionId    String?         // Gateway Transaction Reference (cf_payment_id)
+  paymentSessionId String?         // Cashfree Payment Session ID
+  paymentMode      String?         // UPI, CARD, NETBANKING, WALLET, etc.
+  bankReference    String?         // UTR / Bank Reference Number
+  errorMessage     String?         // Gateway failure reason or error code
+  gatewayResponse  Json?           // Full raw webhook/gateway response snapshot for audit & debugging
 
+  paidAt           DateTime?
+  refundedAt       DateTime?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
+
+  @@index([orderId])
+  @@index([transactionId])
+  @@index([serviceRequestId])
 }
 
 // --- WALLET & LEDGER (Prepared for future activation) ---

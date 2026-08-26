@@ -26,23 +26,6 @@ requestRoutes.post(
   },
 );
 
-// 2. Confirm Payment & Execute Service Engine
-requestRoutes.post(
-  "/:id/confirm-payment",
-  validationMiddleware(confirmRequestPaymentSchema),
-  async (c) => {
-    const context = c.get("requestContext");
-    const id = c.req.param("id");
-    const verification = c.get("validData") as ConfirmRequestPaymentInput;
-
-    const result = await requestService.confirmPaymentAndExecute(
-      context,
-      id,
-      verification,
-    );
-    return c.json({ success: true, data: result });
-  },
-);
 
 // 3. Get Request by ID (Scoped by context)
 requestRoutes.get("/:id", async (c) => {

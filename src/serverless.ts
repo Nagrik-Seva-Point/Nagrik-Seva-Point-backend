@@ -59,6 +59,7 @@ async function nodeReqToWebRequest(req: IncomingMessage): Promise<Request> {
   return new Request(url, {
     method,
     headers,
+    // @ts-ignore - Uint8Array is valid for Node Request body
     body,
     // @ts-ignore
     duplex: "half",

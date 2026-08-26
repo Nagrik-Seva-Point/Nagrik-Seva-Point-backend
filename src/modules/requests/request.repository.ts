@@ -143,7 +143,13 @@ export class RequestRepository {
         include: {
           service: true,
           customer: true,
-          payments: true,
+          user: true,
+          payments: {
+            orderBy: { createdAt: "desc" },
+          },
+          events: {
+            orderBy: { createdAt: "asc" },
+          },
         },
       }),
       prisma.serviceRequest.count({ where }),

@@ -81,9 +81,9 @@ export class EzytmGateway {
   ): Promise<T> {
     const isTestEnv = typeof process !== "undefined"
       ? process.env.NODE_ENV === "test" || process.env.DENO_TESTING === "1"
-      : typeof Deno !== "undefined"
-      ? Deno.env.get("NODE_ENV") === "test" ||
-        Deno.env.get("DENO_TESTING") === "1"
+      : typeof (globalThis as any).Deno !== "undefined"
+      ? (globalThis as any).Deno.env.get("NODE_ENV") === "test" ||
+        (globalThis as any).Deno.env.get("DENO_TESTING") === "1"
       : false;
 
     if (!this.isConfigured()) {

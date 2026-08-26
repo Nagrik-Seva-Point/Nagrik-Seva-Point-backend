@@ -2,8 +2,9 @@ import { requestRepository } from "./request.repository";
 import { customerService } from "../customers/customer.service";
 import { serviceService } from "../services/service.service";
 import { pricingService } from "../pricing/pricing.service";
-import { paymentService } from "../payments/payment.service";
+import { paymentService } from "../payment/payment.service";
 import { serviceEngine } from "../engine/service-engine";
+import { prisma } from "../../core/db/prisma";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import type {
@@ -143,124 +144,42 @@ export class RequestService {
       idempotencyKey: data.idempotencyKey,
     });
 
-    // 7. Generate Payment Order (Razorpay)
-    const payment = await paymentService.createPaymentOrder(
-      context,
-      request.id,
-      priceSnapshot.amount,
-      priceSnapshot.currency,
+    // 6.5 Fetch User for Cashfree
+    let customerName = "Customer";
+    let customerEmail = "customer@nagriksevapoint.in";
+    if (context.userId) {
+      const user = await prisma.user.findUnique({ where: { id: context.userId } });
+      if (user) {
+        customerName = user.name || customerName;
+        customerEmail = user.email || customerEmail;
+      }
+    }
+
+    // 7. Generate Payment Order (Cashfree)
+    const paymentSession = await paymentService.createCashfreeOrderFromRequest(
+      request,
+      context.userId || context.guestSessionId || "unknown",
+      customerName,
+      customerEmail,
+      "9999999999" // Use user.phone if available
     );
 
     // 8. Transition status to PRICE_LOCKED & PAYMENT_PENDING
     const lockedRequest = await requestRepository.updateStatus(
       request.id,
       "PAYMENT_PENDING",
-      `Price locked at ₹${priceSnapshot.amount} (${priceSnapshot.pricingTier}). Awaiting payment confirmation.`,
+      `Price locked at ₹${priceSnapshot.amount} (${priceSnapshot.pricingTier}). Awaiting Cashfree payment confirmation.`,
     );
 
     return {
       ...lockedRequest,
       payment: {
-        id: payment.id,
-        amount: Number(payment.amount),
-        currency: payment.currency,
-        gatewayOrderId: payment.gatewayOrderId,
-        method: payment.method,
-        status: payment.status,
+        payment_session_id: paymentSession.payment_session_id,
+        order_id: paymentSession.order_id,
+        amount: Number(priceSnapshot.amount),
+        currency: priceSnapshot.currency,
       },
     };
-  }
-
-  /**
-   * Confirms payment capture and executes the service engine workflow.
-   */
-  async confirmPaymentAndExecute(
-    context: RequestContext,
-    requestId: string,
-    verification: ConfirmRequestPaymentInput,
-  ) {
-    // 1. Fetch & authorize access to request
-    const request = await this.getRequestById(context, requestId);
-
-    if (request.status === "COMPLETED") {
-      logger.info(`Request ${requestId} already completed.`);
-      return request;
-    }
-
-    // 2. Verify and Capture Payment
-    await paymentService.verifyAndCapture(
-      verification.paymentId,
-      verification.gatewayPaymentId,
-      verification.gatewaySignature,
-    );
-
-    // 3. Transition to PAYMENT_CAPTURED ➔ PROCESSING
-    await requestRepository.updateStatus(
-      requestId,
-      "PAYMENT_CAPTURED",
-      "Payment successfully verified and captured.",
-    );
-
-    await requestRepository.updateStatus(
-      requestId,
-      "PROCESSING",
-      "Dispatching request to service provider gateway.",
-    );
-
-    // 4. Execute Service Workflow through Provider Gateway
-    try {
-      const result = await serviceEngine.executeService(
-        request.service.code,
-        request.inputData as Record<string, unknown>,
-      );
-
-      if (result.success) {
-        // Success: Store Result & Transition to COMPLETED
-        await requestRepository.updateResult(
-          requestId,
-          result.resultData || {},
-          result.providerId,
-          result.referenceNumber,
-        );
-
-        const completedRequest = await requestRepository.updateStatus(
-          requestId,
-          "COMPLETED",
-          `Service completed successfully via ${result.providerId}.`,
-        );
-
-        return completedRequest;
-      } else {
-        // Provider Logic Failure (e.g. Identity Not Found)
-        await requestRepository.updateResult(
-          requestId,
-          { error: result.error },
-          result.providerId,
-        );
-
-        const failedRequest = await requestRepository.updateStatus(
-          requestId,
-          "PROVIDER_FAILED",
-          `Provider execution failed: ${result.error}`,
-        );
-
-        return failedRequest;
-      }
-    } catch (error) {
-      logger.error(`Execution error for Request ID ${requestId}:`, error);
-
-      await requestRepository.updateResult(requestId, {
-        error: "Internal integration gateway failure or timeout",
-      });
-
-      const failedRequest = await requestRepository.updateStatus(
-        requestId,
-        "PROVIDER_FAILED",
-        "Integration gateway timeout. Payment captured; eligible for retry or refund.",
-      );
-
-      return failedRequest;
-    }
   }
 }
 

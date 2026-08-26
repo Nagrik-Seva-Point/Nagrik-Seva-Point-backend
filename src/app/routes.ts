@@ -11,6 +11,7 @@ import {
 } from "../modules/categories/category.routes";
 import { requestRoutes } from "../modules/requests/request.routes";
 import { panRoutes } from "../modules/pan/pan.routes";
+import { paymentRoutes } from "../modules/payment/payment.routes";
 import { requestContextMiddleware } from "../middleware/request-context.middleware";
 import type { ContextVariables } from "./context";
 
@@ -25,6 +26,7 @@ apiRouter.route("/customers", customerRoutes);
 apiRouter.route("/categories", categoryRouter);
 apiRouter.route("/services", serviceRoutes);
 apiRouter.route("/service-requests", requestRoutes);
+apiRouter.route("/payments", paymentRoutes);
 
 // Specialized Service Routes
 apiRouter.route("/pan", panRoutes);
