@@ -30,7 +30,7 @@ export class PanService {
 
       // Handled case: PAN is linked according to official API, but PAN number is not exposed/found in this response
       if (response.Data?.Message?.toLowerCase() === "linked") {
-        const linkedMsg = "PAN is linked with this Aadhaar number, but PAN details were not found. Please try again later.";
+        const linkedMsg = "PAN is linked with this Aadhaar number, but PAN number were not found. Please try again later.";
         logger.warn(`[PanService] ${linkedMsg}`);
         throw AppError.badRequest(linkedMsg, "PAN_LINKED_NO_DATA");
       }
