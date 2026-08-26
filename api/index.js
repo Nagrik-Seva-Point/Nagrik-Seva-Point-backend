@@ -6442,20 +6442,18 @@ var envSchema = external_exports.object({
   CASHFREE_ENVIRONMENT: external_exports.enum(["sandbox", "production"]).optional()
 });
 var getCashfreeConfig = () => {
-  const clientId = getEnvVar("CASHFREE_CLIENT_ID") || "";
-  const clientSecret = getEnvVar("CASHFREE_CLIENT_SECRET") || "";
-  let environment = getEnvVar("CASHFREE_ENVIRONMENT");
-  let apiUrl = getEnvVar("CASHFREE_API_URL");
-  if (!environment) {
-    if (apiUrl?.includes("sandbox") || clientId.toUpperCase().startsWith("TEST")) {
-      environment = "sandbox";
-    } else if (apiUrl?.includes("api.cashfree.com") || clientId) {
-      environment = "production";
-    } else {
-      environment = "sandbox";
-    }
+  const clientId = (getEnvVar("CASHFREE_CLIENT_ID") || "").trim();
+  const clientSecret = (getEnvVar("CASHFREE_CLIENT_SECRET") || "").trim();
+  const isTestCredential = clientId.toUpperCase().startsWith("TEST") || clientSecret.toLowerCase().includes("_test_");
+  let environment = isTestCredential ? "sandbox" : "production";
+  if (getEnvVar("CASHFREE_ENVIRONMENT") === "sandbox") {
+    environment = "sandbox";
   }
-  if (!apiUrl) {
+  let apiUrl = getEnvVar("CASHFREE_API_URL")?.trim();
+  if (isTestCredential) {
+    apiUrl = "https://sandbox.cashfree.com/pg";
+    environment = "sandbox";
+  } else if (!apiUrl) {
     apiUrl = environment === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
   }
   return {
@@ -8269,13 +8267,15 @@ var CashfreeGateway = class {
       });
       const data = await response.json();
       if (!response.ok) {
-        logger2.error(`[CashfreeGateway] Order creation failed: ${JSON.stringify(data)}`);
-        throw AppError.internal("Failed to create Cashfree order");
+        logger2.error(`[CashfreeGateway] Order creation failed (${response.status}): ${JSON.stringify(data)} (Client ID: ${clientId.slice(0, 8)}..., URL: ${apiUrl})`);
+        const errorMsg = data?.message || "Failed to create Cashfree order";
+        throw AppError.badRequest(errorMsg);
       }
       return data;
     } catch (err) {
       logger2.error(`[CashfreeGateway] Error: ${err.message}`);
-      throw AppError.internal("Cashfree Gateway Error");
+      if (err instanceof AppError) throw err;
+      throw AppError.internal(err.message || "Cashfree Gateway Error");
     }
   }
   async getOrder(orderId) {

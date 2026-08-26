@@ -72,17 +72,19 @@ export class CashfreeGateway {
         body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
+      const data: any = await response.json();
 
       if (!response.ok) {
-        logger.error(`[CashfreeGateway] Order creation failed: ${JSON.stringify(data)}`);
-        throw AppError.internal("Failed to create Cashfree order");
+        logger.error(`[CashfreeGateway] Order creation failed (${response.status}): ${JSON.stringify(data)} (Client ID: ${clientId.slice(0, 8)}..., URL: ${apiUrl})`);
+        const errorMsg = data?.message || "Failed to create Cashfree order";
+        throw AppError.badRequest(errorMsg);
       }
 
       return data as CashfreeOrderResponse;
     } catch (err: any) {
       logger.error(`[CashfreeGateway] Error: ${err.message}`);
-      throw AppError.internal("Cashfree Gateway Error");
+      if (err instanceof AppError) throw err;
+      throw AppError.internal(err.message || "Cashfree Gateway Error");
     }
   }
 

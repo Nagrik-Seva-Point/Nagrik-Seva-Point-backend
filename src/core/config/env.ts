@@ -34,24 +34,23 @@ const envSchema = z.object({
 });
 
 export const getCashfreeConfig = () => {
-  const clientId = getEnvVar("CASHFREE_CLIENT_ID") || "";
-  const clientSecret = getEnvVar("CASHFREE_CLIENT_SECRET") || "";
-  let environment = getEnvVar("CASHFREE_ENVIRONMENT") as "sandbox" | "production" | undefined;
-  let apiUrl = getEnvVar("CASHFREE_API_URL");
+  const clientId = (getEnvVar("CASHFREE_CLIENT_ID") || "").trim();
+  const clientSecret = (getEnvVar("CASHFREE_CLIENT_SECRET") || "").trim();
+  const isTestCredential =
+    clientId.toUpperCase().startsWith("TEST") ||
+    clientSecret.toLowerCase().includes("_test_");
 
-  // Determine environment if not explicitly set
-  if (!environment) {
-    if (apiUrl?.includes("sandbox") || clientId.toUpperCase().startsWith("TEST")) {
-      environment = "sandbox";
-    } else if (apiUrl?.includes("api.cashfree.com") || clientId) {
-      environment = "production";
-    } else {
-      environment = "sandbox";
-    }
+  let environment: "sandbox" | "production" = isTestCredential ? "sandbox" : "production";
+  if (getEnvVar("CASHFREE_ENVIRONMENT") === "sandbox") {
+    environment = "sandbox";
   }
 
-  // Determine API URL based on environment
-  if (!apiUrl) {
+  let apiUrl = getEnvVar("CASHFREE_API_URL")?.trim();
+  if (isTestCredential) {
+    // Test credentials MUST always target sandbox PG
+    apiUrl = "https://sandbox.cashfree.com/pg";
+    environment = "sandbox";
+  } else if (!apiUrl) {
     apiUrl = environment === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
   }
 
