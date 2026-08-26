@@ -33,8 +33,8 @@ panRoutes.post(
   "/details",
   validationMiddleware(panDetailsSchema),
   async (c) => {
-    const { pan } = c.get("validData") as PanDetailsInput;
-    const result = await panService.getPanDetails(pan);
+    const validData = c.get("validData") as PanDetailsInput;
+    const result = await panService.getPanDetails(validData);
     return c.json({ success: true, data: result });
   },
 );

@@ -1,23 +1,39 @@
 import { ezytmPanGateway } from "../../core/integrations/ezytm/ezytm-pan.gateway";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
-import type { PanDetailsOutput, PanFindOutput } from "./pan.schema";
+import { encryptPanToken, decryptPanToken } from "../../core/security/crypto.util";
+import type { PanDetailsInput, PanDetailsOutput, PanFindOutput } from "./pan.schema";
 
 export class PanService {
   /**
    * 1. Find PAN Number by 12-digit Aadhaar
+   * Returns ONLY masked PAN + stateless encrypted token (No cleartext PAN leak)
    */
   async findPanByAadhaar(aadhaar: string): Promise<PanFindOutput> {
     logger.info(
       `[PanService] Finding PAN for Aadhaar ending in ${aadhaar.slice(-4)}`,
     );
 
-    // CASHFREE COMPLIANCE TEST BYPASS
+    // CASHFREE & PROVIDER SIMULATION TEST BYPASS
     if (aadhaar === "123412341234") {
-      logger.info(`[PanService] Test Aadhaar detected. Returning mock PAN.`);
+      logger.info(`[PanService] Test Aadhaar (Success Mode) detected. Returning mock token.`);
       return {
-        pan: "ABCDE1234F",
         maskedPan: "XXXXX1234X",
+        searchToken: encryptPanToken({
+          pan: "ABCDE1234F",
+          aadhaarMasked: "XXXXXXXX1234",
+        }),
+      };
+    }
+
+    if (aadhaar === "999999999999") {
+      logger.info(`[PanService] Test Aadhaar (Error Simulation Mode) detected. Returning error test token.`);
+      return {
+        maskedPan: "XXXXX9999E",
+        searchToken: encryptPanToken({
+          pan: "ERRBAL9999E",
+          aadhaarMasked: "XXXXXXXX9999",
+        }),
       };
     }
 
@@ -29,11 +45,15 @@ export class PanService {
     if (response.Errorcode === 100) {
       if (panNumber) {
         const maskedPan = `XXXXX${panNumber.substring(5, 9)}${panNumber.substring(9)}`;
-        logger.info(`[PanService] Successfully found PAN: ${maskedPan}`);
+        const searchToken = encryptPanToken({
+          pan: panNumber,
+          aadhaarMasked: `XXXXXXXX${aadhaar.slice(-4)}`,
+        });
+        logger.info(`[PanService] Successfully matched PAN (Masked: ${maskedPan}, Token Encrypted)`);
 
         return {
-          pan: panNumber,
           maskedPan,
+          searchToken,
         };
       }
 
@@ -64,14 +84,27 @@ export class PanService {
 
   /**
    * 2. Fetch Comprehensive PAN Details
+   * Accepts encrypted searchToken or unmasked PAN
    */
-  async getPanDetails(pan: string): Promise<PanDetailsOutput> {
-    const cleanPan = pan.trim().toUpperCase();
-    // logger.info(`[PanService] Fetching details for PAN: ${cleanPan}`);
+  async getPanDetails(input: PanDetailsInput | string): Promise<PanDetailsOutput> {
+    let cleanPan = "";
 
-    // CASHFREE COMPLIANCE TEST BYPASS
+    if (typeof input === "string") {
+      cleanPan = input.trim().toUpperCase();
+    } else if (input.searchToken) {
+      const decrypted = decryptPanToken(input.searchToken);
+      cleanPan = decrypted.pan.trim().toUpperCase();
+    } else if (input.pan) {
+      cleanPan = input.pan.trim().toUpperCase();
+    }
+
+    if (!cleanPan) {
+      throw AppError.badRequest("A valid searchToken or PAN number is required.", "INVALID_INPUT");
+    }
+
+    // CASHFREE & PROVIDER SIMULATION TEST BYPASS
     if (cleanPan === "ABCDE1234F") {
-      logger.info(`[PanService] Test PAN detected. Returning mock details.`);
+      logger.info(`[PanService] Test PAN (Success Mode) detected. Returning mock details.`);
       return {
         pan: "ABCDE1234F",
         fullName: "Mock Test User",
@@ -81,6 +114,16 @@ export class PanService {
         aadhaarLinked: true,
         category: "Individual"
       };
+    }
+
+    if (cleanPan === "ERRBAL9999E") {
+      logger.info(`[PanService] Test PAN (Insufficient Balance Simulation) detected.`);
+      throw AppError.badRequest("Insufficient balance.", "PAN_DETAILS_FAILED");
+    }
+
+    if (cleanPan === "ERRTOUT9999E") {
+      logger.info(`[PanService] Test PAN (Timeout Simulation) detected.`);
+      throw AppError.badRequest("Verification provider gateway timed out. Please try again.", "PAN_DETAILS_FAILED");
     }
 
     const response = await ezytmPanGateway.getPanDetails(cleanPan);

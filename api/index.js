@@ -8498,20 +8498,92 @@ var EzytmPanGateway = class {
 };
 var ezytmPanGateway = new EzytmPanGateway();
 
+// src/core/security/crypto.util.ts
+import crypto3 from "node:crypto";
+function getEncryptionKey() {
+  const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
+  return crypto3.createHash("sha256").update(secret).digest();
+}
+function encryptPanToken(payload) {
+  const key = getEncryptionKey();
+  const iv = crypto3.randomBytes(12);
+  const cipher = crypto3.createCipheriv("aes-256-gcm", key, iv);
+  const tokenData = {
+    pan: payload.pan.trim().toUpperCase(),
+    aadhaarMasked: payload.aadhaarMasked,
+    exp: payload.exp || Date.now() + 30 * 60 * 1e3
+    // 30 mins expiry
+  };
+  const jsonStr = JSON.stringify(tokenData);
+  const encrypted = Buffer.concat([cipher.update(jsonStr, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return `${iv.toString("base64url")}.${authTag.toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+function decryptPanToken(token) {
+  if (!token || typeof token !== "string") {
+    throw AppError.badRequest("Invalid or missing PAN token.", "INVALID_TOKEN");
+  }
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    throw AppError.badRequest("Malformed PAN search token.", "INVALID_TOKEN");
+  }
+  try {
+    const [ivB64, authTagB64, ciphertextB64] = parts;
+    const iv = Buffer.from(ivB64, "base64url");
+    const authTag = Buffer.from(authTagB64, "base64url");
+    const ciphertext = Buffer.from(ciphertextB64, "base64url");
+    const key = getEncryptionKey();
+    const decipher = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    const parsed = JSON.parse(decrypted.toString("utf8"));
+    if (!parsed.pan) {
+      throw AppError.badRequest("PAN data not found in token.", "INVALID_TOKEN");
+    }
+    if (parsed.exp && parsed.exp < Date.now()) {
+      throw AppError.badRequest(
+        "Your PAN verification session has expired. Please search again.",
+        "TOKEN_EXPIRED"
+      );
+    }
+    return parsed;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw AppError.badRequest(
+      "Unable to verify PAN token. Please perform a fresh search.",
+      "INVALID_TOKEN"
+    );
+  }
+}
+
 // src/modules/pan/pan.service.ts
 var PanService = class {
   /**
    * 1. Find PAN Number by 12-digit Aadhaar
+   * Returns ONLY masked PAN + stateless encrypted token (No cleartext PAN leak)
    */
   async findPanByAadhaar(aadhaar) {
     logger2.info(
       `[PanService] Finding PAN for Aadhaar ending in ${aadhaar.slice(-4)}`
     );
     if (aadhaar === "123412341234") {
-      logger2.info(`[PanService] Test Aadhaar detected. Returning mock PAN.`);
+      logger2.info(`[PanService] Test Aadhaar (Success Mode) detected. Returning mock token.`);
       return {
-        pan: "ABCDE1234F",
-        maskedPan: "XXXXX1234X"
+        maskedPan: "XXXXX1234X",
+        searchToken: encryptPanToken({
+          pan: "ABCDE1234F",
+          aadhaarMasked: "XXXXXXXX1234"
+        })
+      };
+    }
+    if (aadhaar === "999999999999") {
+      logger2.info(`[PanService] Test Aadhaar (Error Simulation Mode) detected. Returning error test token.`);
+      return {
+        maskedPan: "XXXXX9999E",
+        searchToken: encryptPanToken({
+          pan: "ERRBAL9999E",
+          aadhaarMasked: "XXXXXXXX9999"
+        })
       };
     }
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
@@ -8520,10 +8592,14 @@ var PanService = class {
     if (response.Errorcode === 100) {
       if (panNumber) {
         const maskedPan = `XXXXX${panNumber.substring(5, 9)}${panNumber.substring(9)}`;
-        logger2.info(`[PanService] Successfully found PAN: ${maskedPan}`);
-        return {
+        const searchToken = encryptPanToken({
           pan: panNumber,
-          maskedPan
+          aadhaarMasked: `XXXXXXXX${aadhaar.slice(-4)}`
+        });
+        logger2.info(`[PanService] Successfully matched PAN (Masked: ${maskedPan}, Token Encrypted)`);
+        return {
+          maskedPan,
+          searchToken
         };
       }
       if (response.Data?.Message?.toLowerCase() === "linked") {
@@ -8545,11 +8621,23 @@ var PanService = class {
   }
   /**
    * 2. Fetch Comprehensive PAN Details
+   * Accepts encrypted searchToken or unmasked PAN
    */
-  async getPanDetails(pan) {
-    const cleanPan = pan.trim().toUpperCase();
+  async getPanDetails(input) {
+    let cleanPan = "";
+    if (typeof input === "string") {
+      cleanPan = input.trim().toUpperCase();
+    } else if (input.searchToken) {
+      const decrypted = decryptPanToken(input.searchToken);
+      cleanPan = decrypted.pan.trim().toUpperCase();
+    } else if (input.pan) {
+      cleanPan = input.pan.trim().toUpperCase();
+    }
+    if (!cleanPan) {
+      throw AppError.badRequest("A valid searchToken or PAN number is required.", "INVALID_INPUT");
+    }
     if (cleanPan === "ABCDE1234F") {
-      logger2.info(`[PanService] Test PAN detected. Returning mock details.`);
+      logger2.info(`[PanService] Test PAN (Success Mode) detected. Returning mock details.`);
       return {
         pan: "ABCDE1234F",
         fullName: "Mock Test User",
@@ -8559,6 +8647,14 @@ var PanService = class {
         aadhaarLinked: true,
         category: "Individual"
       };
+    }
+    if (cleanPan === "ERRBAL9999E") {
+      logger2.info(`[PanService] Test PAN (Insufficient Balance Simulation) detected.`);
+      throw AppError.badRequest("Insufficient balance.", "PAN_DETAILS_FAILED");
+    }
+    if (cleanPan === "ERRTOUT9999E") {
+      logger2.info(`[PanService] Test PAN (Timeout Simulation) detected.`);
+      throw AppError.badRequest("Verification provider gateway timed out. Please try again.", "PAN_DETAILS_FAILED");
     }
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
     if (response.Errorcode === 100 && response.data) {
@@ -9093,10 +9189,13 @@ var findPanSchema = external_exports.object({
   aadhaar: external_exports.string().regex(/^\d{12}$/, "Aadhaar must be exactly 12 digits")
 });
 var panDetailsSchema = external_exports.object({
+  searchToken: external_exports.string().optional(),
   pan: external_exports.string().regex(
     /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i,
     "Invalid PAN number format"
-  )
+  ).optional()
+}).refine((data) => Boolean(data.searchToken || data.pan), {
+  message: "Either searchToken or pan must be provided"
 });
 
 // src/modules/pan/pan.routes.ts
@@ -9114,8 +9213,8 @@ panRoutes.post(
   "/details",
   validationMiddleware(panDetailsSchema),
   async (c) => {
-    const { pan } = c.get("validData");
-    const result = await panService.getPanDetails(pan);
+    const validData = c.get("validData");
+    const result = await panService.getPanDetails(validData);
     return c.json({ success: true, data: result });
   }
 );

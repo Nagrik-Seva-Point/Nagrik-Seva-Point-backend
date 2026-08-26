@@ -58,9 +58,8 @@ export class ServiceEngine {
           providerId: "EZYTM",
           referenceNumber: `REQ-${Date.now()}`,
           resultData: {
-            pan: panResult.pan,
-            panNumber: panResult.pan,
             maskedPan: panResult.maskedPan,
+            searchToken: panResult.searchToken,
             status: "ACTIVE",
           },
         };

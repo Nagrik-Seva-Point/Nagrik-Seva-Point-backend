@@ -10,12 +10,20 @@ export const findPanSchema = z.object({
 
 export type FindPanInput = z.infer<typeof findPanSchema>;
 
-export const panDetailsSchema = z.object({
-  pan: z.string().regex(
-    /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i,
-    "Invalid PAN number format",
-  ),
-});
+export const panDetailsSchema = z
+  .object({
+    searchToken: z.string().optional(),
+    pan: z
+      .string()
+      .regex(
+        /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i,
+        "Invalid PAN number format",
+      )
+      .optional(),
+  })
+  .refine((data) => Boolean(data.searchToken || data.pan), {
+    message: "Either searchToken or pan must be provided",
+  });
 
 export type PanDetailsInput = z.infer<typeof panDetailsSchema>;
 
@@ -24,8 +32,8 @@ export type PanDetailsInput = z.infer<typeof panDetailsSchema>;
 // ==========================================
 
 export interface PanFindOutput {
-  pan: string;
   maskedPan: string;
+  searchToken: string;
 }
 
 export interface PanDetailsOutput {
