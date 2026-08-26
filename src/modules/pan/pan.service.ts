@@ -13,23 +13,44 @@ export class PanService {
     );
 
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
+    // logger.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
 
-    if (response.Errorcode === 100 && response.Data?.PanNumber) {
-      const pan = response.Data.PanNumber.trim().toUpperCase();
-      const maskedPan = `XXXXX${pan.substring(5, 9)}${pan.substring(9)}`;
+    const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
 
-      logger.info(`[PanService] Found PAN: ${response.Data}`);
+    if (response.Errorcode === 100) {
+      if (panNumber) {
+        const maskedPan = `XXXXX${panNumber.substring(5, 9)}${panNumber.substring(9)}`;
+        logger.info(`[PanService] Successfully found PAN: ${maskedPan}`);
 
-      return {
-        pan,
-        maskedPan,
-      };
+        return {
+          pan: panNumber,
+          maskedPan,
+        };
+      }
+
+      // Handled case: PAN is linked according to official API, but PAN number is not exposed/found in this response
+      if (response.Data?.Message?.toLowerCase() === "linked") {
+        const linkedMsg = "PAN is linked with this Aadhaar number, but PAN details were not found. Please try again later.";
+        logger.warn(`[PanService] ${linkedMsg}`);
+        throw AppError.badRequest(linkedMsg, "PAN_LINKED_NO_DATA");
+      }
+
+      const notFoundMsg = "PAN is linked but data not found. Please try again later.";
+      logger.warn(`[PanService] ${notFoundMsg}`);
+      throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
     }
 
-    const failureReason = response.Message ||
-      "No PAN found linked with this Aadhaar number in official registries.";
-    logger.warn(`[PanService] Find PAN failed: ${failureReason}`);
-    throw AppError.badRequest(failureReason, "PAN_NOT_FOUND");
+    if (response.Errorcode === 101) {
+      logger.warn(`[PanService] PAN not found for Aadhaar ending in ${aadhaar.slice(-4)}`);
+      throw AppError.badRequest("No PAN found linked with the provided Aadhaar number.", "PAN_NOT_FOUND");
+    }
+
+    const fallbackMsg = (response.Message && response.Message !== "Data Fetch Successfully")
+      ? response.Message
+      : "Failed to find PAN for this Aadhaar. Please try again later.";
+
+    logger.warn(`[PanService] Find PAN failed: ${fallbackMsg}`);
+    throw AppError.badRequest(fallbackMsg, "PAN_FIND_FAILED");
   }
 
   /**
@@ -37,7 +58,7 @@ export class PanService {
    */
   async getPanDetails(pan: string): Promise<PanDetailsOutput> {
     const cleanPan = pan.trim().toUpperCase();
-    logger.info(`[PanService] Fetching details for PAN: ${cleanPan}`);
+    // logger.info(`[PanService] Fetching details for PAN: ${cleanPan}`);
 
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
 

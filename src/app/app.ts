@@ -10,6 +10,7 @@ import {
   getAllowedCorsOrigin,
 } from "../core/config/cors";
 import { auth } from "../core/auth/better-auth";
+import { env } from "../core/config/env";
 import { apiRouter } from "./routes";
 import type { ContextVariables } from "./context";
 
@@ -28,6 +29,13 @@ app.use(
 );
 app.use("*", logger());
 app.use("*", requestIdMiddleware());
+
+// Redirect /api/auth/error directly to frontend /auth/login
+app.get("/api/auth/error", (c) => {
+  const origin = env.CORS_ORIGIN[0] || "http://localhost:3000";
+  const error = c.req.query("error") || "signup_disabled";
+  return c.redirect(`${origin}/auth/login?error=${encodeURIComponent(error)}`);
+});
 
 // BetterAuth Mount
 app.all("/api/auth/*", async (c) => {
@@ -77,6 +85,17 @@ app.get("/health", (c) => {
     timestamp: new Date().toISOString(),
     requestId: c.get("requestId"),
   });
+});
+
+// Fallback redirects if frontend URLs are hit on API origin
+app.get("/dashboard", (c) => {
+  const origin = env.CORS_ORIGIN[0];
+  return c.redirect(`${origin}/dashboard`);
+});
+
+app.get("/admin/dashboard", (c) => {
+  const origin = env.CORS_ORIGIN[0];
+  return c.redirect(`${origin}/admin/dashboard`);
 });
 
 // Global Error Handling

@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "dev": "deno run --allow-net --allow-read --allow-write --allow-env --allow-sys --env src/index.ts",
+    "dev": "deno run --watch --allow-net --allow-read --allow-write --allow-env --allow-sys --env src/index.ts",
     "db:generate": "deno run --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 generate",
     "db:migrate": "deno run --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 migrate dev",
     "db:push": "deno run --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 db push",

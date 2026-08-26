@@ -31,6 +31,8 @@ export const auth = betterAuth({
   trustedOrigins: env.CORS_ORIGIN,
   emailAndPassword: {
     enabled: true,
+    autoSignIn: true,
+    requireEmailVerification: false,
   },
   user: {
     additionalFields: {
@@ -47,12 +49,18 @@ export const auth = betterAuth({
       },
     },
   },
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["google"],
+    },
+  },
   socialProviders: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
     ? {
       google: {
         clientId: env.GOOGLE_CLIENT_ID,
         clientSecret: env.GOOGLE_CLIENT_SECRET,
-        disableSignUp: true, // Only allow existing registered users to log in with Google
+        disableSignUp: true, // Only allow registered users to log in with Google
       },
     }
     : undefined,

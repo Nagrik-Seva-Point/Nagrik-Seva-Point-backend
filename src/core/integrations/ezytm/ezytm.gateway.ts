@@ -122,12 +122,42 @@ export class EzytmGateway {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
+    let dispatcher: any = undefined;
+    let client: any = undefined;
+    if (this.proxyUrl) {
+      try {
+        // @ts-ignore
+        const undici = await import("undici").catch(() => null);
+        if (undici?.ProxyAgent) {
+          dispatcher = new undici.ProxyAgent(this.proxyUrl);
+          logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy (Undici)`);
+        }
+      } catch (e) {
+        logger.warn("[EzyTM Gateway] undici not available for proxy.");
+      }
+
+      // @ts-ignore
+      if (typeof Deno !== "undefined" && typeof Deno.createHttpClient === "function") {
+        try {
+          // @ts-ignore
+          client = Deno.createHttpClient({ proxy: { url: this.proxyUrl } });
+          logger.info(`[EzyTM Gateway] Routing request through Static IP Proxy (Deno)`);
+        } catch (e) {
+          logger.warn("[EzyTM Gateway] Deno proxy client initialization failed:", e);
+        }
+      }
+    }
+
     try {
       const response = await fetch(url, {
         method: "POST",
         headers,
         body: body.toString(),
         signal: controller.signal,
+        // @ts-ignore
+        dispatcher,
+        // @ts-ignore
+        client,
       });
 
       clearTimeout(timeoutId);
