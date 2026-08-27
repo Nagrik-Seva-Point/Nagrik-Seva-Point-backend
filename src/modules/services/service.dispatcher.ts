@@ -1,6 +1,7 @@
 import { prisma } from "../../core/db/prisma";
 import { logger } from "../../core/logger/logger";
 import { panService } from "../pan/pan.service";
+import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import { AppError } from "../../core/errors/AppError";
 
 export class ServiceDispatcher {
@@ -35,10 +36,12 @@ export class ServiceDispatcher {
       // 2. Route to specific service handlers
       switch (request.service.code) {
         case "PAN_FIND":
-          const input = request.inputData as any;
-          const searchTokenOrPan = input?.searchToken || input?.pan || "";
+          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
+          const input = (request.inputData || {}) as any;
+          const searchTokenOrPan = tempToken || input?.searchToken || input?.pan || "";
+          
           if (!searchTokenOrPan) {
-            throw new Error("Missing searchToken or PAN in inputData for PAN_FIND service");
+            throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
           }
           resultData = await panService.getPanDetails(searchTokenOrPan);
           break;
@@ -52,7 +55,12 @@ export class ServiceDispatcher {
           throw new Error(`Unsupported service code: ${request.service.code}`);
       }
 
-      // 3. Mark as Completed & Save Operational Status (Zero sensitive data in DB)
+      // 3. Store verified result in 24-Hour Encrypted Redis Vault (DPDP Compliant)
+      if (resultData) {
+        await ephemeralVault.storeVaultItem(serviceRequestId, resultData, 86400);
+      }
+
+      // 4. Mark as Completed & Save Operational Status in DB
       await prisma.serviceRequest.update({
         where: { id: serviceRequestId },
         data: { 
@@ -61,11 +69,12 @@ export class ServiceDispatcher {
             status: "COMPLETED",
             serviceCode: request.service.code,
             completedAt: new Date().toISOString(),
+            vaultActive: true,
           },
         },
       });
 
-      logger.info(`[ServiceDispatcher] Fulfillment COMPLETED for Request: ${serviceRequestId}`);
+      logger.info(`[ServiceDispatcher] Fulfillment COMPLETED & stored in 24h vault for Request: ${serviceRequestId}`);
 
     } catch (error: any) {
       logger.error(`[ServiceDispatcher] Fulfillment FAILED for Request ${serviceRequestId}:`, error);

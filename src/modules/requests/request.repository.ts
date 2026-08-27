@@ -2,6 +2,23 @@ import { prisma } from "../../core/db/prisma";
 import type { Prisma, RequestStatus } from "@prisma/client";
 import type { QueryRequestInput } from "./request.schema";
 import type { RequestContext } from "../../core/types/context.types";
+import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
+
+const retailerPaymentSelect = {
+  id: true,
+  serviceRequestId: true,
+  amount: true,
+  currency: true,
+  method: true,
+  status: true,
+  orderId: true,
+  transactionId: true,
+  paymentMode: true,
+  errorMessage: true,
+  paidAt: true,
+  createdAt: true,
+  updatedAt: true,
+};
 
 export class RequestRepository {
   async findById(id: string) {
@@ -16,6 +33,7 @@ export class RequestRepository {
           orderBy: { createdAt: "asc" },
         },
         payments: {
+          select: retailerPaymentSelect,
           orderBy: { createdAt: "desc" },
         },
       },
@@ -145,6 +163,7 @@ export class RequestRepository {
           customer: true,
           user: true,
           payments: {
+            select: retailerPaymentSelect,
             orderBy: { createdAt: "desc" },
           },
           events: {
@@ -178,8 +197,34 @@ export class RequestRepository {
       (statusCounts["CANCELLED"] || 0) +
       (statusCounts["REFUNDED"] || 0);
 
+    const hydratedItems = await Promise.all(
+      items.map(async (item) => {
+        if (item.status === "COMPLETED") {
+          const vault = await ephemeralVault.getVaultItem(item.id);
+          return {
+            ...item,
+            vaultData: vault.data,
+            vaultInfo: {
+              isExpired: vault.isExpired,
+              remainingTtlSeconds: vault.remainingTtlSeconds,
+              expiresAt: vault.expiresAt,
+            },
+          };
+        }
+        return {
+          ...item,
+          vaultData: null,
+          vaultInfo: {
+            isExpired: true,
+            remainingTtlSeconds: 0,
+            expiresAt: null,
+          },
+        };
+      }),
+    );
+
     return {
-      items,
+      items: hydratedItems,
       total,
       page,
       limit,

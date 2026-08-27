@@ -8086,7 +8086,257 @@ adminCategoryRouter.delete("/:id", async (c) => {
   return c.json(result);
 });
 
+// src/core/redis/redis.client.ts
+import Redis from "ioredis";
+var RedisClient = class {
+  client = null;
+  isConnected = false;
+  constructor() {
+    this.initClient();
+  }
+  initClient() {
+    const redisUrl = getEnvVar("REDIS_URL");
+    const isTls = redisUrl.startsWith("rediss://") || getEnvVar("REDIS_TLS") === "true";
+    const options = {
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
+      lazyConnect: false,
+      retryStrategy(times) {
+        const delay = Math.min(times * 200, 3e3);
+        logger2.warn(`[Redis] Connection retry attempt #${times} in ${delay}ms`);
+        return delay;
+      }
+    };
+    if (isTls) {
+      options.tls = {
+        rejectUnauthorized: false
+        // Required for managed cloud providers like Aiven
+      };
+    }
+    try {
+      this.client = new Redis(redisUrl, options);
+      this.client.on("connect", () => {
+        this.isConnected = true;
+        logger2.info(`[Redis] Successfully connected to Redis instance.`);
+      });
+      this.client.on("ready", () => {
+        this.isConnected = true;
+        logger2.info(`[Redis] Redis connection ready for operations.`);
+      });
+      this.client.on("error", (err) => {
+        this.isConnected = false;
+        logger2.error(`[Redis] Connection error: ${err?.message || err}`);
+      });
+      this.client.on("close", () => {
+        this.isConnected = false;
+        logger2.warn(`[Redis] Connection closed.`);
+      });
+    } catch (err) {
+      logger2.error(`[Redis] Failed to initialize Redis client: ${err?.message}`);
+    }
+  }
+  getRawClient() {
+    if (!this.client) {
+      this.initClient();
+    }
+    return this.client;
+  }
+  async get(key) {
+    try {
+      return await this.getRawClient().get(key);
+    } catch (err) {
+      logger2.error(`[Redis] Error getting key "${key}": ${err?.message}`);
+      return null;
+    }
+  }
+  async set(key, value, ttlSeconds) {
+    try {
+      if (ttlSeconds && ttlSeconds > 0) {
+        await this.getRawClient().set(key, value, "EX", ttlSeconds);
+      } else {
+        await this.getRawClient().set(key, value);
+      }
+      return true;
+    } catch (err) {
+      logger2.error(`[Redis] Error setting key "${key}": ${err?.message}`);
+      return false;
+    }
+  }
+  async setJson(key, data, ttlSeconds) {
+    try {
+      const jsonStr = JSON.stringify(data);
+      return await this.set(key, jsonStr, ttlSeconds);
+    } catch (err) {
+      logger2.error(`[Redis] Error serializing JSON for key "${key}": ${err?.message}`);
+      return false;
+    }
+  }
+  async getJson(key) {
+    try {
+      const val = await this.get(key);
+      if (!val) return null;
+      return JSON.parse(val);
+    } catch (err) {
+      logger2.error(`[Redis] Error parsing JSON for key "${key}": ${err?.message}`);
+      return null;
+    }
+  }
+  async del(key) {
+    try {
+      await this.getRawClient().del(key);
+      return true;
+    } catch (err) {
+      logger2.error(`[Redis] Error deleting key "${key}": ${err?.message}`);
+      return false;
+    }
+  }
+  async ttl(key) {
+    try {
+      return await this.getRawClient().ttl(key);
+    } catch (err) {
+      logger2.error(`[Redis] Error checking TTL for key "${key}": ${err?.message}`);
+      return -2;
+    }
+  }
+};
+var redis = new RedisClient();
+
+// src/core/vault/ephemeral-vault.service.ts
+import crypto2 from "node:crypto";
+var EphemeralVaultService = class {
+  DEFAULT_VAULT_TTL = 86400;
+  // 24 Hours in seconds
+  TEMP_SEARCH_TOKEN_TTL = 1800;
+  // 30 Minutes in seconds
+  getVaultKey(requestId) {
+    return `vault:request:${requestId}`;
+  }
+  getTempTokenKey(requestId) {
+    return `temp:token:${requestId}`;
+  }
+  /**
+   * Encrypts any sensitive payload with AES-256-GCM
+   */
+  encryptPayload(data) {
+    const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
+    const key = crypto2.createHash("sha256").update(secret).digest();
+    const iv = crypto2.randomBytes(12);
+    const cipher = crypto2.createCipheriv("aes-256-gcm", key, iv);
+    const jsonStr = JSON.stringify(data);
+    const encrypted = Buffer.concat([cipher.update(jsonStr, "utf8"), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    return `${iv.toString("base64url")}.${authTag.toString("base64url")}.${encrypted.toString("base64url")}`;
+  }
+  /**
+   * Decrypts and authenticates an AES-256-GCM payload
+   */
+  decryptPayload(encryptedStr) {
+    try {
+      const parts = encryptedStr.split(".");
+      if (parts.length !== 3) return null;
+      const [ivB64, authTagB64, ciphertextB64] = parts;
+      const iv = Buffer.from(ivB64, "base64url");
+      const authTag = Buffer.from(authTagB64, "base64url");
+      const ciphertext = Buffer.from(ciphertextB64, "base64url");
+      const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
+      const key = crypto2.createHash("sha256").update(secret).digest();
+      const decipher = crypto2.createDecipheriv("aes-256-gcm", key, iv);
+      decipher.setAuthTag(authTag);
+      const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+      return JSON.parse(decrypted.toString("utf8"));
+    } catch (err) {
+      logger2.error(`[EphemeralVault] Failed to decrypt payload: ${err?.message}`);
+      return null;
+    }
+  }
+  /**
+   * Stashes ephemeral search token during checkout lifecycle (30-min TTL)
+   * Prevents any search token / customer input from ever touching PostgreSQL
+   */
+  async stashTempSearchToken(requestId, searchToken) {
+    const key = this.getTempTokenKey(requestId);
+    logger2.info(`[EphemeralVault] Stashing temporary search token for request ${requestId} (TTL: 30m)`);
+    return await redis.set(key, searchToken, this.TEMP_SEARCH_TOKEN_TTL);
+  }
+  /**
+   * Retrieves ephemeral search token for Cashfree fulfillment
+   */
+  async getTempSearchToken(requestId) {
+    const key = this.getTempTokenKey(requestId);
+    return await redis.get(key);
+  }
+  /**
+   * Stores completed verified service report in encrypted Redis vault with 24h auto-expiry
+   */
+  async storeVaultItem(requestId, data, ttlSeconds = this.DEFAULT_VAULT_TTL) {
+    const key = this.getVaultKey(requestId);
+    const encryptedStr = this.encryptPayload(data);
+    logger2.info(
+      `[EphemeralVault] Storing 24h encrypted vault item for request ${requestId} (TTL: ${ttlSeconds}s)`
+    );
+    await redis.del(this.getTempTokenKey(requestId));
+    return await redis.set(key, encryptedStr, ttlSeconds);
+  }
+  /**
+   * Retrieves and decrypts 24-hour vault item for retailer overview & history
+   */
+  async getVaultItem(requestId) {
+    const key = this.getVaultKey(requestId);
+    const [encryptedStr, ttl] = await Promise.all([
+      redis.get(key),
+      redis.ttl(key)
+    ]);
+    if (!encryptedStr || ttl <= 0) {
+      return {
+        data: null,
+        isExpired: true,
+        remainingTtlSeconds: 0,
+        expiresAt: null
+      };
+    }
+    const decrypted = this.decryptPayload(encryptedStr);
+    if (!decrypted) {
+      return {
+        data: null,
+        isExpired: true,
+        remainingTtlSeconds: 0,
+        expiresAt: null
+      };
+    }
+    const expiresAt = new Date(Date.now() + ttl * 1e3).toISOString();
+    return {
+      data: decrypted,
+      isExpired: false,
+      remainingTtlSeconds: ttl,
+      expiresAt
+    };
+  }
+  /**
+   * Deletes vault item explicitly if needed
+   */
+  async deleteVaultItem(requestId) {
+    const key = this.getVaultKey(requestId);
+    return await redis.del(key);
+  }
+};
+var ephemeralVault = new EphemeralVaultService();
+
 // src/modules/requests/request.repository.ts
+var retailerPaymentSelect = {
+  id: true,
+  serviceRequestId: true,
+  amount: true,
+  currency: true,
+  method: true,
+  status: true,
+  orderId: true,
+  transactionId: true,
+  paymentMode: true,
+  errorMessage: true,
+  paidAt: true,
+  createdAt: true,
+  updatedAt: true
+};
 var RequestRepository = class {
   async findById(id) {
     return await prisma.serviceRequest.findUnique({
@@ -8100,6 +8350,7 @@ var RequestRepository = class {
           orderBy: { createdAt: "asc" }
         },
         payments: {
+          select: retailerPaymentSelect,
           orderBy: { createdAt: "desc" }
         }
       }
@@ -8205,6 +8456,7 @@ var RequestRepository = class {
           customer: true,
           user: true,
           payments: {
+            select: retailerPaymentSelect,
             orderBy: { createdAt: "desc" }
           },
           events: {
@@ -8226,8 +8478,33 @@ var RequestRepository = class {
     const completedCount = (statusCounts["COMPLETED"] || 0) + (statusCounts["SUCCESS"] || 0);
     const pendingCount = (statusCounts["REQUEST_CREATED"] || 0) + (statusCounts["PRICE_LOCKED"] || 0) + (statusCounts["PAYMENT_PENDING"] || 0) + (statusCounts["PAYMENT_CAPTURED"] || 0) + (statusCounts["PROCESSING"] || 0);
     const failedCount = (statusCounts["PROVIDER_FAILED"] || 0) + (statusCounts["FAILED"] || 0) + (statusCounts["CANCELLED"] || 0) + (statusCounts["REFUNDED"] || 0);
+    const hydratedItems = await Promise.all(
+      items.map(async (item) => {
+        if (item.status === "COMPLETED") {
+          const vault = await ephemeralVault.getVaultItem(item.id);
+          return {
+            ...item,
+            vaultData: vault.data,
+            vaultInfo: {
+              isExpired: vault.isExpired,
+              remainingTtlSeconds: vault.remainingTtlSeconds,
+              expiresAt: vault.expiresAt
+            }
+          };
+        }
+        return {
+          ...item,
+          vaultData: null,
+          vaultInfo: {
+            isExpired: true,
+            remainingTtlSeconds: 0,
+            expiresAt: null
+          }
+        };
+      })
+    );
     return {
-      items,
+      items: hydratedItems,
       total,
       page,
       limit,
@@ -8244,7 +8521,7 @@ var RequestRepository = class {
 var requestRepository = new RequestRepository();
 
 // src/core/integrations/cashfree/cashfree.gateway.ts
-import crypto2 from "crypto";
+import crypto3 from "crypto";
 var API_VERSION = "2023-08-01";
 var CashfreeGateway = class {
   async createOrder(params) {
@@ -8327,7 +8604,7 @@ var CashfreeGateway = class {
       return false;
     }
     try {
-      const generatedSignature = crypto2.createHmac("sha256", clientSecret).update(timestamp + rawBody).digest("base64");
+      const generatedSignature = crypto3.createHmac("sha256", clientSecret).update(timestamp + rawBody).digest("base64");
       return generatedSignature === signature;
     } catch (err) {
       logger2.error("[CashfreeGateway] Signature verification exception");
@@ -8517,15 +8794,15 @@ var EzytmPanGateway = class {
 var ezytmPanGateway = new EzytmPanGateway();
 
 // src/core/security/crypto.util.ts
-import crypto3 from "node:crypto";
+import crypto4 from "node:crypto";
 function getEncryptionKey() {
   const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
-  return crypto3.createHash("sha256").update(secret).digest();
+  return crypto4.createHash("sha256").update(secret).digest();
 }
 function encryptPanToken(payload) {
   const key = getEncryptionKey();
-  const iv = crypto3.randomBytes(12);
-  const cipher = crypto3.createCipheriv("aes-256-gcm", key, iv);
+  const iv = crypto4.randomBytes(12);
+  const cipher = crypto4.createCipheriv("aes-256-gcm", key, iv);
   const tokenData = {
     pan: payload.pan.trim().toUpperCase(),
     aadhaarMasked: payload.aadhaarMasked,
@@ -8551,7 +8828,7 @@ function decryptPanToken(token) {
     const authTag = Buffer.from(authTagB64, "base64url");
     const ciphertext = Buffer.from(ciphertextB64, "base64url");
     const key = getEncryptionKey();
-    const decipher = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+    const decipher = crypto4.createDecipheriv("aes-256-gcm", key, iv);
     decipher.setAuthTag(authTag);
     const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     const parsed = JSON.parse(decrypted.toString("utf8"));
@@ -8733,10 +9010,11 @@ var ServiceDispatcher = class {
       let resultData = null;
       switch (request.service.code) {
         case "PAN_FIND":
-          const input = request.inputData;
-          const searchTokenOrPan = input?.searchToken || input?.pan || "";
+          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
+          const input = request.inputData || {};
+          const searchTokenOrPan = tempToken || input?.searchToken || input?.pan || "";
           if (!searchTokenOrPan) {
-            throw new Error("Missing searchToken or PAN in inputData for PAN_FIND service");
+            throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
           }
           resultData = await panService.getPanDetails(searchTokenOrPan);
           break;
@@ -8747,6 +9025,9 @@ var ServiceDispatcher = class {
         default:
           throw new Error(`Unsupported service code: ${request.service.code}`);
       }
+      if (resultData) {
+        await ephemeralVault.storeVaultItem(serviceRequestId, resultData, 86400);
+      }
       await prisma.serviceRequest.update({
         where: { id: serviceRequestId },
         data: {
@@ -8754,11 +9035,12 @@ var ServiceDispatcher = class {
           resultData: {
             status: "COMPLETED",
             serviceCode: request.service.code,
-            completedAt: (/* @__PURE__ */ new Date()).toISOString()
+            completedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            vaultActive: true
           }
         }
       });
-      logger2.info(`[ServiceDispatcher] Fulfillment COMPLETED for Request: ${serviceRequestId}`);
+      logger2.info(`[ServiceDispatcher] Fulfillment COMPLETED & stored in 24h vault for Request: ${serviceRequestId}`);
     } catch (error) {
       logger2.error(`[ServiceDispatcher] Fulfillment FAILED for Request ${serviceRequestId}:`, error);
       await prisma.serviceRequest.update({
@@ -9011,7 +9293,16 @@ var RequestService = class {
         throw AppError.forbidden("Unauthorized guest session access");
       }
     }
-    return request;
+    const vault = await ephemeralVault.getVaultItem(request.id);
+    return {
+      ...request,
+      vaultData: vault.data,
+      vaultInfo: {
+        isExpired: vault.isExpired,
+        remainingTtlSeconds: vault.remainingTtlSeconds,
+        expiresAt: vault.expiresAt
+      }
+    };
   }
   async queryRequests(context, query) {
     if (context.accessMode !== "RETAILER" || !context.organizationId) {
@@ -9118,6 +9409,12 @@ var RequestService = class {
       inputData: {},
       idempotencyKey: data.idempotencyKey
     });
+    if (rawInput.searchToken || rawInput.pan) {
+      await ephemeralVault.stashTempSearchToken(
+        request.id,
+        rawInput.searchToken || rawInput.pan
+      );
+    }
     const serviceName = service.name || "PAN Find Service";
     const orderNote = `${serviceName} (Ref: ${referenceNumber})`;
     const paymentSession = await paymentService.createCashfreeOrderFromRequest(

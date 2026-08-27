@@ -7,6 +7,7 @@ import { serviceEngine } from "../engine/service-engine";
 import { prisma } from "../../core/db/prisma";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
+import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import type {
   ConfirmRequestPaymentInput,
   CreateRequestInput,
@@ -41,7 +42,18 @@ export class RequestService {
       }
     }
 
-    return request;
+    // Fetch in-memory 24-hour vault item
+    const vault = await ephemeralVault.getVaultItem(request.id);
+
+    return {
+      ...request,
+      vaultData: vault.data,
+      vaultInfo: {
+        isExpired: vault.isExpired,
+        remainingTtlSeconds: vault.remainingTtlSeconds,
+        expiresAt: vault.expiresAt,
+      },
+    };
   }
 
   async queryRequests(context: RequestContext, query: QueryRequestInput) {
@@ -177,6 +189,14 @@ export class RequestService {
       inputData: {},
       idempotencyKey: data.idempotencyKey,
     });
+
+    // Stash ephemeral search token in Redis with 30-min TTL (Zero DB storage)
+    if (rawInput.searchToken || rawInput.pan) {
+      await ephemeralVault.stashTempSearchToken(
+        request.id,
+        rawInput.searchToken || rawInput.pan,
+      );
+    }
 
     // 7. Generate Payment Order (Cashfree) with Service Description
     const serviceName = service.name || "PAN Find Service";
