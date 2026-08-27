@@ -36,10 +36,11 @@ export class ServiceDispatcher {
       switch (request.service.code) {
         case "PAN_FIND":
           const input = request.inputData as any;
-          if (!input || !input.pan) {
-            throw new Error("Missing PAN in inputData for PAN_FIND service");
+          const searchTokenOrPan = input?.searchToken || input?.pan || "";
+          if (!searchTokenOrPan) {
+            throw new Error("Missing searchToken or PAN in inputData for PAN_FIND service");
           }
-          resultData = await panService.getPanDetails(input.pan);
+          resultData = await panService.getPanDetails(searchTokenOrPan);
           break;
 
         // Future services go here:
@@ -51,12 +52,16 @@ export class ServiceDispatcher {
           throw new Error(`Unsupported service code: ${request.service.code}`);
       }
 
-      // 3. Mark as Completed & Save Result
+      // 3. Mark as Completed & Save Operational Status (Zero sensitive data in DB)
       await prisma.serviceRequest.update({
         where: { id: serviceRequestId },
         data: { 
           status: "COMPLETED",
-          resultData: resultData, // Store the PDF URL or JSON response
+          resultData: {
+            status: "COMPLETED",
+            serviceCode: request.service.code,
+            completedAt: new Date().toISOString(),
+          },
         },
       });
 

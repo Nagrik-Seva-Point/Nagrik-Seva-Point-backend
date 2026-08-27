@@ -12,6 +12,7 @@ import {
 import { requestRoutes } from "../modules/requests/request.routes";
 import { panRoutes } from "../modules/pan/pan.routes";
 import { paymentRoutes } from "../modules/payment/payment.routes";
+import { adminRouter } from "../modules/admin/admin.routes";
 import { requestContextMiddleware } from "../middleware/request-context.middleware";
 import type { ContextVariables } from "./context";
 
@@ -35,3 +36,4 @@ apiRouter.route("/integrations/pan", panRoutes);
 // Master Admin API Routes
 apiRouter.route("/admin/categories", adminCategoryRouter);
 apiRouter.route("/admin/services", adminServiceRoutes);
+apiRouter.route("/admin", adminRouter);

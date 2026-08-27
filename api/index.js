@@ -8702,10 +8702,11 @@ var ServiceDispatcher = class {
       switch (request.service.code) {
         case "PAN_FIND":
           const input = request.inputData;
-          if (!input || !input.pan) {
-            throw new Error("Missing PAN in inputData for PAN_FIND service");
+          const searchTokenOrPan = input?.searchToken || input?.pan || "";
+          if (!searchTokenOrPan) {
+            throw new Error("Missing searchToken or PAN in inputData for PAN_FIND service");
           }
-          resultData = await panService.getPanDetails(input.pan);
+          resultData = await panService.getPanDetails(searchTokenOrPan);
           break;
         // Future services go here:
         // case "VOTER_ID_VERIFY":
@@ -8718,8 +8719,11 @@ var ServiceDispatcher = class {
         where: { id: serviceRequestId },
         data: {
           status: "COMPLETED",
-          resultData
-          // Store the PDF URL or JSON response
+          resultData: {
+            status: "COMPLETED",
+            serviceCode: request.service.code,
+            completedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }
         }
       });
       logger2.info(`[ServiceDispatcher] Fulfillment COMPLETED for Request: ${serviceRequestId}`);
@@ -9079,7 +9083,7 @@ var RequestService = class {
       customerId: validatedCustomerId,
       amount: priceSnapshot.amount,
       currency: priceSnapshot.currency,
-      inputData: data.input,
+      inputData: {},
       idempotencyKey: data.idempotencyKey
     });
     const serviceName = service.name || "PAN Find Service";
@@ -9268,6 +9272,451 @@ paymentRoutes.post("/cashfree/webhook", async (c) => {
   }
 });
 
+// src/modules/admin/admin.service.ts
+var AdminService = class {
+  /**
+   * 1. List all transactions with advanced debugging filters & aggregated metrics
+   */
+  async getTransactions(query) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
+    const skip = (page - 1) * limit;
+    const where = {};
+    if (query.status && query.status !== "ALL") {
+      where.status = query.status.toUpperCase();
+    }
+    if (query.method && query.method !== "ALL") {
+      where.method = query.method.toUpperCase();
+    }
+    if (query.organizationId && query.organizationId !== "ALL") {
+      where.organizationId = query.organizationId;
+    }
+    if (query.startDate || query.endDate) {
+      where.createdAt = {};
+      if (query.startDate) {
+        where.createdAt.gte = new Date(query.startDate);
+      }
+      if (query.endDate) {
+        const end = new Date(query.endDate);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
+    const serviceRequestConditions = {};
+    if (query.serviceCode && query.serviceCode !== "ALL") {
+      serviceRequestConditions.service = {
+        code: query.serviceCode
+      };
+    }
+    if (query.accessMode && query.accessMode !== "ALL") {
+      serviceRequestConditions.accessMode = query.accessMode.toUpperCase();
+    }
+    if (Object.keys(serviceRequestConditions).length > 0) {
+      where.serviceRequest = serviceRequestConditions;
+    }
+    if (query.search && query.search.trim()) {
+      const searchTerms = query.search.trim();
+      where.OR = [
+        { orderId: { contains: searchTerms, mode: "insensitive" } },
+        { transactionId: { contains: searchTerms, mode: "insensitive" } },
+        { bankReference: { contains: searchTerms, mode: "insensitive" } },
+        { paymentSessionId: { contains: searchTerms, mode: "insensitive" } },
+        { errorMessage: { contains: searchTerms, mode: "insensitive" } },
+        {
+          serviceRequest: {
+            referenceNumber: { contains: searchTerms, mode: "insensitive" }
+          }
+        },
+        {
+          user: {
+            OR: [
+              { name: { contains: searchTerms, mode: "insensitive" } },
+              { email: { contains: searchTerms, mode: "insensitive" } },
+              { phone: { contains: searchTerms, mode: "insensitive" } }
+            ]
+          }
+        },
+        {
+          organization: {
+            name: { contains: searchTerms, mode: "insensitive" }
+          }
+        }
+      ];
+    }
+    const [total, items, capturedSum, statusCounts] = await Promise.all([
+      prisma.payment.count({ where }),
+      prisma.payment.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+              role: true
+            }
+          },
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              slug: true
+            }
+          },
+          serviceRequest: {
+            select: {
+              id: true,
+              referenceNumber: true,
+              accessMode: true,
+              status: true,
+              providerId: true,
+              providerReference: true,
+              service: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true
+                }
+              },
+              customer: {
+                select: {
+                  id: true,
+                  name: true,
+                  phone: true
+                }
+              }
+            }
+          }
+        }
+      }),
+      prisma.payment.aggregate({
+        where: { ...where, status: "CAPTURED" },
+        _sum: { amount: true }
+      }),
+      prisma.payment.groupBy({
+        by: ["status"],
+        where,
+        _count: { _all: true }
+      })
+    ]);
+    const statusMap = statusCounts.reduce((acc, curr) => {
+      acc[curr.status] = curr._count._all;
+      return acc;
+    }, {});
+    return {
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1
+      },
+      summary: {
+        totalTransactions: total,
+        totalCapturedAmount: Number(capturedSum._sum.amount || 0),
+        capturedCount: statusMap["CAPTURED"] || 0,
+        pendingCount: statusMap["PENDING"] || 0,
+        failedCount: statusMap["FAILED"] || 0,
+        refundedCount: statusMap["REFUNDED"] || 0,
+        authorizedCount: statusMap["AUTHORIZED"] || 0
+      }
+    };
+  }
+  /**
+   * 2. Get Single Transaction with complete debug audit & raw gateway response
+   */
+  async getTransactionById(id) {
+    const payment = await prisma.payment.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true
+          }
+        },
+        organization: {
+          include: {
+            wallet: true
+          }
+        },
+        serviceRequest: {
+          include: {
+            service: true,
+            customer: true,
+            events: {
+              orderBy: { createdAt: "asc" }
+            }
+          }
+        }
+      }
+    });
+    if (!payment) {
+      throw AppError.notFound("Transaction record not found", "TRANSACTION_NOT_FOUND");
+    }
+    return payment;
+  }
+  /**
+   * 3. List all Organizations with stats, owners, and balances
+   */
+  async getOrganizations(query) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
+    const skip = (page - 1) * limit;
+    const where = {};
+    if (query.search && query.search.trim()) {
+      const s = query.search.trim();
+      where.OR = [
+        { name: { contains: s, mode: "insensitive" } },
+        { slug: { contains: s, mode: "insensitive" } },
+        {
+          members: {
+            some: {
+              user: {
+                OR: [
+                  { name: { contains: s, mode: "insensitive" } },
+                  { email: { contains: s, mode: "insensitive" } },
+                  { phone: { contains: s, mode: "insensitive" } }
+                ]
+              }
+            }
+          }
+        }
+      ];
+    }
+    const [total, items, totalWalletSum] = await Promise.all([
+      prisma.organization.count({ where }),
+      prisma.organization.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: {
+          wallet: true,
+          members: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  phone: true,
+                  role: true
+                }
+              }
+            }
+          },
+          _count: {
+            select: {
+              members: true,
+              customers: true,
+              requests: true,
+              payments: true
+            }
+          }
+        }
+      }),
+      prisma.wallet.aggregate({
+        _sum: { balance: true }
+      })
+    ]);
+    return {
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1
+      },
+      summary: {
+        totalOrganizations: total,
+        totalWalletBalance: Number(totalWalletSum._sum.balance || 0)
+      }
+    };
+  }
+  /**
+   * 4. Get Organization Details by ID
+   */
+  async getOrganizationById(id) {
+    const org = await prisma.organization.findUnique({
+      where: { id },
+      include: {
+        wallet: {
+          include: {
+            transactions: {
+              take: 20,
+              orderBy: { createdAt: "desc" }
+            }
+          }
+        },
+        members: {
+          include: {
+            user: true
+          }
+        },
+        requests: {
+          take: 20,
+          orderBy: { createdAt: "desc" },
+          include: {
+            service: true,
+            customer: true
+          }
+        },
+        payments: {
+          take: 20,
+          orderBy: { createdAt: "desc" }
+        },
+        _count: {
+          select: {
+            members: true,
+            customers: true,
+            requests: true,
+            payments: true
+          }
+        }
+      }
+    });
+    if (!org) {
+      throw AppError.notFound("Organization not found", "ORG_NOT_FOUND");
+    }
+    return org;
+  }
+  /**
+   * 5. Master Admin KPI Overview Stats
+   */
+  async getOverviewStats() {
+    const todayStart = /* @__PURE__ */ new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const [
+      totalUsers,
+      totalOrgs,
+      totalRequests,
+      completedRequests,
+      allPaymentsSum,
+      todayPaymentsSum,
+      recentTransactions,
+      topServicesGroup
+    ] = await Promise.all([
+      prisma.user.count(),
+      prisma.organization.count(),
+      prisma.serviceRequest.count(),
+      prisma.serviceRequest.count({ where: { status: "COMPLETED" } }),
+      prisma.payment.aggregate({
+        where: { status: "CAPTURED" },
+        _sum: { amount: true }
+      }),
+      prisma.payment.aggregate({
+        where: {
+          status: "CAPTURED",
+          createdAt: { gte: todayStart }
+        },
+        _sum: { amount: true }
+      }),
+      prisma.payment.findMany({
+        take: 10,
+        orderBy: { createdAt: "desc" },
+        include: {
+          user: {
+            select: { name: true, phone: true, email: true }
+          },
+          organization: {
+            select: { name: true }
+          },
+          serviceRequest: {
+            select: {
+              referenceNumber: true,
+              service: { select: { name: true, code: true } }
+            }
+          }
+        }
+      }),
+      prisma.serviceRequest.groupBy({
+        by: ["serviceId"],
+        _count: { _all: true },
+        orderBy: { _count: { serviceId: "desc" } },
+        take: 5
+      })
+    ]);
+    const serviceIds = topServicesGroup.map((s) => s.serviceId);
+    const services = await prisma.service.findMany({
+      where: { id: { in: serviceIds } },
+      select: { id: true, name: true, code: true }
+    });
+    const topServices = topServicesGroup.map((g) => {
+      const s = services.find((srv) => srv.id === g.serviceId);
+      return {
+        serviceId: g.serviceId,
+        name: s?.name || "Unknown Service",
+        code: s?.code || "UNKNOWN",
+        count: g._count._all
+      };
+    });
+    const successRate = totalRequests > 0 ? Math.round(completedRequests / totalRequests * 100) : 100;
+    return {
+      totalRevenue: Number(allPaymentsSum._sum.amount || 0),
+      todayRevenue: Number(todayPaymentsSum._sum.amount || 0),
+      totalUsers,
+      totalOrganizations: totalOrgs,
+      totalRequests,
+      completedRequests,
+      successRate,
+      recentTransactions,
+      topServices
+    };
+  }
+};
+var adminService = new AdminService();
+
+// src/modules/admin/admin.routes.ts
+var adminRouter = new Hono2();
+adminRouter.use("*", requireAdmin());
+adminRouter.get("/stats/overview", async (c) => {
+  const stats = await adminService.getOverviewStats();
+  return c.json({ success: true, data: stats });
+});
+adminRouter.get("/transactions", async (c) => {
+  const query = c.req.query();
+  const result = await adminService.getTransactions({
+    search: query.search,
+    status: query.status,
+    method: query.method,
+    serviceCode: query.serviceCode,
+    accessMode: query.accessMode,
+    organizationId: query.organizationId,
+    startDate: query.startDate,
+    endDate: query.endDate,
+    page: query.page ? parseInt(query.page, 10) : void 0,
+    limit: query.limit ? parseInt(query.limit, 10) : void 0
+  });
+  return c.json({ success: true, data: result.items, pagination: result.pagination, summary: result.summary });
+});
+adminRouter.get("/transactions/:id", async (c) => {
+  const id = c.req.param("id");
+  const transaction = await adminService.getTransactionById(id);
+  return c.json({ success: true, data: transaction });
+});
+adminRouter.get("/organizations", async (c) => {
+  const query = c.req.query();
+  const result = await adminService.getOrganizations({
+    search: query.search,
+    page: query.page ? parseInt(query.page, 10) : void 0,
+    limit: query.limit ? parseInt(query.limit, 10) : void 0
+  });
+  return c.json({ success: true, data: result.items, pagination: result.pagination, summary: result.summary });
+});
+adminRouter.get("/organizations/:id", async (c) => {
+  const id = c.req.param("id");
+  const org = await adminService.getOrganizationById(id);
+  return c.json({ success: true, data: org });
+});
+
 // src/middleware/request-context.middleware.ts
 var requestContextMiddleware = () => {
   return async (c, next) => {
@@ -9381,6 +9830,7 @@ apiRouter.route("/pan", panRoutes);
 apiRouter.route("/integrations/pan", panRoutes);
 apiRouter.route("/admin/categories", adminCategoryRouter);
 apiRouter.route("/admin/services", adminServiceRoutes);
+apiRouter.route("/admin", adminRouter);
 
 // src/app/app.ts
 var app = new Hono2();

@@ -166,7 +166,7 @@ export class RequestService {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const referenceNumber = `REQ-${dateStr}-${service.code}-${randomSuffix}`;
 
-    // 6. Create ServiceRequest Record in REQUEST_CREATED
+    // 6. Create ServiceRequest Record in REQUEST_CREATED (Zero user input stored in DB)
     const request = await requestRepository.create({
       referenceNumber,
       serviceId: service.id,
@@ -174,7 +174,7 @@ export class RequestService {
       customerId: validatedCustomerId,
       amount: priceSnapshot.amount,
       currency: priceSnapshot.currency,
-      inputData: data.input as Record<string, unknown>,
+      inputData: {},
       idempotencyKey: data.idempotencyKey,
     });
 
