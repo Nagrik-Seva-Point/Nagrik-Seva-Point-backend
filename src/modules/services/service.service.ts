@@ -91,7 +91,6 @@ export class ServiceService {
         code: service.code,
         name: service.name,
         description: service.description,
-        categoryId: service.categoryId,
         category: service.category
           ? {
             id: service.category.id,
@@ -100,23 +99,9 @@ export class ServiceService {
           }
           : null,
         isActive: service.isActive,
-        isPublicAllowed: service.isPublicAllowed,
-        isRetailerAllowed: service.isRetailerAllowed,
         requiresCustomer: service.requiresCustomer,
-        requiresUpload: service.requiresUpload,
-        producesDocument: service.producesDocument,
         publicPrice,
         partnerPrice,
-        customerPrice: publicPrice,
-        retailerPrice: partnerPrice, // Partner cost for retailer
-        prices: {
-          public: publicPrice,
-          partner: partnerPrice,
-          partnerGold: goldPriceRecord ? Number(goldPriceRecord.amount) : null,
-          enterprise: enterprisePriceRecord
-            ? Number(enterprisePriceRecord.amount)
-            : null,
-        },
         pricing: {
           amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
           currency: matchedPrice ? matchedPrice.currency : "INR",
@@ -156,12 +141,6 @@ export class ServiceService {
     const partnerPriceRecord = service.prices.find((p) =>
       p.pricingTier === "PARTNER"
     );
-    const goldPriceRecord = service.prices.find((p) =>
-      p.pricingTier === "PARTNER_GOLD"
-    );
-    const enterprisePriceRecord = service.prices.find((p) =>
-      p.pricingTier === "ENTERPRISE"
-    );
 
     const publicPrice = publicPriceRecord
       ? Number(publicPriceRecord.amount)
@@ -187,7 +166,6 @@ export class ServiceService {
       code: service.code,
       name: service.name,
       description: service.description,
-      categoryId: service.categoryId,
       category: service.category
         ? {
           id: service.category.id,
@@ -199,20 +177,8 @@ export class ServiceService {
       isPublicAllowed: service.isPublicAllowed,
       isRetailerAllowed: service.isRetailerAllowed,
       requiresCustomer: service.requiresCustomer,
-      requiresUpload: service.requiresUpload,
-      producesDocument: service.producesDocument,
       publicPrice,
       partnerPrice,
-      customerPrice: publicPrice,
-      retailerPrice: partnerPrice, // Partner cost for retailer
-      prices: {
-        public: publicPrice,
-        partner: partnerPrice,
-        partnerGold: goldPriceRecord ? Number(goldPriceRecord.amount) : null,
-        enterprise: enterprisePriceRecord
-          ? Number(enterprisePriceRecord.amount)
-          : null,
-      },
       pricing: {
         amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
         currency: matchedPrice ? matchedPrice.currency : "INR",

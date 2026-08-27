@@ -7280,29 +7280,15 @@ var ServiceService = class {
         code: service.code,
         name: service.name,
         description: service.description,
-        categoryId: service.categoryId,
         category: service.category ? {
           id: service.category.id,
           code: service.category.code,
           name: service.category.name
         } : null,
         isActive: service.isActive,
-        isPublicAllowed: service.isPublicAllowed,
-        isRetailerAllowed: service.isRetailerAllowed,
         requiresCustomer: service.requiresCustomer,
-        requiresUpload: service.requiresUpload,
-        producesDocument: service.producesDocument,
         publicPrice,
         partnerPrice,
-        customerPrice: publicPrice,
-        retailerPrice: partnerPrice,
-        // Partner cost for retailer
-        prices: {
-          public: publicPrice,
-          partner: partnerPrice,
-          partnerGold: goldPriceRecord ? Number(goldPriceRecord.amount) : null,
-          enterprise: enterprisePriceRecord ? Number(enterprisePriceRecord.amount) : null
-        },
         pricing: {
           amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
           currency: matchedPrice ? matchedPrice.currency : "INR",
@@ -7334,12 +7320,6 @@ var ServiceService = class {
     const partnerPriceRecord = service.prices.find(
       (p) => p.pricingTier === "PARTNER"
     );
-    const goldPriceRecord = service.prices.find(
-      (p) => p.pricingTier === "PARTNER_GOLD"
-    );
-    const enterprisePriceRecord = service.prices.find(
-      (p) => p.pricingTier === "ENTERPRISE"
-    );
     const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 40;
     const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 25;
     const tier = context?.pricingTier || "PARTNER";
@@ -7350,7 +7330,6 @@ var ServiceService = class {
       code: service.code,
       name: service.name,
       description: service.description,
-      categoryId: service.categoryId,
       category: service.category ? {
         id: service.category.id,
         code: service.category.code,
@@ -7360,19 +7339,8 @@ var ServiceService = class {
       isPublicAllowed: service.isPublicAllowed,
       isRetailerAllowed: service.isRetailerAllowed,
       requiresCustomer: service.requiresCustomer,
-      requiresUpload: service.requiresUpload,
-      producesDocument: service.producesDocument,
       publicPrice,
       partnerPrice,
-      customerPrice: publicPrice,
-      retailerPrice: partnerPrice,
-      // Partner cost for retailer
-      prices: {
-        public: publicPrice,
-        partner: partnerPrice,
-        partnerGold: goldPriceRecord ? Number(goldPriceRecord.amount) : null,
-        enterprise: enterprisePriceRecord ? Number(enterprisePriceRecord.amount) : null
-      },
       pricing: {
         amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
         currency: matchedPrice ? matchedPrice.currency : "INR",
