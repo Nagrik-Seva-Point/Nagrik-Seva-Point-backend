@@ -8874,11 +8874,11 @@ var PanService = class {
       logger2.warn(`[PanService] ${notFoundMsg}`);
       throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
     }
-    if (response.Errorcode === 101) {
-      logger2.warn(`[PanService] PAN not found for Aadhaar ending in ${aadhaar.slice(-4)}`);
-      throw AppError.badRequest("No PAN found linked with the provided Aadhaar number.", "PAN_NOT_FOUND");
+    if (response.Errorcode === 101 || response.Errorcode === 104) {
+      logger2.warn(`[PanService] PAN not found / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}`);
+      throw AppError.badRequest("No PAN Card record found linked with this Aadhaar number in the Income Tax registry.", "PAN_NOT_FOUND");
     }
-    const fallbackMsg = response.Message && response.Message !== "Data Fetch Successfully" ? response.Message : "Failed to find PAN for this Aadhaar. Please try again later.";
+    const fallbackMsg = response.Message && response.Message !== "Data Fetch Successfully" && response.Message !== "Internal Server Error" ? response.Message : "Failed to find PAN for this Aadhaar. The upstream government registry is temporarily unreachable.";
     logger2.warn(`[PanService] Find PAN failed: ${fallbackMsg}`);
     throw AppError.badRequest(fallbackMsg, "PAN_FIND_FAILED");
   }
