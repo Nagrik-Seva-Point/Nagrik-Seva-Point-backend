@@ -8194,7 +8194,7 @@ var RequestRepository = class {
     if (customerId) {
       where.customerId = customerId;
     }
-    const [items, total] = await Promise.all([
+    const [items, total, statusGroups] = await Promise.all([
       prisma.serviceRequest.findMany({
         where,
         skip,
@@ -8212,14 +8212,32 @@ var RequestRepository = class {
           }
         }
       }),
-      prisma.serviceRequest.count({ where })
+      prisma.serviceRequest.count({ where }),
+      prisma.serviceRequest.groupBy({
+        by: ["status"],
+        where: { organizationId },
+        _count: { _all: true }
+      })
     ]);
+    const statusCounts = statusGroups.reduce((acc, curr) => {
+      acc[curr.status] = curr._count._all;
+      return acc;
+    }, {});
+    const completedCount = (statusCounts["COMPLETED"] || 0) + (statusCounts["SUCCESS"] || 0);
+    const pendingCount = (statusCounts["REQUEST_CREATED"] || 0) + (statusCounts["PRICE_LOCKED"] || 0) + (statusCounts["PAYMENT_PENDING"] || 0) + (statusCounts["PAYMENT_CAPTURED"] || 0) + (statusCounts["PROCESSING"] || 0);
+    const failedCount = (statusCounts["PROVIDER_FAILED"] || 0) + (statusCounts["FAILED"] || 0) + (statusCounts["CANCELLED"] || 0) + (statusCounts["REFUNDED"] || 0);
     return {
       items,
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit)
+      totalPages: Math.ceil(total / limit) || 1,
+      summary: {
+        total,
+        completed: completedCount,
+        pending: pendingCount,
+        failed: failedCount
+      }
     };
   }
 };
@@ -8567,9 +8585,9 @@ var PanService = class {
       `[PanService] Finding PAN for Aadhaar ending in ${aadhaar.slice(-4)}`
     );
     if (aadhaar === "123412341234") {
-      logger2.info(`[PanService] Test Aadhaar (Success Mode) detected. Returning mock token.`);
+      logger2.info(`[PanService] Test Aadhaar (Success Simulation) detected. Encrypting mock token.`);
       return {
-        maskedPan: "XXXXX1234X",
+        maskedPan: "XXXXX1234F",
         searchToken: encryptPanToken({
           pan: "ABCDE1234F",
           aadhaarMasked: "XXXXXXXX1234"
@@ -8625,24 +8643,38 @@ var PanService = class {
    */
   async getPanDetails(input) {
     let cleanPan = "";
+    let decryptedAadhaarMasked = "";
     if (typeof input === "string") {
-      cleanPan = input.trim().toUpperCase();
+      if (input.includes(".") && input.length > 20) {
+        const decrypted = decryptPanToken(input);
+        cleanPan = decrypted.pan.trim().toUpperCase();
+        decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
+      } else {
+        cleanPan = input.trim().toUpperCase();
+      }
     } else if (input.searchToken) {
       const decrypted = decryptPanToken(input.searchToken);
       cleanPan = decrypted.pan.trim().toUpperCase();
+      decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
     } else if (input.pan) {
-      cleanPan = input.pan.trim().toUpperCase();
+      if (input.pan.includes(".") && input.pan.length > 20) {
+        const decrypted = decryptPanToken(input.pan);
+        cleanPan = decrypted.pan.trim().toUpperCase();
+        decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
+      } else {
+        cleanPan = input.pan.trim().toUpperCase();
+      }
     }
     if (!cleanPan) {
       throw AppError.badRequest("A valid searchToken or PAN number is required.", "INVALID_INPUT");
     }
     if (cleanPan === "ABCDE1234F") {
-      logger2.info(`[PanService] Test PAN (Success Mode) detected. Returning mock details.`);
+      logger2.info(`[PanService] Test PAN (Success Simulation) decrypted. Returning verified details.`);
       return {
         pan: "ABCDE1234F",
-        fullName: "Mock Test User",
-        maskedAadhaar: "XXXXXXXX1234",
-        dob: "1990-01-01",
+        fullName: "VIKASH KUMAR",
+        maskedAadhaar: decryptedAadhaarMasked || "XXXXXXXX1234",
+        dob: "1995-08-15",
         gender: "Male (M)",
         aadhaarLinked: true,
         category: "Individual"

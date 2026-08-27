@@ -134,7 +134,7 @@ export class RequestRepository {
       where.customerId = customerId;
     }
 
-    const [items, total] = await Promise.all([
+    const [items, total, statusGroups] = await Promise.all([
       prisma.serviceRequest.findMany({
         where,
         skip,
@@ -153,14 +153,43 @@ export class RequestRepository {
         },
       }),
       prisma.serviceRequest.count({ where }),
+      prisma.serviceRequest.groupBy({
+        by: ["status"],
+        where: { organizationId },
+        _count: { _all: true },
+      }),
     ]);
+
+    const statusCounts = statusGroups.reduce((acc, curr) => {
+      acc[curr.status] = curr._count._all;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const completedCount = (statusCounts["COMPLETED"] || 0) + (statusCounts["SUCCESS"] || 0);
+    const pendingCount =
+      (statusCounts["REQUEST_CREATED"] || 0) +
+      (statusCounts["PRICE_LOCKED"] || 0) +
+      (statusCounts["PAYMENT_PENDING"] || 0) +
+      (statusCounts["PAYMENT_CAPTURED"] || 0) +
+      (statusCounts["PROCESSING"] || 0);
+    const failedCount =
+      (statusCounts["PROVIDER_FAILED"] || 0) +
+      (statusCounts["FAILED"] || 0) +
+      (statusCounts["CANCELLED"] || 0) +
+      (statusCounts["REFUNDED"] || 0);
 
     return {
       items,
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(total / limit) || 1,
+      summary: {
+        total,
+        completed: completedCount,
+        pending: pendingCount,
+        failed: failedCount,
+      },
     };
   }
 }

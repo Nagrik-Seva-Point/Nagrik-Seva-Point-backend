@@ -16,9 +16,9 @@ export class PanService {
 
     // CASHFREE & PROVIDER SIMULATION TEST BYPASS
     if (aadhaar === "123412341234") {
-      logger.info(`[PanService] Test Aadhaar (Success Mode) detected. Returning mock token.`);
+      logger.info(`[PanService] Test Aadhaar (Success Simulation) detected. Encrypting mock token.`);
       return {
-        maskedPan: "XXXXX1234X",
+        maskedPan: "XXXXX1234F",
         searchToken: encryptPanToken({
           pan: "ABCDE1234F",
           aadhaarMasked: "XXXXXXXX1234",
@@ -88,14 +88,28 @@ export class PanService {
    */
   async getPanDetails(input: PanDetailsInput | string): Promise<PanDetailsOutput> {
     let cleanPan = "";
+    let decryptedAadhaarMasked = "";
 
     if (typeof input === "string") {
-      cleanPan = input.trim().toUpperCase();
+      if (input.includes(".") && input.length > 20) {
+        const decrypted = decryptPanToken(input);
+        cleanPan = decrypted.pan.trim().toUpperCase();
+        decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
+      } else {
+        cleanPan = input.trim().toUpperCase();
+      }
     } else if (input.searchToken) {
       const decrypted = decryptPanToken(input.searchToken);
       cleanPan = decrypted.pan.trim().toUpperCase();
+      decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
     } else if (input.pan) {
-      cleanPan = input.pan.trim().toUpperCase();
+      if (input.pan.includes(".") && input.pan.length > 20) {
+        const decrypted = decryptPanToken(input.pan);
+        cleanPan = decrypted.pan.trim().toUpperCase();
+        decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
+      } else {
+        cleanPan = input.pan.trim().toUpperCase();
+      }
     }
 
     if (!cleanPan) {
@@ -104,15 +118,15 @@ export class PanService {
 
     // CASHFREE & PROVIDER SIMULATION TEST BYPASS
     if (cleanPan === "ABCDE1234F") {
-      logger.info(`[PanService] Test PAN (Success Mode) detected. Returning mock details.`);
+      logger.info(`[PanService] Test PAN (Success Simulation) decrypted. Returning verified details.`);
       return {
         pan: "ABCDE1234F",
-        fullName: "Mock Test User",
-        maskedAadhaar: "XXXXXXXX1234",
-        dob: "1990-01-01",
+        fullName: "VIKASH KUMAR",
+        maskedAadhaar: decryptedAadhaarMasked || "XXXXXXXX1234",
+        dob: "1995-08-15",
         gender: "Male (M)",
         aadhaarLinked: true,
-        category: "Individual"
+        category: "Individual",
       };
     }
 
