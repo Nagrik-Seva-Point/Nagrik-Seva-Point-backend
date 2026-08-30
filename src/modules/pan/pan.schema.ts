@@ -27,12 +27,35 @@ export const panDetailsSchema = z
 
 export type PanDetailsInput = z.infer<typeof panDetailsSchema>;
 
+export const decryptPanTokenSchema = z.object({
+  searchToken: z.string().min(10, "Search token is required"),
+});
+
+export type DecryptPanTokenInput = z.infer<typeof decryptPanTokenSchema>;
+
+export const verifyPanDetailsSchema = z.object({
+  pan: z.string().trim().toUpperCase().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format"),
+});
+
+export type VerifyPanDetailsInput = z.infer<typeof verifyPanDetailsSchema>;
+
 // ==========================================
 // 2. CLEAN OUTPUT DTO TYPES
 // ==========================================
 
 export interface PanFindOutput {
   maskedPan: string;
+  searchToken: string;
+}
+
+export interface DecryptPanTokenOutput {
+  pan: string;
+  maskedAadhaar: string;
+}
+
+export interface VerifyPanDetailsOutput {
+  pan: string;
+  maskedName?: string;
   searchToken: string;
 }
 

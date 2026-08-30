@@ -2,6 +2,7 @@ import { prisma } from "../../core/db/prisma";
 import { logger } from "../../core/logger/logger";
 import { panService } from "../pan/pan.service";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
+import { decryptPanToken } from "../../core/security/crypto.util";
 import { AppError } from "../../core/errors/AppError";
 
 export class ServiceDispatcher {
@@ -35,16 +36,49 @@ export class ServiceDispatcher {
 
       // 2. Route to specific service handlers
       switch (request.service.code) {
-        case "PAN_FIND":
+        case "PAN_FIND": {
           const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
           const input = (request.inputData || {}) as any;
-          const searchTokenOrPan = tempToken || input?.searchToken || input?.pan || "";
+          const searchToken = tempToken || input?.searchToken || "";
           
-          if (!searchTokenOrPan) {
+          if (!searchToken) {
             throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
           }
-          resultData = await panService.getPanDetails(searchTokenOrPan);
+
+          const decrypted = decryptPanToken(searchToken);
+          resultData = {
+            pan: decrypted.pan,
+            maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX1234",
+            status: "SUCCESS",
+            message: "PAN number retrieved successfully",
+          };
           break;
+        }
+
+        case "PAN_DETAILS": {
+          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
+          const input = (request.inputData || {}) as any;
+          const searchToken = tempToken || input?.searchToken;
+
+          if (searchToken && typeof searchToken === "string" && searchToken.includes(".")) {
+            const decrypted = decryptPanToken(searchToken);
+            resultData = {
+              pan: decrypted.pan,
+              fullName: decrypted.fullName || "Taxpayer",
+              dob: decrypted.dob || "N/A",
+              gender: decrypted.gender || "N/A",
+              category: decrypted.category || "Individual",
+              aadhaarLinked: decrypted.aadhaarLinked ?? true,
+              maskedAadhaar: decrypted.aadhaarMasked || "N/A",
+              status: "SUCCESS",
+            };
+          } else if (input?.pan) {
+            resultData = await panService.getPanDetails(input.pan);
+          } else {
+            throw new Error("Missing PAN/searchToken for PAN_DETAILS service");
+          }
+          break;
+        }
 
         // Future services go here:
         // case "VOTER_ID_VERIFY":

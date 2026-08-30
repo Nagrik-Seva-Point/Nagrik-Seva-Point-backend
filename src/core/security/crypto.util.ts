@@ -17,6 +17,11 @@ function getEncryptionKey(): Buffer {
 export interface PanTokenPayload {
   pan: string;
   aadhaarMasked?: string;
+  fullName?: string;
+  dob?: string;
+  gender?: string;
+  category?: string;
+  aadhaarLinked?: boolean;
   exp?: number;
 }
 
@@ -32,6 +37,11 @@ export function encryptPanToken(payload: PanTokenPayload): string {
   const tokenData: PanTokenPayload = {
     pan: payload.pan.trim().toUpperCase(),
     aadhaarMasked: payload.aadhaarMasked,
+    fullName: payload.fullName,
+    dob: payload.dob,
+    gender: payload.gender,
+    category: payload.category,
+    aadhaarLinked: payload.aadhaarLinked,
     exp: payload.exp || Date.now() + 30 * 60 * 1000, // 30 mins expiry
   };
 

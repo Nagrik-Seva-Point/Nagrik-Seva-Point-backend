@@ -2,7 +2,13 @@ import { ezytmPanGateway } from "../../core/integrations/ezytm/ezytm-pan.gateway
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { encryptPanToken, decryptPanToken } from "../../core/security/crypto.util";
-import type { PanDetailsInput, PanDetailsOutput, PanFindOutput } from "./pan.schema";
+import type {
+  DecryptPanTokenOutput,
+  PanDetailsInput,
+  PanDetailsOutput,
+  PanFindOutput,
+  VerifyPanDetailsOutput,
+} from "./pan.schema";
 
 export class PanService {
   /**
@@ -165,6 +171,105 @@ export class PanService {
       "Failed to retrieve PAN details from official registry.";
     logger.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
     throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
+  }
+
+  /**
+   * 3. Decrypt stateless search token to reveal PAN and Masked Aadhaar
+   */
+  decryptSearchToken(token: string): DecryptPanTokenOutput {
+    try {
+      const decrypted = decryptPanToken(token);
+      if (!decrypted?.pan) {
+        throw new Error("Missing PAN in decrypted token payload");
+      }
+      return {
+        pan: decrypted.pan,
+        maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX",
+      };
+    } catch (err: any) {
+      logger.error(`[PanService] Token decryption failed: ${err.message}`);
+      throw AppError.badRequest(
+        "Invalid or expired search session token. Please search again.",
+        "INVALID_TOKEN",
+      );
+    }
+  }
+
+  /**
+   * 4. Verify PAN Details & Tokenize (Pre-Payment Availability Check)
+   */
+  async verifyPanDetails(pan: string): Promise<VerifyPanDetailsOutput> {
+    const formattedPan = pan.trim().toUpperCase();
+    logger.info(`[PanService] Verifying PAN availability for: ${formattedPan}`);
+
+    // Simulation check for test PANs
+    if (formattedPan === "ABCDE1234F") {
+      const searchToken = encryptPanToken({
+        pan: "ABCDE1234F",
+        fullName: "VIKASH KUMAR",
+        dob: "1995-08-15",
+        gender: "Male (M)",
+        category: "Individual",
+        aadhaarLinked: true,
+        aadhaarMasked: "XXXXXXXX1234",
+      });
+      return {
+        pan: "ABCDE1234F",
+        maskedName: "V**** K****",
+        searchToken,
+      };
+    }
+
+    const details = await this.getPanDetails(formattedPan);
+    const searchToken = encryptPanToken({
+      pan: details.pan,
+      fullName: details.fullName,
+      dob: details.dob,
+      gender: details.gender,
+      category: details.category,
+      aadhaarLinked: details.aadhaarLinked,
+      aadhaarMasked: details.maskedAadhaar,
+    });
+
+    const maskedName = details.fullName
+      ? details.fullName
+          .split(" ")
+          .map((part) => (part.length > 1 ? `${part[0]}****` : part))
+          .join(" ")
+      : "V****";
+
+    return {
+      pan: details.pan,
+      maskedName,
+      searchToken,
+    };
+  }
+
+  /**
+   * 5. Decrypt details token to reveal full demographic records
+   */
+  decryptPanDetailsToken(token: string): PanDetailsOutput {
+    try {
+      const decrypted = decryptPanToken(token);
+      if (!decrypted?.pan) {
+        throw new Error("Missing PAN in token");
+      }
+      return {
+        pan: decrypted.pan,
+        fullName: decrypted.fullName || "Taxpayer",
+        dob: decrypted.dob || "N/A",
+        gender: decrypted.gender || "N/A",
+        category: decrypted.category || "Individual",
+        aadhaarLinked: decrypted.aadhaarLinked ?? true,
+        maskedAadhaar: decrypted.aadhaarMasked || "N/A",
+      };
+    } catch (err: any) {
+      logger.error(`[PanService] Details token decryption failed: ${err.message}`);
+      throw AppError.badRequest(
+        "Invalid or expired verification session token. Please search again.",
+        "INVALID_TOKEN",
+      );
+    }
   }
 }
 

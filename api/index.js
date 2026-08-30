@@ -8774,6 +8774,11 @@ function encryptPanToken(payload) {
   const tokenData = {
     pan: payload.pan.trim().toUpperCase(),
     aadhaarMasked: payload.aadhaarMasked,
+    fullName: payload.fullName,
+    dob: payload.dob,
+    gender: payload.gender,
+    category: payload.category,
+    aadhaarLinked: payload.aadhaarLinked,
     exp: payload.exp || Date.now() + 30 * 60 * 1e3
     // 30 mins expiry
   };
@@ -8950,6 +8955,92 @@ var PanService = class {
     logger2.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
     throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
   }
+  /**
+   * 3. Decrypt stateless search token to reveal PAN and Masked Aadhaar
+   */
+  decryptSearchToken(token) {
+    try {
+      const decrypted = decryptPanToken(token);
+      if (!decrypted?.pan) {
+        throw new Error("Missing PAN in decrypted token payload");
+      }
+      return {
+        pan: decrypted.pan,
+        maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX"
+      };
+    } catch (err) {
+      logger2.error(`[PanService] Token decryption failed: ${err.message}`);
+      throw AppError.badRequest(
+        "Invalid or expired search session token. Please search again.",
+        "INVALID_TOKEN"
+      );
+    }
+  }
+  /**
+   * 4. Verify PAN Details & Tokenize (Pre-Payment Availability Check)
+   */
+  async verifyPanDetails(pan) {
+    const formattedPan = pan.trim().toUpperCase();
+    logger2.info(`[PanService] Verifying PAN availability for: ${formattedPan}`);
+    if (formattedPan === "ABCDE1234F") {
+      const searchToken2 = encryptPanToken({
+        pan: "ABCDE1234F",
+        fullName: "VIKASH KUMAR",
+        dob: "1995-08-15",
+        gender: "Male (M)",
+        category: "Individual",
+        aadhaarLinked: true,
+        aadhaarMasked: "XXXXXXXX1234"
+      });
+      return {
+        pan: "ABCDE1234F",
+        maskedName: "V**** K****",
+        searchToken: searchToken2
+      };
+    }
+    const details = await this.getPanDetails(formattedPan);
+    const searchToken = encryptPanToken({
+      pan: details.pan,
+      fullName: details.fullName,
+      dob: details.dob,
+      gender: details.gender,
+      category: details.category,
+      aadhaarLinked: details.aadhaarLinked,
+      aadhaarMasked: details.maskedAadhaar
+    });
+    const maskedName = details.fullName ? details.fullName.split(" ").map((part) => part.length > 1 ? `${part[0]}****` : part).join(" ") : "V****";
+    return {
+      pan: details.pan,
+      maskedName,
+      searchToken
+    };
+  }
+  /**
+   * 5. Decrypt details token to reveal full demographic records
+   */
+  decryptPanDetailsToken(token) {
+    try {
+      const decrypted = decryptPanToken(token);
+      if (!decrypted?.pan) {
+        throw new Error("Missing PAN in token");
+      }
+      return {
+        pan: decrypted.pan,
+        fullName: decrypted.fullName || "Taxpayer",
+        dob: decrypted.dob || "N/A",
+        gender: decrypted.gender || "N/A",
+        category: decrypted.category || "Individual",
+        aadhaarLinked: decrypted.aadhaarLinked ?? true,
+        maskedAadhaar: decrypted.aadhaarMasked || "N/A"
+      };
+    } catch (err) {
+      logger2.error(`[PanService] Details token decryption failed: ${err.message}`);
+      throw AppError.badRequest(
+        "Invalid or expired verification session token. Please search again.",
+        "INVALID_TOKEN"
+      );
+    }
+  }
 };
 var panService = new PanService();
 
@@ -8977,15 +9068,45 @@ var ServiceDispatcher = class {
       });
       let resultData = null;
       switch (request.service.code) {
-        case "PAN_FIND":
+        case "PAN_FIND": {
           const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
           const input = request.inputData || {};
-          const searchTokenOrPan = tempToken || input?.searchToken || input?.pan || "";
-          if (!searchTokenOrPan) {
+          const searchToken = tempToken || input?.searchToken || "";
+          if (!searchToken) {
             throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
           }
-          resultData = await panService.getPanDetails(searchTokenOrPan);
+          const decrypted = decryptPanToken(searchToken);
+          resultData = {
+            pan: decrypted.pan,
+            maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX1234",
+            status: "SUCCESS",
+            message: "PAN number retrieved successfully"
+          };
           break;
+        }
+        case "PAN_DETAILS": {
+          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
+          const input = request.inputData || {};
+          const searchToken = tempToken || input?.searchToken;
+          if (searchToken && typeof searchToken === "string" && searchToken.includes(".")) {
+            const decrypted = decryptPanToken(searchToken);
+            resultData = {
+              pan: decrypted.pan,
+              fullName: decrypted.fullName || "Taxpayer",
+              dob: decrypted.dob || "N/A",
+              gender: decrypted.gender || "N/A",
+              category: decrypted.category || "Individual",
+              aadhaarLinked: decrypted.aadhaarLinked ?? true,
+              maskedAadhaar: decrypted.aadhaarMasked || "N/A",
+              status: "SUCCESS"
+            };
+          } else if (input?.pan) {
+            resultData = await panService.getPanDetails(input.pan);
+          } else {
+            throw new Error("Missing PAN/searchToken for PAN_DETAILS service");
+          }
+          break;
+        }
         // Future services go here:
         // case "VOTER_ID_VERIFY":
         //   resultData = await voterService.verify(input.epic);
@@ -9498,6 +9619,12 @@ var panDetailsSchema = external_exports.object({
 }).refine((data) => Boolean(data.searchToken || data.pan), {
   message: "Either searchToken or pan must be provided"
 });
+var decryptPanTokenSchema = external_exports.object({
+  searchToken: external_exports.string().min(10, "Search token is required")
+});
+var verifyPanDetailsSchema = external_exports.object({
+  pan: external_exports.string().trim().toUpperCase().regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Invalid PAN number format")
+});
 
 // src/modules/pan/pan.routes.ts
 var panRoutes = new Hono2();
@@ -9516,6 +9643,33 @@ panRoutes.post(
   async (c) => {
     const validData = c.get("validData");
     const result = await panService.getPanDetails(validData);
+    return c.json({ success: true, data: result });
+  }
+);
+panRoutes.post(
+  "/decrypt-token",
+  validationMiddleware(decryptPanTokenSchema),
+  async (c) => {
+    const { searchToken } = c.get("validData");
+    const result = panService.decryptSearchToken(searchToken);
+    return c.json({ success: true, data: result });
+  }
+);
+panRoutes.post(
+  "/details/verify",
+  validationMiddleware(verifyPanDetailsSchema),
+  async (c) => {
+    const { pan } = c.get("validData");
+    const result = await panService.verifyPanDetails(pan);
+    return c.json({ success: true, data: result });
+  }
+);
+panRoutes.post(
+  "/details/decrypt",
+  validationMiddleware(decryptPanTokenSchema),
+  async (c) => {
+    const { searchToken } = c.get("validData");
+    const result = panService.decryptPanDetailsToken(searchToken);
     return c.json({ success: true, data: result });
   }
 );
