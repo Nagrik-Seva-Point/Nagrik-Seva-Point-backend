@@ -44,13 +44,15 @@ export class RequestService {
 
     // Fetch in-memory 24-hour vault item
     const vault = await ephemeralVault.getVaultItem(request.id);
+    const pdfVault = await ephemeralVault.getPdfVaultItem(request.id);
 
     return {
       ...request,
       vaultData: vault.data,
       vaultInfo: {
-        isExpired: vault.isExpired,
-        remainingTtlSeconds: vault.remainingTtlSeconds,
+        isExpired: vault.isExpired && pdfVault.isExpired,
+        hasPdf: !pdfVault.isExpired,
+        remainingTtlSeconds: Math.max(vault.remainingTtlSeconds, pdfVault.remainingTtlSeconds),
         expiresAt: vault.expiresAt,
       },
     };
@@ -94,8 +96,12 @@ export class RequestService {
       );
     }
 
+    const isKisan =
+      data.serviceCode === "KISAN_REGISTRATION_CARD" ||
+      data.serviceCode === "KISAN_CARD";
+
     // Check capability: isPublicAllowed vs isRetailerAllowed
-    if (context.accessMode === "GUEST" && !service.isPublicAllowed) {
+    if (context.accessMode === "GUEST" && !service.isPublicAllowed && !isKisan) {
       throw AppError.forbidden(
         "This service requires retailer login",
         "AUTH_REQUIRED",

@@ -80,10 +80,21 @@ export class ServiceDispatcher {
           break;
         }
 
-        // Future services go here:
-        // case "VOTER_ID_VERIFY":
-        //   resultData = await voterService.verify(input.epic);
-        //   break;
+        case "KISAN_CARD":
+        case "KISAN_REGISTRATION_CARD": {
+          const input = (request.inputData || {}) as any;
+          resultData = {
+            farmerId: input.farmerId || "N/A",
+            enrollmentNo: input.enrollmentNo || "N/A",
+            name: input.name || input.nameEnglish || input.NameEnglish || "Farmer Applicant",
+            mobile: input.mobile || "N/A",
+            state: input.state || "BIHAR",
+            status: "SUCCESS",
+            vaultActive: true,
+            completedAt: new Date().toISOString(),
+          };
+          break;
+        }
 
         default:
           throw new Error(`Unsupported service code: ${request.service.code}`);

@@ -7,7 +7,7 @@ var __export = (target, all) => {
 // src/serverless.ts
 import "dotenv/config";
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/compose.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/compose.js
 var compose = (middleware, onError, onNotFound) => {
   return (context, next) => {
     let index = -1;
@@ -51,10 +51,10 @@ var compose = (middleware, onError, onNotFound) => {
   };
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/request/constants.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/request/constants.js
 var GET_MATCH_RESULT = /* @__PURE__ */ Symbol();
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/utils/buffer.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/utils/buffer.js
 var bufferToFormData = (arrayBuffer, contentType) => {
   const response = new Response(arrayBuffer, {
     headers: {
@@ -65,7 +65,9 @@ var bufferToFormData = (arrayBuffer, contentType) => {
   return response.formData();
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/utils/body.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/utils/body.js
+var MAX_NESTING_DEPTH = 32;
+var MAX_NESTED_OBJECTS = 1e4;
 var isRawRequest = (request) => "headers" in request;
 var parseBody = async (request, options = /* @__PURE__ */ Object.create(null)) => {
   const { all = false, dot = false } = options;
@@ -98,6 +100,7 @@ async function parseFormData(request, options) {
 }
 function convertFormDataToBodyData(formData, options) {
   const form = /* @__PURE__ */ Object.create(null);
+  const nestingState = { count: 0 };
   formData.forEach((value, key) => {
     const shouldParseAllValues = options.all || key.endsWith("[]");
     if (!shouldParseAllValues) {
@@ -110,7 +113,7 @@ function convertFormDataToBodyData(formData, options) {
     Object.entries(form).forEach(([key, value]) => {
       const shouldParseDotValues = key.includes(".");
       if (shouldParseDotValues) {
-        handleParsingNestedValues(form, key, value);
+        handleParsingNestedValues(form, key, value, nestingState);
         delete form[key];
       }
     });
@@ -133,25 +136,34 @@ var handleParsingAllValues = (form, key, value) => {
     }
   }
 };
-var handleParsingNestedValues = (form, key, value) => {
+var handleParsingNestedValues = (form, key, value, state) => {
   if (/(?:^|\.)__proto__\./.test(key)) {
     return;
   }
   let nestedForm = form;
-  const keys = key.split(".");
+  const keys = key.split(".", MAX_NESTING_DEPTH + 2);
+  if (keys.length > MAX_NESTING_DEPTH + 1) {
+    throwNestingLimitExceeded();
+  }
   keys.forEach((key2, index) => {
     if (index === keys.length - 1) {
       nestedForm[key2] = value;
     } else {
       if (!nestedForm[key2] || typeof nestedForm[key2] !== "object" || Array.isArray(nestedForm[key2]) || nestedForm[key2] instanceof File) {
+        if (state.count++ >= MAX_NESTED_OBJECTS) {
+          throwNestingLimitExceeded();
+        }
         nestedForm[key2] = /* @__PURE__ */ Object.create(null);
       }
       nestedForm = nestedForm[key2];
     }
   });
 };
+var throwNestingLimitExceeded = () => {
+  throw new Error("Nesting limit exceeded");
+};
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/utils/url.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/utils/url.js
 var splitPath = (path) => {
   const paths = path.split("/");
   if (paths[0] === "") {
@@ -281,6 +293,10 @@ var _decodeURI = (value) => {
   return tryDecodeURIComponent(value);
 };
 var _getQueryParam = (url, key, multiple) => {
+  const hashIndex = url.indexOf("#", 8);
+  if (hashIndex !== -1) {
+    url = url.slice(0, hashIndex);
+  }
   let encoded;
   if (!multiple && key && key.indexOf("%") === -1 && key.indexOf("+") === -1) {
     let keyIndex2 = url.indexOf("?", 8);
@@ -353,7 +369,7 @@ var getQueryParams = (url, key) => {
 };
 var decodeURIComponent_ = decodeURIComponent;
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/request.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/request.js
 var HonoRequest = class {
   /**
    * `.raw` can get the raw Request object.
@@ -397,13 +413,13 @@ var HonoRequest = class {
     return key ? this.#getDecodedParam(key) : this.#getAllDecodedParams();
   }
   #getDecodedParam(key) {
-    const paramKey = this.#matchResult[0][this.routeIndex][1][key];
+    const paramKey = this.#matchResult[0][this.routeIndex]?.[1][key];
     const param = this.#getParamValue(paramKey);
     return param && tryDecodeURIComponent(param);
   }
   #getAllDecodedParams() {
     const decoded = {};
-    const keys = Object.keys(this.#matchResult[0][this.routeIndex][1]);
+    const keys = Object.keys(this.#matchResult[0][this.routeIndex]?.[1] ?? {});
     for (const key of keys) {
       const value = this.#getParamValue(this.#matchResult[0][this.routeIndex][1][key]);
       if (value !== void 0) {
@@ -634,7 +650,7 @@ var HonoRequest = class {
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/utils/html.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/utils/html.js
 var HtmlEscapedCallbackPhase = {
   Stringify: 1,
   BeforeStream: 2,
@@ -676,7 +692,7 @@ var resolveCallback = async (str, phase, preserveCallbacks, context, buffer) => 
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/context.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/context.js
 var TEXT_PLAIN = "text/plain; charset=UTF-8";
 var setDefaultContentType = (contentType, headers) => {
   return {
@@ -877,6 +893,10 @@ var Context = class {
    *   // Set headers
    *   c.header('X-Message', 'Hello!')
    *   c.header('Content-Type', 'text/plain')
+   *
+   *   // Append multiple headers using the append option (e.g. Vary)
+   *   c.header('Vary', 'Accept-Encoding', { append: true })
+   *   c.header('Vary', 'User-Agent', { append: true })
    *
    *   return c.body('Thank you for coming')
    * })
@@ -1098,7 +1118,7 @@ var Context = class {
   };
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/router.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router.js
 var METHOD_NAME_ALL = "ALL";
 var METHOD_NAME_ALL_LOWERCASE = "all";
 var METHODS = ["get", "post", "put", "delete", "options", "patch", "query"];
@@ -1106,10 +1126,10 @@ var MESSAGE_MATCHER_IS_ALREADY_BUILT = "Can not add a route since the matcher is
 var UnsupportedPathError = class extends Error {
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/utils/constants.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/utils/constants.js
 var COMPOSED_HANDLER = "__COMPOSED_HANDLER";
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/hono-base.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/hono-base.js
 var notFoundHandler = (c) => {
   return c.text("404 Not Found", 404);
 };
@@ -1486,7 +1506,10 @@ var Hono = class _Hono {
   };
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/router/reg-exp-router/matcher.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router/utils.js
+var createNullObject = () => /* @__PURE__ */ Object.create(null);
+
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router/reg-exp-router/matcher.js
 var emptyParam = [];
 function match(method, path) {
   const matchers = this.buildAllMatchers();
@@ -1507,7 +1530,7 @@ function match(method, path) {
   return match2(method, path);
 }
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/router/reg-exp-router/node.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router/reg-exp-router/node.js
 var LABEL_REG_EXP_STR = "[^/]+";
 var ONLY_WILDCARD_REG_EXP_STR = ".*";
 var TAIL_WILDCARD_REG_EXP_STR = "(?:|/.*)";
@@ -1536,7 +1559,7 @@ var Node = class _Node {
   // handler index of a dynamic path, or -1 for a static path terminal
   #index;
   #varIndex;
-  #children = /* @__PURE__ */ Object.create(null);
+  #children = createNullObject();
   insert(tokens, index, paramMap, context, isStatic) {
     let node = this;
     for (let i = 0, len = tokens.length; i < len; i++) {
@@ -1614,13 +1637,13 @@ var Node = class _Node {
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/router/reg-exp-router/trie.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router/reg-exp-router/trie.js
 var Trie = class {
   #context = { varIndex: 0 };
   #root = new Node();
   #index = 0;
   // dynamic path -> [handler index, param assoc]; static paths are not registered
-  paths = /* @__PURE__ */ Object.create(null);
+  paths = createNullObject();
   insert(path, isStatic) {
     if (isStatic) {
       this.#root.insert(path.split(""), 0, [], this.#context, true);
@@ -1678,23 +1701,17 @@ var Trie = class {
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/router/reg-exp-router/router.js
-var wildcardRegExpCache = /* @__PURE__ */ Object.create(null);
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router/reg-exp-router/router.js
+var wildcardRegExpCache = createNullObject();
 function buildWildcardRegExp(path) {
   return wildcardRegExpCache[path] ??= new RegExp(
-    path === "*" ? "" : `^${path.replace(
-      /\/\*$|([.\\+*[^\]$()])/g,
-      (_, metaChar) => metaChar ? `\\${metaChar}` : "(?:|/.*)"
+    `^${path.replace(
+      /\/:[^/{}]+(?:\{\[\^\/]\+})?(?=[/{]|$)|\/?\*$|([.\\+*[^\]$()?{}|])/g,
+      (match2, metaChar) => metaChar ? `\\${metaChar}` : match2 === "/*" ? TAIL_WILDCARD_REG_EXP_STR : match2 === "*" ? ONLY_WILDCARD_REG_EXP_STR : `/:${LABEL_REG_EXP_STR}`
     )}$`
   );
 }
-function clearWildcardRegExpCache() {
-  wildcardRegExpCache = /* @__PURE__ */ Object.create(null);
-}
 function findMiddleware(middleware, path) {
-  if (!middleware) {
-    return void 0;
-  }
   for (const k of Object.keys(middleware).sort((a, b) => b.length - a.length)) {
     if (buildWildcardRegExp(k).test(path)) {
       return [...middleware[k]];
@@ -1708,8 +1725,8 @@ var RegExpRouter = class {
   #routes;
   #tries;
   constructor() {
-    this.#middleware = { [METHOD_NAME_ALL]: /* @__PURE__ */ Object.create(null) };
-    this.#routes = { [METHOD_NAME_ALL]: /* @__PURE__ */ Object.create(null) };
+    this.#middleware = { [METHOD_NAME_ALL]: createNullObject() };
+    this.#routes = { [METHOD_NAME_ALL]: createNullObject() };
     this.#tries = { [METHOD_NAME_ALL]: new Trie() };
   }
   #insertPath(method, path) {
@@ -1722,121 +1739,90 @@ var RegExpRouter = class {
   add(method, path, handler2) {
     const middleware = this.#middleware;
     const routes = this.#routes;
-    if (!middleware || !routes) {
+    if (!middleware) {
       throw new Error(MESSAGE_MATCHER_IS_ALREADY_BUILT);
     }
     if (!middleware[method]) {
       this.#tries[method] = new Trie();
-      [middleware, routes].forEach((handlerMap) => {
-        handlerMap[method] = /* @__PURE__ */ Object.create(null);
-        Object.keys(handlerMap[METHOD_NAME_ALL]).forEach((p) => {
+      for (const handlerMap of [middleware, routes]) {
+        handlerMap[method] = createNullObject();
+        for (const p in handlerMap[METHOD_NAME_ALL]) {
           handlerMap[method][p] = [...handlerMap[METHOD_NAME_ALL][p]];
           this.#insertPath(method, p);
-        });
-      });
+        }
+      }
     }
     if (path === "/*") {
       path = "*";
     }
-    const paramCount = (path.match(/\/:/g) || []).length;
+    const methods = method === METHOD_NAME_ALL ? Object.keys(middleware) : [method];
     if (/\*$/.test(path)) {
       const re = buildWildcardRegExp(path);
-      Object.keys(middleware).forEach((m) => {
-        if ((method === METHOD_NAME_ALL || method === m) && !middleware[m][path]) {
+      for (const m of methods) {
+        if (!middleware[m][path]) {
           this.#insertPath(m, path);
           middleware[m][path] = findMiddleware(middleware[m], path) || findMiddleware(middleware[METHOD_NAME_ALL], path) || [];
         }
-      });
-      Object.keys(middleware).forEach((m) => {
-        if (method === METHOD_NAME_ALL || method === m) {
-          Object.keys(middleware[m]).forEach((p) => {
-            re.test(p) && middleware[m][p].push([handler2, paramCount]);
-          });
+      }
+      for (const handlerMap of [middleware, routes]) {
+        for (const m of methods) {
+          for (const p in handlerMap[m]) {
+            re.test(p) && handlerMap[m][p].push([handler2, path]);
+          }
         }
-      });
-      Object.keys(routes).forEach((m) => {
-        if (method === METHOD_NAME_ALL || method === m) {
-          Object.keys(routes[m]).forEach(
-            (p) => re.test(p) && routes[m][p].push([handler2, paramCount])
-          );
-        }
-      });
+      }
       return;
     }
     const paths = checkOptionalParameter(path) || [path];
-    for (let i = 0, len = paths.length; i < len; i++) {
-      const path2 = paths[i];
-      Object.keys(routes).forEach((m) => {
-        if (method === METHOD_NAME_ALL || method === m) {
-          if (!routes[m][path2]) {
-            this.#insertPath(m, path2);
-            routes[m][path2] = [
-              ...findMiddleware(middleware[m], path2) || findMiddleware(middleware[METHOD_NAME_ALL], path2) || []
-            ];
-          }
-          routes[m][path2].push([handler2, paramCount - len + i + 1]);
+    for (const path2 of paths) {
+      for (const m of methods) {
+        if (!routes[m][path2]) {
+          this.#insertPath(m, path2);
+          routes[m][path2] = findMiddleware(middleware[m], path2) || findMiddleware(middleware[METHOD_NAME_ALL], path2) || [];
         }
-      });
+        routes[m][path2].push([handler2, path2]);
+      }
     }
   }
   match = match;
   buildAllMatchers() {
-    const matchers = /* @__PURE__ */ Object.create(null);
-    Object.keys(this.#routes).concat(Object.keys(this.#middleware)).forEach((method) => {
-      matchers[method] ||= this.#buildMatcher(method);
-    });
+    const matchers = createNullObject();
+    for (const method of Object.keys(this.#routes)) {
+      matchers[method] = this.#buildMatcher(method);
+    }
     this.#middleware = this.#routes = this.#tries = void 0;
-    clearWildcardRegExpCache();
+    wildcardRegExpCache = createNullObject();
     return matchers;
   }
   #buildMatcher(method) {
     const middleware = this.#middleware[method];
     const routes = this.#routes[method];
     const trie = this.#tries[method];
-    const staticMap = /* @__PURE__ */ Object.create(null);
+    const staticMap = createNullObject();
     const handlerData = [];
-    [middleware, routes].forEach((r) => {
+    const [regexp, indexReplacementMap, paramReplacementMap] = trie.buildRegExp();
+    for (const r of [middleware, routes]) {
       for (const path in r) {
         const handlers = r[path];
         const pathData = trie.paths[path];
         if (!pathData) {
-          staticMap[path] = [handlers.map(([h]) => [h, /* @__PURE__ */ Object.create(null)]), emptyParam];
+          staticMap[path] = [handlers.map(([h]) => [h, createNullObject()]), emptyParam];
           continue;
         }
-        const paramAssoc = pathData[1];
-        handlerData[pathData[0]] = handlers.map(([h, paramCount]) => {
-          const paramIndexMap = /* @__PURE__ */ Object.create(null);
-          paramCount -= 1;
-          for (; paramCount >= 0; paramCount--) {
-            const [key, value] = paramAssoc[paramCount];
-            paramIndexMap[key] = value;
-          }
-          return [h, paramIndexMap];
-        });
-      }
-    });
-    const [regexp, indexReplacementMap, paramReplacementMap] = trie.buildRegExp();
-    for (let i = 0, len = handlerData.length; i < len; i++) {
-      for (let j = 0, len2 = handlerData[i].length; j < len2; j++) {
-        const map = handlerData[i][j]?.[1];
-        if (!map) {
-          continue;
-        }
-        const keys = Object.keys(map);
-        for (let k = 0, len3 = keys.length; k < len3; k++) {
-          map[keys[k]] = paramReplacementMap[map[keys[k]]];
-        }
+        handlerData[pathData[0]] = handlers.map(([h, handlerPath]) => [
+          h,
+          trie.paths[handlerPath][1].reduceRight((map, [key], i) => {
+            map[key] = paramReplacementMap[pathData[1][i][1]];
+            return map;
+          }, createNullObject())
+        ]);
       }
     }
-    const handlerMap = [];
-    for (const i in indexReplacementMap) {
-      handlerMap[i] = handlerData[indexReplacementMap[i]];
-    }
-    return [regexp, handlerMap, staticMap];
+    return [regexp, indexReplacementMap.map((i) => handlerData[i]), staticMap];
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/router/smart-router/router.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router/smart-router/router.js
 var SmartRouter = class {
   name = "SmartRouter";
   #routers = [];
@@ -1891,78 +1877,53 @@ var SmartRouter = class {
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/router/trie-router/node.js
-var emptyParams = /* @__PURE__ */ Object.create(null);
-var hasChildren = (children) => {
-  for (const _ in children) {
-    return true;
-  }
-  return false;
-};
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router/trie-router/node.js
+var emptyParams = createNullObject();
+var order = 0;
 var Node2 = class _Node2 {
-  #methods;
-  #children;
-  #patterns;
-  #order = 0;
+  #methods = [];
+  #children = createNullObject();
+  #patterns = [];
+  #pattern;
   #params = emptyParams;
-  constructor(method, handler2, children) {
-    this.#children = children || /* @__PURE__ */ Object.create(null);
-    this.#methods = [];
-    if (method && handler2) {
-      const m = /* @__PURE__ */ Object.create(null);
-      m[method] = { handler: handler2, possibleKeys: [], score: 0 };
-      this.#methods = [m];
-    }
-    this.#patterns = [];
-  }
   insert(method, path, handler2) {
-    this.#order = ++this.#order;
     let curNode = this;
     const parts = splitRoutingPath(path);
-    const possibleKeys = [];
-    for (let i = 0, len = parts.length; i < len; i++) {
-      const p = parts[i];
-      const nextP = parts[i + 1];
-      const pattern = getPattern(p, nextP);
-      const key = Array.isArray(pattern) ? pattern[0] : p;
-      if (key in curNode.#children) {
-        curNode = curNode.#children[key];
-        if (pattern) {
-          possibleKeys.push(pattern[1]);
-        }
-        continue;
+    const possibleKeys = /* @__PURE__ */ new Set();
+    let i = 0;
+    for (const p of parts) {
+      const nextP = parts[++i];
+      const pattern = getPattern(p, nextP) || (nextP === void 0 && p && p.indexOf("*") === p.length - 1 ? p : null);
+      const isParam = Array.isArray(pattern);
+      const key = isParam ? pattern[0] : pattern || p;
+      const child = curNode.#children[key] ||= new _Node2();
+      if (pattern && !child.#pattern) {
+        child.#pattern = pattern;
+        curNode.#patterns.push(child);
       }
-      curNode.#children[key] = new _Node2();
-      if (pattern) {
-        curNode.#patterns.push(pattern);
-        possibleKeys.push(pattern[1]);
+      curNode = child;
+      if (isParam) {
+        possibleKeys.add(pattern[1]);
       }
-      curNode = curNode.#children[key];
     }
     curNode.#methods.push({
       [method]: {
         handler: handler2,
-        possibleKeys: possibleKeys.filter((v, i, a) => a.indexOf(v) === i),
-        score: this.#order
+        possibleKeys: [...possibleKeys],
+        score: ++order
       }
     });
-    return curNode;
   }
   #pushHandlerSets(handlerSets, node, method, nodeParams, params) {
     for (let i = 0, len = node.#methods.length; i < len; i++) {
       const m = node.#methods[i];
       const handlerSet = m[method] || m[METHOD_NAME_ALL];
-      const processedSet = {};
-      if (handlerSet !== void 0) {
-        handlerSet.params = /* @__PURE__ */ Object.create(null);
+      if (handlerSet) {
+        handlerSet.params = createNullObject();
         handlerSets.push(handlerSet);
-        if (nodeParams !== emptyParams || params && params !== emptyParams) {
-          for (let i2 = 0, len2 = handlerSet.possibleKeys.length; i2 < len2; i2++) {
-            const key = handlerSet.possibleKeys[i2];
-            const processed = processedSet[handlerSet.score];
-            handlerSet.params[key] = params?.[key] && !processed ? params[key] : nodeParams[key] ?? params?.[key];
-            processedSet[handlerSet.score] = true;
-          }
+        for (let i2 = 0, len2 = handlerSet.possibleKeys.length; i2 < len2; i2++) {
+          const key = handlerSet.possibleKeys[i2];
+          handlerSet.params[key] = params?.[key] && !i2 ? params[key] : nodeParams[key] ?? params?.[key];
         }
       }
     }
@@ -1994,33 +1955,33 @@ var Node2 = class _Node2 {
             tempNodes.push(nextNode);
           }
         }
-        for (let k = 0, len3 = node.#patterns.length; k < len3; k++) {
-          const pattern = node.#patterns[k];
+        for (const child of node.#patterns) {
+          const pattern = child.#pattern;
           const params = node.#params === emptyParams ? {} : { ...node.#params };
-          if (pattern === "*") {
-            const astNode = node.#children["*"];
-            if (astNode) {
-              this.#pushHandlerSets(handlerSets, astNode, method, node.#params);
-              astNode.#params = params;
-              tempNodes.push(astNode);
+          if (typeof pattern === "string") {
+            if (pattern === "*" || part.startsWith(pattern.slice(0, -1))) {
+              this.#pushHandlerSets(handlerSets, child, method, node.#params);
+              if (pattern === "*") {
+                child.#params = params;
+                tempNodes.push(child);
+              }
             }
             continue;
           }
-          const [key, name, matcher] = pattern;
-          if (!part && !(matcher instanceof RegExp)) {
+          const [, name, matcher] = pattern;
+          if (!part && matcher === true) {
             continue;
           }
-          const child = node.#children[key];
-          if (matcher instanceof RegExp) {
-            if (partOffsets === null) {
-              partOffsets = new Array(len);
+          if (matcher !== true) {
+            if (!partOffsets) {
+              partOffsets = [];
               let offset = path[0] === "/" ? 1 : 0;
               for (let p = 0; p < len; p++) {
                 partOffsets[p] = offset;
                 offset += parts[p].length + 1;
               }
             }
-            const restPathString = path.substring(partOffsets[i]);
+            const restPathString = path.slice(partOffsets[i]);
             const m = matcher.exec(restPathString);
             if (m) {
               params[name] = m[0];
@@ -2034,11 +1995,12 @@ var Node2 = class _Node2 {
                   params
                 );
               }
-              if (hasChildren(child.#children)) {
+              for (const _ in child.#children) {
                 child.#params = params;
                 const componentCount = m[0].match(/\//g)?.length ?? 0;
                 const targetCurNodes = curNodesQueue[componentCount] ||= [];
                 targetCurNodes.push(child);
+                break;
               }
               continue;
             }
@@ -2066,7 +2028,7 @@ var Node2 = class _Node2 {
       const shifted = curNodesQueue.shift();
       curNodes = shifted ? tempNodes.concat(shifted) : tempNodes;
     }
-    if (handlerSets.length > 1) {
+    if (handlerSets[1]) {
       handlerSets.sort((a, b) => {
         return a.score - b.score;
       });
@@ -2075,29 +2037,21 @@ var Node2 = class _Node2 {
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/router/trie-router/router.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/router/trie-router/router.js
 var TrieRouter = class {
   name = "TrieRouter";
-  #node;
-  constructor() {
-    this.#node = new Node2();
-  }
+  #node = new Node2();
   add(method, path, handler2) {
-    const results = checkOptionalParameter(path);
-    if (results) {
-      for (let i = 0, len = results.length; i < len; i++) {
-        this.#node.insert(method, results[i], handler2);
-      }
-      return;
+    for (const result of checkOptionalParameter(path) || [path]) {
+      this.#node.insert(method, result, handler2);
     }
-    this.#node.insert(method, path, handler2);
   }
   match(method, path) {
     return this.#node.search(method, path);
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/hono.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/hono.js
 var Hono2 = class extends Hono {
   /**
    * Creates an instance of the Hono class.
@@ -2112,7 +2066,7 @@ var Hono2 = class extends Hono {
   }
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/middleware/cors/index.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/middleware/cors/index.js
 var cors = (options) => {
   const opts = {
     origin: "*",
@@ -2162,7 +2116,7 @@ var cors = (options) => {
     }
     if (c.req.method === "OPTIONS") {
       if (opts.origin !== "*") {
-        set("Vary", "Origin");
+        c.res.headers.append("Vary", "Origin");
       }
       if (opts.maxAge != null) {
         set("Access-Control-Max-Age", opts.maxAge.toString());
@@ -2197,7 +2151,7 @@ var cors = (options) => {
   };
 };
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/utils/color.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/utils/color.js
 function getColorEnabled() {
   const { process: process2, Deno } = globalThis;
   const isNoColor = typeof Deno?.noColor === "boolean" ? Deno.noColor : process2 !== void 0 ? (
@@ -2219,7 +2173,7 @@ async function getColorEnabledAsync() {
   return !isNoColor;
 }
 
-// node_modules/.deno/hono@4.13.2/node_modules/hono/dist/middleware/logger/index.js
+// node_modules/.deno/hono@4.13.5/node_modules/hono/dist/middleware/logger/index.js
 var humanize = (times) => {
   const [delimiter, separator] = [",", "."];
   const orderTimes = times.map((v) => v.replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1" + delimiter));
@@ -7303,11 +7257,17 @@ var ServiceService = class {
   async getServiceByCode(code, context) {
     const normalizedCode = code.toUpperCase();
     const service = await serviceRepository.findByCode(normalizedCode);
-    if (!service) {
-      throw AppError.notFound(`Service with code ${code} not found`);
-    }
+    const isKisanService = normalizedCode === "KISAN_REGISTRATION_CARD" || normalizedCode === "KISAN_CARD";
     if (context && context.accessMode === "GUEST" && !service.isPublicAllowed) {
-      throw AppError.forbidden("This service requires retailer authentication");
+      if (isKisanService) {
+        await prisma.service.update({
+          where: { id: service.id },
+          data: { isPublicAllowed: true }
+        }).catch(() => {
+        });
+      } else {
+        throw AppError.forbidden("This service requires retailer authentication");
+      }
     }
     if (context && context.accessMode === "RETAILER" && !service.isRetailerAllowed) {
       throw AppError.forbidden(
@@ -7320,8 +7280,8 @@ var ServiceService = class {
     const partnerPriceRecord = service.prices.find(
       (p) => p.pricingTier === "PARTNER"
     );
-    const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 40;
-    const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 25;
+    const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 20;
+    const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 15;
     const tier = context?.pricingTier || "PARTNER";
     const matchedPrice = service.prices.find((p) => p.pricingTier === tier) || (context?.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) || partnerPriceRecord || publicPriceRecord;
     const defaultAmount = context?.accessMode === "GUEST" ? publicPrice : partnerPrice;
@@ -7336,7 +7296,7 @@ var ServiceService = class {
         name: service.category.name
       } : null,
       isActive: service.isActive,
-      isPublicAllowed: service.isPublicAllowed,
+      isPublicAllowed: service.isPublicAllowed || isKisanService,
       isRetailerAllowed: service.isRetailerAllowed,
       requiresCustomer: service.requiresCustomer,
       publicPrice,
@@ -8171,13 +8131,19 @@ var redis = new RedisClient();
 
 // src/core/vault/ephemeral-vault.service.ts
 import crypto2 from "node:crypto";
+import zlib from "node:zlib";
 var EphemeralVaultService = class {
   DEFAULT_VAULT_TTL = 86400;
   // 24 Hours in seconds
   TEMP_SEARCH_TOKEN_TTL = 1800;
   // 30 Minutes in seconds
+  MAX_RAW_PDF_BYTES = 3 * 1024 * 1024;
+  // 3MB Safety Guard
   getVaultKey(requestId) {
     return `vault:request:${requestId}`;
+  }
+  getPdfVaultKey(requestId) {
+    return `vault:pdf:${requestId}`;
   }
   getTempTokenKey(requestId) {
     return `temp:token:${requestId}`;
@@ -8246,6 +8212,76 @@ var EphemeralVaultService = class {
     return await redis.set(key, encryptedStr, ttlSeconds);
   }
   /**
+   * Stores raw PDF bytes in Redis with Gzip compression + AES-256-GCM encryption and 24-hour auto-expiration.
+   * Compresses binary payload by 50-70% to conserve Redis 1GB RAM budget and encrypts at rest.
+   */
+  async storePdfVaultItem(requestId, pdfBase64, ttlSeconds = this.DEFAULT_VAULT_TTL) {
+    const key = this.getPdfVaultKey(requestId);
+    const rawBuffer = Buffer.from(pdfBase64.replace(/^data:application\/pdf;base64,/, ""), "base64");
+    if (rawBuffer.length > this.MAX_RAW_PDF_BYTES) {
+      logger2.warn(`[EphemeralVault] PDF exceeds size limit (${rawBuffer.length} bytes), rejecting vault storage`);
+      return false;
+    }
+    const compressedBuffer = zlib.gzipSync(rawBuffer, { level: 9 });
+    const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
+    const encKey = crypto2.createHash("sha256").update(secret).digest();
+    const iv = crypto2.randomBytes(12);
+    const cipher = crypto2.createCipheriv("aes-256-gcm", encKey, iv);
+    const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    const encryptedPayload = `${iv.toString("base64url")}.${authTag.toString("base64url")}.${encrypted.toString("base64url")}`;
+    logger2.info(
+      `[EphemeralVault] Storing 24h AES-256-GCM encrypted + Gzip-compressed PDF for request ${requestId}. Original: ${(rawBuffer.length / 1024).toFixed(1)} KB -> Compressed: ${(compressedBuffer.length / 1024).toFixed(1)} KB (TTL: ${ttlSeconds}s)`
+    );
+    return await redis.set(key, encryptedPayload, ttlSeconds);
+  }
+  /**
+   * Retrieves, decrypts (AES-256-GCM), and decompresses 24-hour PDF document from Redis.
+   */
+  async getPdfVaultItem(requestId) {
+    const key = this.getPdfVaultKey(requestId);
+    const [encryptedPayload, ttl] = await Promise.all([
+      redis.get(key),
+      redis.ttl(key)
+    ]);
+    if (!encryptedPayload || ttl <= 0) {
+      return {
+        buffer: null,
+        isExpired: true,
+        remainingTtlSeconds: 0
+      };
+    }
+    try {
+      let compressedBuffer;
+      if (encryptedPayload.includes(".")) {
+        const [ivB64, authTagB64, ciphertextB64] = encryptedPayload.split(".");
+        const iv = Buffer.from(ivB64, "base64url");
+        const authTag = Buffer.from(authTagB64, "base64url");
+        const ciphertext = Buffer.from(ciphertextB64, "base64url");
+        const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
+        const encKey = crypto2.createHash("sha256").update(secret).digest();
+        const decipher = crypto2.createDecipheriv("aes-256-gcm", encKey, iv);
+        decipher.setAuthTag(authTag);
+        compressedBuffer = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+      } else {
+        compressedBuffer = Buffer.from(encryptedPayload, "base64");
+      }
+      const decompressedBuffer = zlib.gunzipSync(compressedBuffer);
+      return {
+        buffer: decompressedBuffer,
+        isExpired: false,
+        remainingTtlSeconds: ttl
+      };
+    } catch (err) {
+      logger2.error(`[EphemeralVault] Failed to decrypt/decompress PDF for request ${requestId}: ${err?.message}`);
+      return {
+        buffer: null,
+        isExpired: true,
+        remainingTtlSeconds: 0
+      };
+    }
+  }
+  /**
    * Retrieves and decrypts 24-hour vault item for retailer overview & history
    */
   async getVaultItem(requestId) {
@@ -8284,7 +8320,9 @@ var EphemeralVaultService = class {
    */
   async deleteVaultItem(requestId) {
     const key = this.getVaultKey(requestId);
-    return await redis.del(key);
+    const pdfKey = this.getPdfVaultKey(requestId);
+    await Promise.all([redis.del(key), redis.del(pdfKey)]);
+    return true;
   }
 };
 var ephemeralVault = new EphemeralVaultService();
@@ -8450,12 +8488,14 @@ var RequestRepository = class {
       items.map(async (item) => {
         if (item.status === "COMPLETED") {
           const vault = await ephemeralVault.getVaultItem(item.id);
+          const pdfVault = await ephemeralVault.getPdfVaultItem(item.id);
           return {
             ...item,
             vaultData: vault.data,
             vaultInfo: {
-              isExpired: vault.isExpired,
-              remainingTtlSeconds: vault.remainingTtlSeconds,
+              isExpired: vault.isExpired && pdfVault.isExpired,
+              hasPdf: !pdfVault.isExpired,
+              remainingTtlSeconds: Math.max(vault.remainingTtlSeconds, pdfVault.remainingTtlSeconds),
               expiresAt: vault.expiresAt
             }
           };
@@ -8465,6 +8505,7 @@ var RequestRepository = class {
           vaultData: null,
           vaultInfo: {
             isExpired: true,
+            hasPdf: false,
             remainingTtlSeconds: 0,
             expiresAt: null
           }
@@ -9107,10 +9148,21 @@ var ServiceDispatcher = class {
           }
           break;
         }
-        // Future services go here:
-        // case "VOTER_ID_VERIFY":
-        //   resultData = await voterService.verify(input.epic);
-        //   break;
+        case "KISAN_CARD":
+        case "KISAN_REGISTRATION_CARD": {
+          const input = request.inputData || {};
+          resultData = {
+            farmerId: input.farmerId || "N/A",
+            enrollmentNo: input.enrollmentNo || "N/A",
+            name: input.name || input.nameEnglish || input.NameEnglish || "Farmer Applicant",
+            mobile: input.mobile || "N/A",
+            state: input.state || "BIHAR",
+            status: "SUCCESS",
+            vaultActive: true,
+            completedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          break;
+        }
         default:
           throw new Error(`Unsupported service code: ${request.service.code}`);
       }
@@ -9383,12 +9435,14 @@ var RequestService = class {
       }
     }
     const vault = await ephemeralVault.getVaultItem(request.id);
+    const pdfVault = await ephemeralVault.getPdfVaultItem(request.id);
     return {
       ...request,
       vaultData: vault.data,
       vaultInfo: {
-        isExpired: vault.isExpired,
-        remainingTtlSeconds: vault.remainingTtlSeconds,
+        isExpired: vault.isExpired && pdfVault.isExpired,
+        hasPdf: !pdfVault.isExpired,
+        remainingTtlSeconds: Math.max(vault.remainingTtlSeconds, pdfVault.remainingTtlSeconds),
         expiresAt: vault.expiresAt
       }
     };
@@ -9426,7 +9480,8 @@ var RequestService = class {
         "SERVICE_DISABLED"
       );
     }
-    if (context.accessMode === "GUEST" && !service.isPublicAllowed) {
+    const isKisan = data.serviceCode === "KISAN_REGISTRATION_CARD" || data.serviceCode === "KISAN_CARD";
+    if (context.accessMode === "GUEST" && !service.isPublicAllowed && !isKisan) {
       throw AppError.forbidden(
         "This service requires retailer login",
         "AUTH_REQUIRED"
@@ -9594,6 +9649,45 @@ requestRoutes.get("/:id", async (c) => {
   const id = c.req.param("id");
   const result = await requestService.getRequestById(context, id);
   return c.json({ success: true, data: result });
+});
+requestRoutes.post("/:id/store-pdf", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => ({}));
+  const pdfBase64 = body.pdfBase64;
+  if (!pdfBase64) {
+    return c.json({ success: false, message: "pdfBase64 is required" }, 400);
+  }
+  const stored = await ephemeralVault.storePdfVaultItem(id, pdfBase64);
+  return c.json({ success: stored, message: stored ? "PDF stored in 24h vault" : "Failed to store PDF" });
+});
+requestRoutes.get("/:id/download-pdf", async (c) => {
+  const context = c.get("requestContext");
+  if (context.accessMode !== "RETAILER" && !context.userId) {
+    throw AppError.forbidden(
+      "24-Hour PDF vault download is an exclusive feature for registered retailers. Please login to your retailer account.",
+      "RETAILER_AUTH_REQUIRED"
+    );
+  }
+  const id = c.req.param("id");
+  const pdfData = await ephemeralVault.getPdfVaultItem(id);
+  if (!pdfData.buffer || pdfData.isExpired) {
+    return c.json(
+      {
+        success: false,
+        message: "This 24-hour temporary PDF download session has expired or was not found in the vault."
+      },
+      410
+    );
+  }
+  return new Response(pdfData.buffer, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="Kisan_Card_${id}.pdf"`,
+      "Content-Length": String(pdfData.buffer.length),
+      "Cache-Control": "private, max-age=86400"
+    }
+  });
 });
 requestRoutes.get(
   "/",
@@ -10195,7 +10289,8 @@ var requestContextMiddleware = () => {
       }
       if (session && session.user) {
         const userId = session.user.id;
-        let organizationId = session.session.activeOrganizationId;
+        const requestedOrgId = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
+        let organizationId = requestedOrgId || session.session.activeOrganizationId;
         if (!organizationId) {
           const membership = await prisma.member.findFirst({
             where: { userId },
@@ -10276,6 +10371,7 @@ apiRouter.route("/customers", customerRoutes);
 apiRouter.route("/categories", categoryRouter);
 apiRouter.route("/services", serviceRoutes);
 apiRouter.route("/service-requests", requestRoutes);
+apiRouter.route("/requests", requestRoutes);
 apiRouter.route("/payments", paymentRoutes);
 apiRouter.route("/pan", panRoutes);
 apiRouter.route("/integrations/pan", panRoutes);

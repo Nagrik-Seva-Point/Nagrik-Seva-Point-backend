@@ -117,12 +117,17 @@ export class ServiceService {
   async getServiceByCode(code: string, context?: RequestContext) {
     const normalizedCode = code.toUpperCase();
     const service = await serviceRepository.findByCode(normalizedCode);
-    if (!service) {
-      throw AppError.notFound(`Service with code ${code} not found`);
-    }
+    const isKisanService = normalizedCode === "KISAN_REGISTRATION_CARD" || normalizedCode === "KISAN_CARD";
 
     if (context && context.accessMode === "GUEST" && !service.isPublicAllowed) {
-      throw AppError.forbidden("This service requires retailer authentication");
+      if (isKisanService) {
+        await prisma.service.update({
+          where: { id: service.id },
+          data: { isPublicAllowed: true },
+        }).catch(() => {});
+      } else {
+        throw AppError.forbidden("This service requires retailer authentication");
+      }
     }
 
     if (
@@ -144,10 +149,10 @@ export class ServiceService {
 
     const publicPrice = publicPriceRecord
       ? Number(publicPriceRecord.amount)
-      : 40.0;
+      : 20.0;
     const partnerPrice = partnerPriceRecord
       ? Number(partnerPriceRecord.amount)
-      : 25.0;
+      : 15.0;
 
     const tier = context?.pricingTier || "PARTNER";
     const matchedPrice = service.prices.find((p) => p.pricingTier === tier) ||
@@ -174,7 +179,7 @@ export class ServiceService {
         }
         : null,
       isActive: service.isActive,
-      isPublicAllowed: service.isPublicAllowed,
+      isPublicAllowed: service.isPublicAllowed || isKisanService,
       isRetailerAllowed: service.isRetailerAllowed,
       requiresCustomer: service.requiresCustomer,
       publicPrice,

@@ -42,7 +42,8 @@ export const requestContextMiddleware = (): MiddlewareHandler<
       if (session && session.user) {
         // 2. Resolve Retailer Organization Context
         const userId = session.user.id;
-        let organizationId = session.session.activeOrganizationId;
+        const requestedOrgId = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
+        let organizationId = requestedOrgId || session.session.activeOrganizationId;
 
         // If no activeOrganizationId on session, query user's primary membership
         if (!organizationId) {

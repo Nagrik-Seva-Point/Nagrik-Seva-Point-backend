@@ -201,12 +201,14 @@ export class RequestRepository {
       items.map(async (item) => {
         if (item.status === "COMPLETED") {
           const vault = await ephemeralVault.getVaultItem(item.id);
+          const pdfVault = await ephemeralVault.getPdfVaultItem(item.id);
           return {
             ...item,
             vaultData: vault.data,
             vaultInfo: {
-              isExpired: vault.isExpired,
-              remainingTtlSeconds: vault.remainingTtlSeconds,
+              isExpired: vault.isExpired && pdfVault.isExpired,
+              hasPdf: !pdfVault.isExpired,
+              remainingTtlSeconds: Math.max(vault.remainingTtlSeconds, pdfVault.remainingTtlSeconds),
               expiresAt: vault.expiresAt,
             },
           };
@@ -216,6 +218,7 @@ export class RequestRepository {
           vaultData: null,
           vaultInfo: {
             isExpired: true,
+            hasPdf: false,
             remainingTtlSeconds: 0,
             expiresAt: null,
           },

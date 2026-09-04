@@ -27,6 +27,7 @@ apiRouter.route("/customers", customerRoutes);
 apiRouter.route("/categories", categoryRouter);
 apiRouter.route("/services", serviceRoutes);
 apiRouter.route("/service-requests", requestRoutes);
+apiRouter.route("/requests", requestRoutes);
 apiRouter.route("/payments", paymentRoutes);
 
 // Specialized Service Routes
