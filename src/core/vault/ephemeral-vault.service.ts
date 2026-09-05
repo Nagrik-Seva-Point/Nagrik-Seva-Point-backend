@@ -13,7 +13,7 @@ import { getEnvVar } from "../config/env-helper";
 export class EphemeralVaultService {
   private readonly DEFAULT_VAULT_TTL = 86400; // 24 Hours in seconds
   private readonly TEMP_SEARCH_TOKEN_TTL = 1800; // 30 Minutes in seconds
-  private readonly MAX_RAW_PDF_BYTES = 3 * 1024 * 1024; // 3MB Safety Guard
+  private readonly MAX_RAW_PDF_BYTES = 10 * 1024 * 1024; // 10MB Safety Guard
 
   private getVaultKey(requestId: string): string {
     return `vault:request:${requestId}`;
@@ -136,8 +136,9 @@ export class EphemeralVaultService {
       return false;
     }
 
-    // 3. Lossless Gzip compression (Level 9)
-    const compressedBuffer = zlib.gzipSync(rawBuffer, { level: 9 });
+    // 3. Lossless Gzip compression (Level 9) - Skip if client already pre-gzipped
+    const isAlreadyGzipped = rawBuffer.length >= 2 && rawBuffer[0] === 0x1f && rawBuffer[1] === 0x8b;
+    const compressedBuffer = isAlreadyGzipped ? rawBuffer : zlib.gzipSync(rawBuffer, { level: 9 });
 
     // 4. Military-Grade AES-256-GCM Encryption on compressed buffer
     const secret =

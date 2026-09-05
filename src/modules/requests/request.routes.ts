@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { validationMiddleware } from "../../middleware/validation.middleware";
 import { requestService } from "./request.service";
+import { requestRepository } from "./request.repository";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import { AppError } from "../../core/errors/AppError";
 import {
@@ -65,6 +66,26 @@ requestRoutes.get("/:id/download-pdf", async (c) => {
   }
 
   const id = c.req.param("id");
+
+  // Verify request existence & organization authorization
+  const request = await requestRepository.findById(id);
+  if (!request) {
+    throw AppError.notFound("Service request not found.");
+  }
+
+  if (context.organizationId && request.organizationId && request.organizationId !== context.organizationId) {
+    throw AppError.forbidden("You do not have access to this service request.");
+  }
+
+  // Verify payment completion
+  const isPaid = ["COMPLETED", "SUCCESS", "PAYMENT_CAPTURED"].includes(request.status);
+  if (!isPaid) {
+    throw AppError.badRequest(
+      `Download unavailable: Payment is ${request.status}. Please complete payment first.`,
+      "PAYMENT_NOT_COMPLETED",
+    );
+  }
+
   const pdfData = await ephemeralVault.getPdfVaultItem(id);
 
   if (!pdfData.buffer || pdfData.isExpired) {

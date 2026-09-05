@@ -204,6 +204,11 @@ export class RequestService {
       );
     }
 
+    // Stash Kisan card farmer inputs in 24-hour encrypted Redis vault
+    if (isKisan && Object.keys(rawInput).length > 0) {
+      await ephemeralVault.storeVaultItem(request.id, rawInput, 86400);
+    }
+
     // 7. Generate Payment Order (Cashfree) with Service Description
     const serviceName = service.name || "PAN Find Service";
     const orderNote = `${serviceName} (Ref: ${referenceNumber})`;

@@ -82,12 +82,26 @@ export class ServiceDispatcher {
 
         case "KISAN_CARD":
         case "KISAN_REGISTRATION_CARD": {
-          const input = (request.inputData || {}) as any;
+          const vaultItem = await ephemeralVault.getVaultItem(serviceRequestId);
+          const input = {
+            ...((request.inputData || {}) as any),
+            ...(vaultItem?.data || {}),
+          };
           resultData = {
+            ...input,
             farmerId: input.farmerId || "N/A",
             enrollmentNo: input.enrollmentNo || "N/A",
-            name: input.name || input.nameEnglish || input.NameEnglish || "Farmer Applicant",
+            name: input.name || input.nameEnglish || input.NameEnglish || input.NameHindi || "Farmer Applicant",
+            nameEnglish: input.nameEnglish || input.NameEnglish || "",
+            nameHindi: input.nameHindi || input.NameHindi || "",
+            fatherName: input.fatherName || "N/A",
+            gender: input.gender || "पुरुष",
             mobile: input.mobile || "N/A",
+            aadhaar: input.aadhaar || "N/A",
+            address: input.address || "N/A",
+            totalRakba: input.totalRakba || "",
+            totalGata: input.totalGata || "",
+            landRecords: Array.isArray(input.landRecords) ? input.landRecords : [],
             state: input.state || "BIHAR",
             status: "SUCCESS",
             vaultActive: true,
