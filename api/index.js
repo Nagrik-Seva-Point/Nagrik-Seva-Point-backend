@@ -6484,12 +6484,14 @@ if (!databaseUrl) {
   throw new Error("DATABASE_URL environment variable is required");
 }
 var globalCtx = globalThis;
+var poolMax = parseInt(process.env.DATABASE_POOL_MAX || "20", 10);
 if (!globalCtx.__prismaPool) {
   globalCtx.__prismaPool = new pg.Pool({
     connectionString: databaseUrl,
-    max: 10,
+    max: poolMax,
     idleTimeoutMillis: 3e4,
-    connectionTimeoutMillis: 1e4
+    connectionTimeoutMillis: 1e4,
+    keepAlive: true
   });
 }
 var pool = globalCtx.__prismaPool;
@@ -6523,6 +6525,13 @@ var auth = betterAuth({
     provider: "postgresql"
   }),
   trustedOrigins: env.CORS_ORIGIN,
+  session: {
+    cookieCache: {
+      enabled: true,
+      maxAge: 5 * 60
+      // 5 minutes fast cookie cache to prevent database hits
+    }
+  },
   emailAndPassword: {
     enabled: true,
     autoSignIn: true,
@@ -7179,6 +7188,186 @@ var ServiceRepository = class {
 };
 var serviceRepository = new ServiceRepository();
 
+// src/core/redis/redis.client.ts
+import Redis from "ioredis";
+var RedisClient = class {
+  client = null;
+  isConnected = false;
+  constructor() {
+    this.initClient();
+  }
+  initClient() {
+    const redisUrl = getEnvVar("REDIS_URL");
+    if (!redisUrl) {
+      logger2.warn("[Redis] REDIS_URL environment variable is not defined. Redis operations will gracefully fallback.");
+      this.client = null;
+      this.isConnected = false;
+      return;
+    }
+    const isTls = redisUrl.startsWith("rediss://") || getEnvVar("REDIS_TLS") === "true";
+    const options = {
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
+      lazyConnect: false,
+      retryStrategy(times) {
+        const delay = Math.min(times * 200, 3e3);
+        logger2.warn(`[Redis] Connection retry attempt #${times} in ${delay}ms`);
+        return delay;
+      }
+    };
+    if (isTls) {
+      options.tls = {
+        rejectUnauthorized: false
+        // Required for managed cloud providers like Aiven
+      };
+    }
+    try {
+      this.client = new Redis(redisUrl, options);
+      this.client.on("connect", () => {
+        this.isConnected = true;
+        logger2.info(`[Redis] Successfully connected to Redis instance.`);
+      });
+      this.client.on("ready", () => {
+        this.isConnected = true;
+        logger2.info(`[Redis] Redis connection ready for operations.`);
+      });
+      this.client.on("error", (err) => {
+        this.isConnected = false;
+        logger2.error(`[Redis] Connection error: ${err?.message || err}`);
+      });
+      this.client.on("close", () => {
+        this.isConnected = false;
+        logger2.warn(`[Redis] Connection closed.`);
+      });
+    } catch (err) {
+      logger2.error(`[Redis] Failed to initialize Redis client: ${err?.message}`);
+      this.client = null;
+    }
+  }
+  getRawClient() {
+    if (!this.client && getEnvVar("REDIS_URL")) {
+      this.initClient();
+    }
+    return this.client;
+  }
+  async get(key) {
+    try {
+      const client = this.getRawClient();
+      if (!client) return null;
+      return await client.get(key);
+    } catch (err) {
+      logger2.error(`[Redis] Error getting key "${key}": ${err?.message}`);
+      return null;
+    }
+  }
+  async set(key, value, ttlSeconds) {
+    try {
+      const client = this.getRawClient();
+      if (!client) return false;
+      if (ttlSeconds && ttlSeconds > 0) {
+        await client.set(key, value, "EX", ttlSeconds);
+      } else {
+        await client.set(key, value);
+      }
+      return true;
+    } catch (err) {
+      logger2.error(`[Redis] Error setting key "${key}": ${err?.message}`);
+      return false;
+    }
+  }
+  async setJson(key, data, ttlSeconds) {
+    try {
+      const jsonStr = JSON.stringify(data);
+      return await this.set(key, jsonStr, ttlSeconds);
+    } catch (err) {
+      logger2.error(`[Redis] Error serializing JSON for key "${key}": ${err?.message}`);
+      return false;
+    }
+  }
+  async getJson(key) {
+    try {
+      const val = await this.get(key);
+      if (!val) return null;
+      return JSON.parse(val);
+    } catch (err) {
+      logger2.error(`[Redis] Error parsing JSON for key "${key}": ${err?.message}`);
+      return null;
+    }
+  }
+  async del(key) {
+    try {
+      const client = this.getRawClient();
+      if (!client) return false;
+      await client.del(key);
+      return true;
+    } catch (err) {
+      logger2.error(`[Redis] Error deleting key "${key}": ${err?.message}`);
+      return false;
+    }
+  }
+  async ttl(key) {
+    try {
+      const client = this.getRawClient();
+      if (!client) return -2;
+      return await client.ttl(key);
+    } catch (err) {
+      logger2.error(`[Redis] Error checking TTL for key "${key}": ${err?.message}`);
+      return -2;
+    }
+  }
+  /**
+   * Universal Redis Cache Helper
+   * Checks Redis for cached data. If found, returns immediately (0ms DB query).
+   * Otherwise executes fetcher(), caches the result in Redis with TTL, and returns it.
+   */
+  async remember(key, ttlSeconds, fetcher) {
+    try {
+      const cached = await this.getJson(key);
+      if (cached !== null && cached !== void 0) {
+        return cached;
+      }
+    } catch (err) {
+      logger2.warn(`[Redis] Cache lookup failed for key "${key}": ${err?.message}`);
+    }
+    const freshData = await fetcher();
+    if (freshData !== null && freshData !== void 0) {
+      this.setJson(key, freshData, ttlSeconds).catch((err) => {
+        logger2.warn(`[Redis] Cache set failed for key "${key}": ${err?.message}`);
+      });
+    }
+    return freshData;
+  }
+  /**
+   * Delete all keys matching a wildcard pattern (e.g. "cache:services:*")
+   */
+  async delPattern(pattern) {
+    try {
+      const client = this.getRawClient();
+      if (!client) return 0;
+      const stream = client.scanStream({
+        match: pattern,
+        count: 100
+      });
+      let deletedCount = 0;
+      for await (const keys of stream) {
+        if (keys && keys.length > 0) {
+          const pipeline = client.pipeline();
+          for (const k of keys) {
+            pipeline.del(k);
+          }
+          await pipeline.exec();
+          deletedCount += keys.length;
+        }
+      }
+      return deletedCount;
+    } catch (err) {
+      logger2.error(`[Redis] Error deleting pattern "${pattern}": ${err?.message}`);
+      return 0;
+    }
+  }
+};
+var redis = new RedisClient();
+
 // src/modules/services/service.service.ts
 var ServiceService = class {
   /**
@@ -7205,30 +7394,94 @@ var ServiceService = class {
     return defaultCat?.id || null;
   }
   /**
-   * Public & Retailer contextual catalog listing
+   * Public & Retailer contextual catalog listing (Cached with Redis 3600s TTL)
    */
   async getServices(context, query) {
-    const isGuest = context.accessMode === "GUEST";
-    const services = await serviceRepository.findMany(query, isGuest);
-    return services.map((service) => {
+    const cacheKey = `cache:services:catalog:${context.accessMode}:${context.pricingTier}:${query?.categoryId || "ALL"}:${query?.categoryCode || "ALL"}`;
+    return await redis.remember(cacheKey, 3600, async () => {
+      const isGuest = context.accessMode === "GUEST";
+      const services = await serviceRepository.findMany(query, isGuest);
+      return services.map((service) => {
+        const publicPriceRecord = service.prices.find(
+          (p) => p.pricingTier === "PUBLIC"
+        );
+        const partnerPriceRecord = service.prices.find(
+          (p) => p.pricingTier === "PARTNER"
+        );
+        const goldPriceRecord = service.prices.find(
+          (p) => p.pricingTier === "PARTNER_GOLD"
+        );
+        const enterprisePriceRecord = service.prices.find(
+          (p) => p.pricingTier === "ENTERPRISE"
+        );
+        const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 40;
+        const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 25;
+        const matchedPrice = service.prices.find(
+          (p) => p.pricingTier === context.pricingTier
+        ) || (context.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) || partnerPriceRecord || publicPriceRecord;
+        const defaultAmount = context.accessMode === "GUEST" ? publicPrice : partnerPrice;
+        return {
+          id: service.id,
+          code: service.code,
+          name: service.name,
+          description: service.description,
+          category: service.category ? {
+            id: service.category.id,
+            code: service.category.code,
+            name: service.category.name
+          } : null,
+          isActive: service.isActive,
+          requiresCustomer: service.requiresCustomer,
+          publicPrice,
+          partnerPrice,
+          pricing: {
+            amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
+            currency: matchedPrice ? matchedPrice.currency : "INR",
+            tier: context.pricingTier
+          }
+        };
+      });
+    });
+  }
+  /**
+   * Get single service detail projected with caller's tier price (Cached with Redis 3600s TTL)
+   */
+  async getServiceByCode(code, context) {
+    const normalizedCode = code.toUpperCase();
+    const isKisanService = normalizedCode === "KISAN_REGISTRATION_CARD" || normalizedCode === "KISAN_CARD";
+    const cacheKey = `cache:services:detail:${normalizedCode}:${context?.accessMode || "GUEST"}:${context?.pricingTier || "PARTNER"}`;
+    return await redis.remember(cacheKey, 3600, async () => {
+      const service = await serviceRepository.findByCode(normalizedCode);
+      if (!service) {
+        throw AppError.notFound(`Service with code ${normalizedCode} not found`);
+      }
+      if (context && context.accessMode === "GUEST" && !service.isPublicAllowed) {
+        if (isKisanService) {
+          await prisma.service.update({
+            where: { id: service.id },
+            data: { isPublicAllowed: true }
+          }).catch(() => {
+          });
+        } else {
+          throw AppError.forbidden("This service requires retailer authentication");
+        }
+      }
+      if (context && context.accessMode === "RETAILER" && !service.isRetailerAllowed) {
+        throw AppError.forbidden(
+          "This service is not enabled for retailer workspace"
+        );
+      }
       const publicPriceRecord = service.prices.find(
         (p) => p.pricingTier === "PUBLIC"
       );
       const partnerPriceRecord = service.prices.find(
         (p) => p.pricingTier === "PARTNER"
       );
-      const goldPriceRecord = service.prices.find(
-        (p) => p.pricingTier === "PARTNER_GOLD"
-      );
-      const enterprisePriceRecord = service.prices.find(
-        (p) => p.pricingTier === "ENTERPRISE"
-      );
-      const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 40;
-      const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 25;
-      const matchedPrice = service.prices.find(
-        (p) => p.pricingTier === context.pricingTier
-      ) || (context.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) || partnerPriceRecord || publicPriceRecord;
-      const defaultAmount = context.accessMode === "GUEST" ? publicPrice : partnerPrice;
+      const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 20;
+      const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 15;
+      const tier = context?.pricingTier || "PARTNER";
+      const matchedPrice = service.prices.find((p) => p.pricingTier === tier) || (context?.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) || partnerPriceRecord || publicPriceRecord;
+      const defaultAmount = context?.accessMode === "GUEST" ? publicPrice : partnerPrice;
       return {
         id: service.id,
         code: service.code,
@@ -7240,73 +7493,18 @@ var ServiceService = class {
           name: service.category.name
         } : null,
         isActive: service.isActive,
+        isPublicAllowed: service.isPublicAllowed || isKisanService,
+        isRetailerAllowed: service.isRetailerAllowed,
         requiresCustomer: service.requiresCustomer,
         publicPrice,
         partnerPrice,
         pricing: {
           amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
           currency: matchedPrice ? matchedPrice.currency : "INR",
-          tier: context.pricingTier
+          tier
         }
       };
     });
-  }
-  /**
-   * Get single service detail projected with caller's tier price
-   */
-  async getServiceByCode(code, context) {
-    const normalizedCode = code.toUpperCase();
-    const service = await serviceRepository.findByCode(normalizedCode);
-    const isKisanService = normalizedCode === "KISAN_REGISTRATION_CARD" || normalizedCode === "KISAN_CARD";
-    if (context && context.accessMode === "GUEST" && !service.isPublicAllowed) {
-      if (isKisanService) {
-        await prisma.service.update({
-          where: { id: service.id },
-          data: { isPublicAllowed: true }
-        }).catch(() => {
-        });
-      } else {
-        throw AppError.forbidden("This service requires retailer authentication");
-      }
-    }
-    if (context && context.accessMode === "RETAILER" && !service.isRetailerAllowed) {
-      throw AppError.forbidden(
-        "This service is not enabled for retailer workspace"
-      );
-    }
-    const publicPriceRecord = service.prices.find(
-      (p) => p.pricingTier === "PUBLIC"
-    );
-    const partnerPriceRecord = service.prices.find(
-      (p) => p.pricingTier === "PARTNER"
-    );
-    const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 20;
-    const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 15;
-    const tier = context?.pricingTier || "PARTNER";
-    const matchedPrice = service.prices.find((p) => p.pricingTier === tier) || (context?.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) || partnerPriceRecord || publicPriceRecord;
-    const defaultAmount = context?.accessMode === "GUEST" ? publicPrice : partnerPrice;
-    return {
-      id: service.id,
-      code: service.code,
-      name: service.name,
-      description: service.description,
-      category: service.category ? {
-        id: service.category.id,
-        code: service.category.code,
-        name: service.category.name
-      } : null,
-      isActive: service.isActive,
-      isPublicAllowed: service.isPublicAllowed || isKisanService,
-      isRetailerAllowed: service.isRetailerAllowed,
-      requiresCustomer: service.requiresCustomer,
-      publicPrice,
-      partnerPrice,
-      pricing: {
-        amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
-        currency: matchedPrice ? matchedPrice.currency : "INR",
-        tier
-      }
-    };
   }
   // --- MASTER ADMIN METHODS ---
   /**
@@ -7413,6 +7611,11 @@ var ServiceService = class {
       }
       return newService;
     });
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.delPattern("cache:pricing:*")
+    ]).catch(() => {
+    });
     logger2.info(`Admin created new service: ${service.code} (${service.name})`);
     return await this.getServiceByCode(service.code);
   }
@@ -7517,6 +7720,11 @@ var ServiceService = class {
         });
       }
     });
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.delPattern("cache:pricing:*")
+    ]).catch(() => {
+    });
     logger2.info(`Admin updated service: ${existing.code}`);
     return await this.getServiceByCode(existing.code);
   }
@@ -7553,6 +7761,11 @@ var ServiceService = class {
       await tx.service.delete({
         where: { id }
       });
+    });
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.delPattern("cache:pricing:*")
+    ]).catch(() => {
     });
     logger2.info(
       `Admin permanently deleted service: ${existing.code} (ID: ${id})`
@@ -7616,52 +7829,62 @@ var pricingRepository = new PricingRepository();
 var PricingService = class {
   /**
    * Calculates the authoritative server-side price snapshot for a given service and tier.
-   * Client-supplied prices are strictly ignored.
+   * Client-supplied prices are strictly ignored. (Cached with Redis 3600s TTL)
    */
   async calculatePrice(serviceId, pricingTier) {
-    const priceRecord = await pricingRepository.findPrice(
-      serviceId,
-      pricingTier
-    );
-    if (!priceRecord) {
-      if (pricingTier === "PARTNER_GOLD" || pricingTier === "ENTERPRISE") {
-        const partnerFallback = await pricingRepository.findPrice(
-          serviceId,
-          "PARTNER"
-        );
-        if (partnerFallback) {
-          return {
-            amount: Number(partnerFallback.amount),
-            currency: partnerFallback.currency,
-            pricingTier: "PARTNER"
-          };
-        }
-      }
-      const defaultAmount = pricingTier === "PUBLIC" ? 40 : 25;
-      return {
-        amount: defaultAmount,
-        currency: "INR",
+    const cacheKey = `cache:pricing:tier:${serviceId}:${pricingTier}`;
+    return await redis.remember(cacheKey, 3600, async () => {
+      const priceRecord = await pricingRepository.findPrice(
+        serviceId,
         pricingTier
-      };
-    }
-    return {
-      amount: Number(priceRecord.amount),
-      currency: priceRecord.currency,
-      pricingTier: priceRecord.pricingTier
-    };
-  }
-  async getPricingMatrix(serviceCode) {
-    const prices = await pricingRepository.findPricesByServiceCode(serviceCode);
-    if (!prices || prices.length === 0) {
-      throw AppError.notFound(
-        `No pricing configured for service code: ${serviceCode}`
       );
-    }
-    return prices.map((p) => ({
-      tier: p.pricingTier,
-      amount: Number(p.amount),
-      currency: p.currency
-    }));
+      if (!priceRecord) {
+        if (pricingTier === "PARTNER_GOLD" || pricingTier === "ENTERPRISE") {
+          const partnerFallback = await pricingRepository.findPrice(
+            serviceId,
+            "PARTNER"
+          );
+          if (partnerFallback) {
+            return {
+              amount: Number(partnerFallback.amount),
+              currency: partnerFallback.currency,
+              pricingTier: "PARTNER"
+            };
+          }
+        }
+        const defaultAmount = pricingTier === "PUBLIC" ? 40 : 25;
+        return {
+          amount: defaultAmount,
+          currency: "INR",
+          pricingTier
+        };
+      }
+      return {
+        amount: Number(priceRecord.amount),
+        currency: priceRecord.currency,
+        pricingTier: priceRecord.pricingTier
+      };
+    });
+  }
+  /**
+   * Retrieves full pricing matrix for a service (Cached with Redis 3600s TTL)
+   */
+  async getPricingMatrix(serviceCode) {
+    const normalizedCode = serviceCode.toUpperCase();
+    const cacheKey = `cache:pricing:matrix:${normalizedCode}`;
+    return await redis.remember(cacheKey, 3600, async () => {
+      const prices = await pricingRepository.findPricesByServiceCode(normalizedCode);
+      if (!prices || prices.length === 0) {
+        throw AppError.notFound(
+          `No pricing configured for service code: ${normalizedCode}`
+        );
+      }
+      return prices.map((p) => ({
+        tier: p.pricingTier,
+        amount: Number(p.amount),
+        currency: p.currency
+      }));
+    });
   }
 };
 var pricingService = new PricingService();
@@ -7855,17 +8078,20 @@ var categoryRepository = new CategoryRepository();
 // src/modules/categories/category.service.ts
 var CategoryService = class {
   async getCategories(isActive = true) {
-    const categories = await categoryRepository.findMany(isActive);
-    return categories.map((cat) => ({
-      id: cat.id,
-      code: cat.code,
-      name: cat.name,
-      description: cat.description,
-      icon: cat.icon,
-      displayOrder: cat.displayOrder,
-      isActive: cat.isActive,
-      serviceCount: cat._count.services
-    }));
+    const cacheKey = `cache:categories:list:${isActive ? "ACTIVE" : "ALL"}`;
+    return await redis.remember(cacheKey, 3600, async () => {
+      const categories = await categoryRepository.findMany(isActive);
+      return categories.map((cat) => ({
+        id: cat.id,
+        code: cat.code,
+        name: cat.name,
+        description: cat.description,
+        icon: cat.icon,
+        displayOrder: cat.displayOrder,
+        isActive: cat.isActive,
+        serviceCount: cat._count.services
+      }));
+    });
   }
   async getAllAdminCategories() {
     const categories = await categoryRepository.findMany();
@@ -7883,20 +8109,23 @@ var CategoryService = class {
     }));
   }
   async getCategoryById(id) {
-    const category = await categoryRepository.findById(id);
-    if (!category) {
-      throw AppError.notFound(`Category with ID ${id} not found`);
-    }
-    return {
-      id: category.id,
-      code: category.code,
-      name: category.name,
-      description: category.description,
-      icon: category.icon,
-      displayOrder: category.displayOrder,
-      isActive: category.isActive,
-      serviceCount: category._count.services
-    };
+    const cacheKey = `cache:categories:detail:${id}`;
+    return await redis.remember(cacheKey, 3600, async () => {
+      const category = await categoryRepository.findById(id);
+      if (!category) {
+        throw AppError.notFound(`Category with ID ${id} not found`);
+      }
+      return {
+        id: category.id,
+        code: category.code,
+        name: category.name,
+        description: category.description,
+        icon: category.icon,
+        displayOrder: category.displayOrder,
+        isActive: category.isActive,
+        serviceCount: category._count.services
+      };
+    });
   }
   async createCategory(input) {
     const normalizedCode = input.code.toUpperCase().trim();
@@ -7908,6 +8137,11 @@ var CategoryService = class {
       );
     }
     const created = await categoryRepository.create(input);
+    await Promise.all([
+      redis.delPattern("cache:categories:*"),
+      redis.delPattern("cache:services:*")
+    ]).catch(() => {
+    });
     logger2.info(
       `Admin created new category: ${created.code} (${created.name})`
     );
@@ -7919,6 +8153,11 @@ var CategoryService = class {
       throw AppError.notFound(`Category with ID ${id} not found`);
     }
     const updated = await categoryRepository.update(id, input);
+    await Promise.all([
+      redis.delPattern("cache:categories:*"),
+      redis.delPattern("cache:services:*")
+    ]).catch(() => {
+    });
     logger2.info(`Admin updated category: ${updated.code}`);
     return await this.getCategoryById(updated.id);
   }
@@ -7928,6 +8167,11 @@ var CategoryService = class {
       throw AppError.notFound(`Category with ID ${id} not found`);
     }
     await categoryRepository.delete(id);
+    await Promise.all([
+      redis.delPattern("cache:categories:*"),
+      redis.delPattern("cache:services:*")
+    ]).catch(() => {
+    });
     logger2.info(`Admin deleted category: ${existing.code} (${existing.name})`);
     return {
       success: true,
@@ -8014,121 +8258,6 @@ adminCategoryRouter.delete("/:id", async (c) => {
   return c.json(result);
 });
 
-// src/core/redis/redis.client.ts
-import Redis from "ioredis";
-var RedisClient = class {
-  client = null;
-  isConnected = false;
-  constructor() {
-    this.initClient();
-  }
-  initClient() {
-    const redisUrl = getEnvVar("REDIS_URL");
-    const isTls = redisUrl.startsWith("rediss://") || getEnvVar("REDIS_TLS") === "true";
-    const options = {
-      maxRetriesPerRequest: 3,
-      enableReadyCheck: true,
-      lazyConnect: false,
-      retryStrategy(times) {
-        const delay = Math.min(times * 200, 3e3);
-        logger2.warn(`[Redis] Connection retry attempt #${times} in ${delay}ms`);
-        return delay;
-      }
-    };
-    if (isTls) {
-      options.tls = {
-        rejectUnauthorized: false
-        // Required for managed cloud providers like Aiven
-      };
-    }
-    try {
-      this.client = new Redis(redisUrl, options);
-      this.client.on("connect", () => {
-        this.isConnected = true;
-        logger2.info(`[Redis] Successfully connected to Redis instance.`);
-      });
-      this.client.on("ready", () => {
-        this.isConnected = true;
-        logger2.info(`[Redis] Redis connection ready for operations.`);
-      });
-      this.client.on("error", (err) => {
-        this.isConnected = false;
-        logger2.error(`[Redis] Connection error: ${err?.message || err}`);
-      });
-      this.client.on("close", () => {
-        this.isConnected = false;
-        logger2.warn(`[Redis] Connection closed.`);
-      });
-    } catch (err) {
-      logger2.error(`[Redis] Failed to initialize Redis client: ${err?.message}`);
-    }
-  }
-  getRawClient() {
-    if (!this.client) {
-      this.initClient();
-    }
-    return this.client;
-  }
-  async get(key) {
-    try {
-      return await this.getRawClient().get(key);
-    } catch (err) {
-      logger2.error(`[Redis] Error getting key "${key}": ${err?.message}`);
-      return null;
-    }
-  }
-  async set(key, value, ttlSeconds) {
-    try {
-      if (ttlSeconds && ttlSeconds > 0) {
-        await this.getRawClient().set(key, value, "EX", ttlSeconds);
-      } else {
-        await this.getRawClient().set(key, value);
-      }
-      return true;
-    } catch (err) {
-      logger2.error(`[Redis] Error setting key "${key}": ${err?.message}`);
-      return false;
-    }
-  }
-  async setJson(key, data, ttlSeconds) {
-    try {
-      const jsonStr = JSON.stringify(data);
-      return await this.set(key, jsonStr, ttlSeconds);
-    } catch (err) {
-      logger2.error(`[Redis] Error serializing JSON for key "${key}": ${err?.message}`);
-      return false;
-    }
-  }
-  async getJson(key) {
-    try {
-      const val = await this.get(key);
-      if (!val) return null;
-      return JSON.parse(val);
-    } catch (err) {
-      logger2.error(`[Redis] Error parsing JSON for key "${key}": ${err?.message}`);
-      return null;
-    }
-  }
-  async del(key) {
-    try {
-      await this.getRawClient().del(key);
-      return true;
-    } catch (err) {
-      logger2.error(`[Redis] Error deleting key "${key}": ${err?.message}`);
-      return false;
-    }
-  }
-  async ttl(key) {
-    try {
-      return await this.getRawClient().ttl(key);
-    } catch (err) {
-      logger2.error(`[Redis] Error checking TTL for key "${key}": ${err?.message}`);
-      return -2;
-    }
-  }
-};
-var redis = new RedisClient();
-
 // src/core/vault/ephemeral-vault.service.ts
 import crypto2 from "node:crypto";
 import zlib from "node:zlib";
@@ -8137,8 +8266,8 @@ var EphemeralVaultService = class {
   // 24 Hours in seconds
   TEMP_SEARCH_TOKEN_TTL = 1800;
   // 30 Minutes in seconds
-  MAX_RAW_PDF_BYTES = 3 * 1024 * 1024;
-  // 3MB Safety Guard
+  MAX_RAW_PDF_BYTES = 10 * 1024 * 1024;
+  // 10MB Safety Guard
   getVaultKey(requestId) {
     return `vault:request:${requestId}`;
   }
@@ -8222,7 +8351,8 @@ var EphemeralVaultService = class {
       logger2.warn(`[EphemeralVault] PDF exceeds size limit (${rawBuffer.length} bytes), rejecting vault storage`);
       return false;
     }
-    const compressedBuffer = zlib.gzipSync(rawBuffer, { level: 9 });
+    const isAlreadyGzipped = rawBuffer.length >= 2 && rawBuffer[0] === 31 && rawBuffer[1] === 139;
+    const compressedBuffer = isAlreadyGzipped ? rawBuffer : zlib.gzipSync(rawBuffer, { level: 9 });
     const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
     const encKey = crypto2.createHash("sha256").update(secret).digest();
     const iv = crypto2.randomBytes(12);
@@ -9150,12 +9280,26 @@ var ServiceDispatcher = class {
         }
         case "KISAN_CARD":
         case "KISAN_REGISTRATION_CARD": {
-          const input = request.inputData || {};
+          const vaultItem = await ephemeralVault.getVaultItem(serviceRequestId);
+          const input = {
+            ...request.inputData || {},
+            ...vaultItem?.data || {}
+          };
           resultData = {
+            ...input,
             farmerId: input.farmerId || "N/A",
             enrollmentNo: input.enrollmentNo || "N/A",
-            name: input.name || input.nameEnglish || input.NameEnglish || "Farmer Applicant",
+            name: input.name || input.nameEnglish || input.NameEnglish || input.NameHindi || "Farmer Applicant",
+            nameEnglish: input.nameEnglish || input.NameEnglish || "",
+            nameHindi: input.nameHindi || input.NameHindi || "",
+            fatherName: input.fatherName || "N/A",
+            gender: input.gender || "\u092A\u0941\u0930\u0941\u0937",
             mobile: input.mobile || "N/A",
+            aadhaar: input.aadhaar || "N/A",
+            address: input.address || "N/A",
+            totalRakba: input.totalRakba || "",
+            totalGata: input.totalGata || "",
+            landRecords: Array.isArray(input.landRecords) ? input.landRecords : [],
             state: input.state || "BIHAR",
             status: "SUCCESS",
             vaultActive: true,
@@ -9559,6 +9703,9 @@ var RequestService = class {
         rawInput.searchToken || rawInput.pan
       );
     }
+    if (isKisan && Object.keys(rawInput).length > 0) {
+      await ephemeralVault.storeVaultItem(request.id, rawInput, 86400);
+    }
     const serviceName = service.name || "PAN Find Service";
     const orderNote = `${serviceName} (Ref: ${referenceNumber})`;
     const paymentSession = await paymentService.createCashfreeOrderFromRequest(
@@ -9669,6 +9816,20 @@ requestRoutes.get("/:id/download-pdf", async (c) => {
     );
   }
   const id = c.req.param("id");
+  const request = await requestRepository.findById(id);
+  if (!request) {
+    throw AppError.notFound("Service request not found.");
+  }
+  if (context.organizationId && request.organizationId && request.organizationId !== context.organizationId) {
+    throw AppError.forbidden("You do not have access to this service request.");
+  }
+  const isPaid = ["COMPLETED", "SUCCESS", "PAYMENT_CAPTURED"].includes(request.status);
+  if (!isPaid) {
+    throw AppError.badRequest(
+      `Download unavailable: Payment is ${request.status}. Please complete payment first.`,
+      "PAYMENT_NOT_COMPLETED"
+    );
+  }
   const pdfData = await ephemeralVault.getPdfVaultItem(id);
   if (!pdfData.buffer || pdfData.isExpired) {
     return c.json(
@@ -10134,87 +10295,89 @@ var AdminService = class {
     return org;
   }
   /**
-   * 5. Master Admin KPI Overview Stats
+   * 5. Master Admin KPI Overview Stats (Cached in Redis with 60s TTL)
    */
   async getOverviewStats() {
-    const todayStart = /* @__PURE__ */ new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const [
-      totalUsers,
-      totalOrgs,
-      totalRequests,
-      completedRequests,
-      allPaymentsSum,
-      todayPaymentsSum,
-      recentTransactions,
-      topServicesGroup
-    ] = await Promise.all([
-      prisma.user.count(),
-      prisma.organization.count(),
-      prisma.serviceRequest.count(),
-      prisma.serviceRequest.count({ where: { status: "COMPLETED" } }),
-      prisma.payment.aggregate({
-        where: { status: "CAPTURED" },
-        _sum: { amount: true }
-      }),
-      prisma.payment.aggregate({
-        where: {
-          status: "CAPTURED",
-          createdAt: { gte: todayStart }
-        },
-        _sum: { amount: true }
-      }),
-      prisma.payment.findMany({
-        take: 10,
-        orderBy: { createdAt: "desc" },
-        include: {
-          user: {
-            select: { name: true, phone: true, email: true }
+    return await redis.remember("cache:admin:overview_stats", 60, async () => {
+      const todayStart = /* @__PURE__ */ new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const [
+        totalUsers,
+        totalOrgs,
+        totalRequests,
+        completedRequests,
+        allPaymentsSum,
+        todayPaymentsSum,
+        recentTransactions,
+        topServicesGroup
+      ] = await Promise.all([
+        prisma.user.count(),
+        prisma.organization.count(),
+        prisma.serviceRequest.count(),
+        prisma.serviceRequest.count({ where: { status: "COMPLETED" } }),
+        prisma.payment.aggregate({
+          where: { status: "CAPTURED" },
+          _sum: { amount: true }
+        }),
+        prisma.payment.aggregate({
+          where: {
+            status: "CAPTURED",
+            createdAt: { gte: todayStart }
           },
-          organization: {
-            select: { name: true }
-          },
-          serviceRequest: {
-            select: {
-              referenceNumber: true,
-              service: { select: { name: true, code: true } }
+          _sum: { amount: true }
+        }),
+        prisma.payment.findMany({
+          take: 10,
+          orderBy: { createdAt: "desc" },
+          include: {
+            user: {
+              select: { name: true, phone: true, email: true }
+            },
+            organization: {
+              select: { name: true }
+            },
+            serviceRequest: {
+              select: {
+                referenceNumber: true,
+                service: { select: { name: true, code: true } }
+              }
             }
           }
-        }
-      }),
-      prisma.serviceRequest.groupBy({
-        by: ["serviceId"],
-        _count: { _all: true },
-        orderBy: { _count: { serviceId: "desc" } },
-        take: 5
-      })
-    ]);
-    const serviceIds = topServicesGroup.map((s) => s.serviceId);
-    const services = await prisma.service.findMany({
-      where: { id: { in: serviceIds } },
-      select: { id: true, name: true, code: true }
-    });
-    const topServices = topServicesGroup.map((g) => {
-      const s = services.find((srv) => srv.id === g.serviceId);
+        }),
+        prisma.serviceRequest.groupBy({
+          by: ["serviceId"],
+          _count: { _all: true },
+          orderBy: { _count: { serviceId: "desc" } },
+          take: 5
+        })
+      ]);
+      const serviceIds = topServicesGroup.map((s) => s.serviceId);
+      const services = await prisma.service.findMany({
+        where: { id: { in: serviceIds } },
+        select: { id: true, name: true, code: true }
+      });
+      const topServices = topServicesGroup.map((g) => {
+        const s = services.find((srv) => srv.id === g.serviceId);
+        return {
+          serviceId: g.serviceId,
+          name: s?.name || "Unknown Service",
+          code: s?.code || "UNKNOWN",
+          count: g._count._all
+        };
+      });
+      const successRate = totalRequests > 0 ? Math.round(completedRequests / totalRequests * 100) : 100;
       return {
-        serviceId: g.serviceId,
-        name: s?.name || "Unknown Service",
-        code: s?.code || "UNKNOWN",
-        count: g._count._all
+        totalRevenue: Number(allPaymentsSum._sum.amount || 0),
+        todayRevenue: Number(todayPaymentsSum._sum.amount || 0),
+        totalUsers,
+        totalOrganizations: totalOrgs,
+        totalRequests,
+        completedRequests,
+        successRate,
+        recentTransactions,
+        topServices
       };
     });
-    const successRate = totalRequests > 0 ? Math.round(completedRequests / totalRequests * 100) : 100;
-    return {
-      totalRevenue: Number(allPaymentsSum._sum.amount || 0),
-      todayRevenue: Number(todayPaymentsSum._sum.amount || 0),
-      totalUsers,
-      totalOrganizations: totalOrgs,
-      totalRequests,
-      completedRequests,
-      successRate,
-      recentTransactions,
-      topServices
-    };
   }
 };
 var adminService = new AdminService();

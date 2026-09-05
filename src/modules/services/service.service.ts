@@ -1,5 +1,6 @@
 import { serviceRepository } from "./service.repository";
 import { prisma } from "../../core/db/prisma";
+import { redis } from "../../core/redis/redis.client";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import type {
@@ -44,45 +45,135 @@ export class ServiceService {
   }
 
   /**
-   * Public & Retailer contextual catalog listing
+   * Public & Retailer contextual catalog listing (Cached with Redis 3600s TTL)
    */
   async getServices(context: RequestContext, query: QueryServiceInput) {
-    const isGuest = context.accessMode === "GUEST";
-    const services = await serviceRepository.findMany(query, isGuest);
+    const cacheKey = `cache:services:catalog:${context.accessMode}:${context.pricingTier}:${query?.categoryId || "ALL"}:${query?.categoryCode || "ALL"}`;
 
-    return services.map((service) => {
-      // Extract all tier price snapshots
+    return await redis.remember(cacheKey, 3600, async () => {
+      const isGuest = context.accessMode === "GUEST";
+      const services = await serviceRepository.findMany(query, isGuest);
+
+      return services.map((service) => {
+        // Extract all tier price snapshots
+        const publicPriceRecord = service.prices.find((p) =>
+          p.pricingTier === "PUBLIC"
+        );
+        const partnerPriceRecord = service.prices.find((p) =>
+          p.pricingTier === "PARTNER"
+        );
+        const goldPriceRecord = service.prices.find((p) =>
+          p.pricingTier === "PARTNER_GOLD"
+        );
+        const enterprisePriceRecord = service.prices.find((p) =>
+          p.pricingTier === "ENTERPRISE"
+        );
+
+        const publicPrice = publicPriceRecord
+          ? Number(publicPriceRecord.amount)
+          : 40.0;
+        const partnerPrice = partnerPriceRecord
+          ? Number(partnerPriceRecord.amount)
+          : 25.0;
+
+        // Find matching price for caller's tier, fallback to PARTNER or default
+        const matchedPrice = service.prices.find((p) =>
+          p.pricingTier === context.pricingTier
+        ) ||
+          (context.accessMode === "GUEST"
+            ? publicPriceRecord
+            : partnerPriceRecord) ||
+          partnerPriceRecord ||
+          publicPriceRecord;
+
+        const defaultAmount = context.accessMode === "GUEST"
+          ? publicPrice
+          : partnerPrice;
+
+        return {
+          id: service.id,
+          code: service.code,
+          name: service.name,
+          description: service.description,
+          category: service.category
+            ? {
+              id: service.category.id,
+              code: service.category.code,
+              name: service.category.name,
+            }
+            : null,
+          isActive: service.isActive,
+          requiresCustomer: service.requiresCustomer,
+          publicPrice,
+          partnerPrice,
+          pricing: {
+            amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
+            currency: matchedPrice ? matchedPrice.currency : "INR",
+            tier: context.pricingTier,
+          },
+        };
+      });
+    });
+  }
+
+  /**
+   * Get single service detail projected with caller's tier price (Cached with Redis 3600s TTL)
+   */
+  async getServiceByCode(code: string, context?: RequestContext) {
+    const normalizedCode = code.toUpperCase();
+    const isKisanService = normalizedCode === "KISAN_REGISTRATION_CARD" || normalizedCode === "KISAN_CARD";
+    const cacheKey = `cache:services:detail:${normalizedCode}:${context?.accessMode || "GUEST"}:${context?.pricingTier || "PARTNER"}`;
+
+    return await redis.remember(cacheKey, 3600, async () => {
+      const service = await serviceRepository.findByCode(normalizedCode);
+      if (!service) {
+        throw AppError.notFound(`Service with code ${normalizedCode} not found`);
+      }
+
+      if (context && context.accessMode === "GUEST" && !service.isPublicAllowed) {
+        if (isKisanService) {
+          await prisma.service.update({
+            where: { id: service.id },
+            data: { isPublicAllowed: true },
+          }).catch(() => {});
+        } else {
+          throw AppError.forbidden("This service requires retailer authentication");
+        }
+      }
+
+      if (
+        context &&
+        context.accessMode === "RETAILER" &&
+        !service.isRetailerAllowed
+      ) {
+        throw AppError.forbidden(
+          "This service is not enabled for retailer workspace",
+        );
+      }
+
       const publicPriceRecord = service.prices.find((p) =>
         p.pricingTier === "PUBLIC"
       );
       const partnerPriceRecord = service.prices.find((p) =>
         p.pricingTier === "PARTNER"
       );
-      const goldPriceRecord = service.prices.find((p) =>
-        p.pricingTier === "PARTNER_GOLD"
-      );
-      const enterprisePriceRecord = service.prices.find((p) =>
-        p.pricingTier === "ENTERPRISE"
-      );
 
       const publicPrice = publicPriceRecord
         ? Number(publicPriceRecord.amount)
-        : 40.0;
+        : 20.0;
       const partnerPrice = partnerPriceRecord
         ? Number(partnerPriceRecord.amount)
-        : 25.0;
+        : 15.0;
 
-      // Find matching price for caller's tier, fallback to PARTNER or default
-      const matchedPrice = service.prices.find((p) =>
-        p.pricingTier === context.pricingTier
-      ) ||
-        (context.accessMode === "GUEST"
+      const tier = context?.pricingTier || "PARTNER";
+      const matchedPrice = service.prices.find((p) => p.pricingTier === tier) ||
+        (context?.accessMode === "GUEST"
           ? publicPriceRecord
           : partnerPriceRecord) ||
         partnerPriceRecord ||
         publicPriceRecord;
 
-      const defaultAmount = context.accessMode === "GUEST"
+      const defaultAmount = context?.accessMode === "GUEST"
         ? publicPrice
         : partnerPrice;
 
@@ -99,97 +190,18 @@ export class ServiceService {
           }
           : null,
         isActive: service.isActive,
+        isPublicAllowed: service.isPublicAllowed || isKisanService,
+        isRetailerAllowed: service.isRetailerAllowed,
         requiresCustomer: service.requiresCustomer,
         publicPrice,
         partnerPrice,
         pricing: {
           amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
           currency: matchedPrice ? matchedPrice.currency : "INR",
-          tier: context.pricingTier,
+          tier,
         },
       };
     });
-  }
-
-  /**
-   * Get single service detail projected with caller's tier price
-   */
-  async getServiceByCode(code: string, context?: RequestContext) {
-    const normalizedCode = code.toUpperCase();
-    const service = await serviceRepository.findByCode(normalizedCode);
-    const isKisanService = normalizedCode === "KISAN_REGISTRATION_CARD" || normalizedCode === "KISAN_CARD";
-
-    if (context && context.accessMode === "GUEST" && !service.isPublicAllowed) {
-      if (isKisanService) {
-        await prisma.service.update({
-          where: { id: service.id },
-          data: { isPublicAllowed: true },
-        }).catch(() => {});
-      } else {
-        throw AppError.forbidden("This service requires retailer authentication");
-      }
-    }
-
-    if (
-      context &&
-      context.accessMode === "RETAILER" &&
-      !service.isRetailerAllowed
-    ) {
-      throw AppError.forbidden(
-        "This service is not enabled for retailer workspace",
-      );
-    }
-
-    const publicPriceRecord = service.prices.find((p) =>
-      p.pricingTier === "PUBLIC"
-    );
-    const partnerPriceRecord = service.prices.find((p) =>
-      p.pricingTier === "PARTNER"
-    );
-
-    const publicPrice = publicPriceRecord
-      ? Number(publicPriceRecord.amount)
-      : 20.0;
-    const partnerPrice = partnerPriceRecord
-      ? Number(partnerPriceRecord.amount)
-      : 15.0;
-
-    const tier = context?.pricingTier || "PARTNER";
-    const matchedPrice = service.prices.find((p) => p.pricingTier === tier) ||
-      (context?.accessMode === "GUEST"
-        ? publicPriceRecord
-        : partnerPriceRecord) ||
-      partnerPriceRecord ||
-      publicPriceRecord;
-
-    const defaultAmount = context?.accessMode === "GUEST"
-      ? publicPrice
-      : partnerPrice;
-
-    return {
-      id: service.id,
-      code: service.code,
-      name: service.name,
-      description: service.description,
-      category: service.category
-        ? {
-          id: service.category.id,
-          code: service.category.code,
-          name: service.category.name,
-        }
-        : null,
-      isActive: service.isActive,
-      isPublicAllowed: service.isPublicAllowed || isKisanService,
-      isRetailerAllowed: service.isRetailerAllowed,
-      requiresCustomer: service.requiresCustomer,
-      publicPrice,
-      partnerPrice,
-      pricing: {
-        amount: matchedPrice ? Number(matchedPrice.amount) : defaultAmount,
-        currency: matchedPrice ? matchedPrice.currency : "INR",
-        tier,
-      },
-    };
   }
 
   // --- MASTER ADMIN METHODS ---
@@ -313,6 +325,12 @@ export class ServiceService {
       return newService;
     });
 
+    // Invalidate Redis caches
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.delPattern("cache:pricing:*"),
+    ]).catch(() => {});
+
     logger.info(`Admin created new service: ${service.code} (${service.name})`);
     return await this.getServiceByCode(service.code);
   }
@@ -430,6 +448,12 @@ export class ServiceService {
       }
     });
 
+    // Invalidate Redis caches
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.delPattern("cache:pricing:*"),
+    ]).catch(() => {});
+
     logger.info(`Admin updated service: ${existing.code}`);
     return await this.getServiceByCode(existing.code);
   }
@@ -477,6 +501,12 @@ export class ServiceService {
         where: { id },
       });
     });
+
+    // Invalidate Redis caches
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.delPattern("cache:pricing:*"),
+    ]).catch(() => {});
 
     logger.info(
       `Admin permanently deleted service: ${existing.code} (ID: ${id})`,

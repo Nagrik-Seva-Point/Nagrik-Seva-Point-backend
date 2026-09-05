@@ -17,12 +17,15 @@ type GlobalWithPrisma = typeof globalThis & {
 
 const globalCtx = globalThis as GlobalWithPrisma;
 
+const poolMax = parseInt(process.env.DATABASE_POOL_MAX || "20", 10);
+
 if (!globalCtx.__prismaPool) {
   globalCtx.__prismaPool = new pg.Pool({
     connectionString: databaseUrl,
-    max: 10,
+    max: poolMax,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
+    keepAlive: true,
   });
 }
 

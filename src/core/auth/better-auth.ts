@@ -29,6 +29,12 @@ export const auth = betterAuth({
     provider: "postgresql",
   }),
   trustedOrigins: env.CORS_ORIGIN,
+  session: {
+    cookieCache: {
+      enabled: true,
+      maxAge: 5 * 60, // 5 minutes fast cookie cache to prevent database hits
+    },
+  },
   emailAndPassword: {
     enabled: true,
     autoSignIn: true,

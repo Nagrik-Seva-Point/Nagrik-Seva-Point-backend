@@ -1,4 +1,5 @@
 import { prisma } from "../../core/db/prisma";
+import { redis } from "../../core/redis/redis.client";
 import { AppError } from "../../core/errors/AppError";
 import type { PaymentStatus, PaymentMethod, UserRole, AccessMode, RequestStatus } from "@prisma/client";
 
@@ -365,95 +366,97 @@ export class AdminService {
   }
 
   /**
-   * 5. Master Admin KPI Overview Stats
+   * 5. Master Admin KPI Overview Stats (Cached in Redis with 60s TTL)
    */
   async getOverviewStats() {
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    return await redis.remember("cache:admin:overview_stats", 60, async () => {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
 
-    const [
-      totalUsers,
-      totalOrgs,
-      totalRequests,
-      completedRequests,
-      allPaymentsSum,
-      todayPaymentsSum,
-      recentTransactions,
-      topServicesGroup,
-    ] = await Promise.all([
-      prisma.user.count(),
-      prisma.organization.count(),
-      prisma.serviceRequest.count(),
-      prisma.serviceRequest.count({ where: { status: "COMPLETED" } }),
-      prisma.payment.aggregate({
-        where: { status: "CAPTURED" },
-        _sum: { amount: true },
-      }),
-      prisma.payment.aggregate({
-        where: {
-          status: "CAPTURED",
-          createdAt: { gte: todayStart },
-        },
-        _sum: { amount: true },
-      }),
-      prisma.payment.findMany({
-        take: 10,
-        orderBy: { createdAt: "desc" },
-        include: {
-          user: {
-            select: { name: true, phone: true, email: true },
+      const [
+        totalUsers,
+        totalOrgs,
+        totalRequests,
+        completedRequests,
+        allPaymentsSum,
+        todayPaymentsSum,
+        recentTransactions,
+        topServicesGroup,
+      ] = await Promise.all([
+        prisma.user.count(),
+        prisma.organization.count(),
+        prisma.serviceRequest.count(),
+        prisma.serviceRequest.count({ where: { status: "COMPLETED" } }),
+        prisma.payment.aggregate({
+          where: { status: "CAPTURED" },
+          _sum: { amount: true },
+        }),
+        prisma.payment.aggregate({
+          where: {
+            status: "CAPTURED",
+            createdAt: { gte: todayStart },
           },
-          organization: {
-            select: { name: true },
-          },
-          serviceRequest: {
-            select: {
-              referenceNumber: true,
-              service: { select: { name: true, code: true } },
+          _sum: { amount: true },
+        }),
+        prisma.payment.findMany({
+          take: 10,
+          orderBy: { createdAt: "desc" },
+          include: {
+            user: {
+              select: { name: true, phone: true, email: true },
+            },
+            organization: {
+              select: { name: true },
+            },
+            serviceRequest: {
+              select: {
+                referenceNumber: true,
+                service: { select: { name: true, code: true } },
+              },
             },
           },
-        },
-      }),
-      prisma.serviceRequest.groupBy({
-        by: ["serviceId"],
-        _count: { _all: true },
-        orderBy: { _count: { serviceId: "desc" } },
-        take: 5,
-      }),
-    ]);
+        }),
+        prisma.serviceRequest.groupBy({
+          by: ["serviceId"],
+          _count: { _all: true },
+          orderBy: { _count: { serviceId: "desc" } },
+          take: 5,
+        }),
+      ]);
 
-    const serviceIds = topServicesGroup.map((s) => s.serviceId);
-    const services = await prisma.service.findMany({
-      where: { id: { in: serviceIds } },
-      select: { id: true, name: true, code: true },
-    });
+      const serviceIds = topServicesGroup.map((s) => s.serviceId);
+      const services = await prisma.service.findMany({
+        where: { id: { in: serviceIds } },
+        select: { id: true, name: true, code: true },
+      });
 
-    const topServices = topServicesGroup.map((g) => {
-      const s = services.find((srv) => srv.id === g.serviceId);
+      const topServices = topServicesGroup.map((g) => {
+        const s = services.find((srv) => srv.id === g.serviceId);
+        return {
+          serviceId: g.serviceId,
+          name: s?.name || "Unknown Service",
+          code: s?.code || "UNKNOWN",
+          count: g._count._all,
+        };
+      });
+
+      const successRate =
+        totalRequests > 0
+          ? Math.round((completedRequests / totalRequests) * 100)
+          : 100;
+
       return {
-        serviceId: g.serviceId,
-        name: s?.name || "Unknown Service",
-        code: s?.code || "UNKNOWN",
-        count: g._count._all,
+        totalRevenue: Number(allPaymentsSum._sum.amount || 0),
+        todayRevenue: Number(todayPaymentsSum._sum.amount || 0),
+        totalUsers,
+        totalOrganizations: totalOrgs,
+        totalRequests,
+        completedRequests,
+        successRate,
+        recentTransactions,
+        topServices,
       };
     });
-
-    const successRate =
-      totalRequests > 0
-        ? Math.round((completedRequests / totalRequests) * 100)
-        : 100;
-
-    return {
-      totalRevenue: Number(allPaymentsSum._sum.amount || 0),
-      todayRevenue: Number(todayPaymentsSum._sum.amount || 0),
-      totalUsers,
-      totalOrganizations: totalOrgs,
-      totalRequests,
-      completedRequests,
-      successRate,
-      recentTransactions,
-      topServices,
-    };
   }
 }
 

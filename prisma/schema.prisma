@@ -176,6 +176,10 @@ model Customer {
   updatedAt      DateTime     @updatedAt
 
   requests       ServiceRequest[]
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, name])
+  @@index([organizationId, phone])
 }
 
 // --- SERVICE CATEGORIES ---
@@ -272,6 +276,13 @@ model ServiceRequest {
 
   events            ServiceRequestEvent[]
   payments          Payment[]
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([guestSessionId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@index([serviceId, status])
+  @@index([customerId])
 }
 
 model ServiceRequestEvent {
@@ -281,6 +292,8 @@ model ServiceRequestEvent {
   status           RequestStatus
   note             String?
   createdAt        DateTime        @default(now())
+
+  @@index([serviceRequestId, createdAt])
 }
 
 // --- PAYMENTS ---
@@ -317,6 +330,9 @@ model Payment {
   @@index([orderId])
   @@index([transactionId])
   @@index([serviceRequestId])
+  @@index([organizationId, status, createdAt])
+  @@index([userId, status])
+  @@index([guestSessionId])
 }
 
 // --- WALLET & LEDGER (Prepared for future activation) ---
@@ -341,4 +357,7 @@ model WalletTransaction {
   referenceId  String?         // Points to ServiceRequest.id or Payment.id
   description  String?
   createdAt    DateTime        @default(now())
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([referenceId])
 }
