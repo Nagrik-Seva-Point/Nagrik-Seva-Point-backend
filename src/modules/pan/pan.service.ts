@@ -186,8 +186,9 @@ export class PanService {
         pan: decrypted.pan,
         maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX",
       };
-    } catch (err: any) {
-      logger.error(`[PanService] Token decryption failed: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[PanService] Token decryption failed: ${msg}`);
       throw AppError.badRequest(
         "Invalid or expired search session token. Please search again.",
         "INVALID_TOKEN",
@@ -263,8 +264,9 @@ export class PanService {
         aadhaarLinked: decrypted.aadhaarLinked ?? true,
         maskedAadhaar: decrypted.aadhaarMasked || "N/A",
       };
-    } catch (err: any) {
-      logger.error(`[PanService] Details token decryption failed: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[PanService] Details token decryption failed: ${msg}`);
       throw AppError.badRequest(
         "Invalid or expired verification session token. Please search again.",
         "INVALID_TOKEN",

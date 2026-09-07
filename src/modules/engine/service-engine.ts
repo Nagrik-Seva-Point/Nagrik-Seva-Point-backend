@@ -88,11 +88,12 @@ export class ServiceEngine {
           status: "SUCCESS",
         },
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error(`Error executing ${serviceCode}:`, error);
+      const msg = error instanceof Error ? error.message : "Gateway execution error";
       return {
         success: false,
-        error: error.message || "Gateway execution error",
+        error: msg,
       };
     }
   }

@@ -1,4 +1,4 @@
-import Redis, { type RedisOptions } from "ioredis";
+import { Redis, type RedisOptions } from "ioredis";
 import { logger } from "../logger/logger";
 import { getEnvVar } from "../config/env-helper";
 
@@ -16,7 +16,10 @@ class RedisClient {
   }
 
   private initClient() {
-    const redisUrl = getEnvVar("REDIS_URL");
+    let redisUrl = getEnvVar("REDIS_URL");
+    if (redisUrl) {
+      redisUrl = redisUrl.trim().replace(/^["']|["';]+$/g, "").trim();
+    }
     if (!redisUrl) {
       logger.warn("[Redis] REDIS_URL environment variable is not defined. Redis operations will gracefully fallback.");
       this.client = null;
@@ -58,17 +61,17 @@ class RedisClient {
         logger.info(`[Redis] Redis connection ready for operations.`);
       });
 
-      this.client.on("error", (err) => {
+      this.client.on("error", (err: unknown) => {
         this.isConnected = false;
-        logger.error(`[Redis] Connection error: ${err?.message || err}`);
+        logger.error(`[Redis] Connection error: ${err instanceof Error ? err.message : String(err)}`);
       });
 
       this.client.on("close", () => {
         this.isConnected = false;
         logger.warn(`[Redis] Connection closed.`);
       });
-    } catch (err: any) {
-      logger.error(`[Redis] Failed to initialize Redis client: ${err?.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Redis] Failed to initialize Redis client: ${err instanceof Error ? err.message : String(err)}`);
       this.client = null;
     }
   }
@@ -85,8 +88,8 @@ class RedisClient {
       const client = this.getRawClient();
       if (!client) return null;
       return await client.get(key);
-    } catch (err: any) {
-      logger.error(`[Redis] Error getting key "${key}": ${err?.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Redis] Error getting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
   }
@@ -106,8 +109,8 @@ class RedisClient {
         await client.set(key, value);
       }
       return true;
-    } catch (err: any) {
-      logger.error(`[Redis] Error setting key "${key}": ${err?.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Redis] Error setting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }
@@ -120,8 +123,8 @@ class RedisClient {
     try {
       const jsonStr = JSON.stringify(data);
       return await this.set(key, jsonStr, ttlSeconds);
-    } catch (err: any) {
-      logger.error(`[Redis] Error serializing JSON for key "${key}": ${err?.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Redis] Error serializing JSON for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }
@@ -131,8 +134,8 @@ class RedisClient {
       const val = await this.get(key);
       if (!val) return null;
       return JSON.parse(val) as T;
-    } catch (err: any) {
-      logger.error(`[Redis] Error parsing JSON for key "${key}": ${err?.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Redis] Error parsing JSON for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
   }
@@ -143,8 +146,8 @@ class RedisClient {
       if (!client) return false;
       await client.del(key);
       return true;
-    } catch (err: any) {
-      logger.error(`[Redis] Error deleting key "${key}": ${err?.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Redis] Error deleting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }
@@ -154,8 +157,8 @@ class RedisClient {
       const client = this.getRawClient();
       if (!client) return -2;
       return await client.ttl(key);
-    } catch (err: any) {
-      logger.error(`[Redis] Error checking TTL for key "${key}": ${err?.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Redis] Error checking TTL for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return -2;
     }
   }
@@ -175,15 +178,15 @@ class RedisClient {
       if (cached !== null && cached !== undefined) {
         return cached;
       }
-    } catch (err: any) {
-      logger.warn(`[Redis] Cache lookup failed for key "${key}": ${err?.message}`);
+    } catch (err: unknown) {
+      logger.warn(`[Redis] Cache lookup failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const freshData = await fetcher();
 
     if (freshData !== null && freshData !== undefined) {
-      this.setJson(key, freshData, ttlSeconds).catch((err) => {
-        logger.warn(`[Redis] Cache set failed for key "${key}": ${err?.message}`);
+      this.setJson(key, freshData, ttlSeconds).catch((err: unknown) => {
+        logger.warn(`[Redis] Cache set failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       });
     }
 
@@ -215,8 +218,8 @@ class RedisClient {
         }
       }
       return deletedCount;
-    } catch (err: any) {
-      logger.error(`[Redis] Error deleting pattern "${pattern}": ${err?.message}`);
+    } catch (err: unknown) {
+      logger.error(`[Redis] Error deleting pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`);
       return 0;
     }
   }

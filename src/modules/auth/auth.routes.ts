@@ -8,7 +8,10 @@ import {
   loginSchema,
   type RegisterRetailerInput,
   registerRetailerSchema,
+  type UpdateProfileInput,
+  updateProfileSchema,
 } from "./auth.schema";
+import { AppError } from "../../core/errors/AppError";
 import type { ContextVariables } from "../../app/context";
 
 export const authRoutes = new Hono<ContextVariables>();
@@ -46,19 +49,60 @@ authRoutes.post(
   },
 );
 
-// 4. Current Authenticated Profile & Org Metadata
+// 4. Current Authenticated Profile & Cyber Café Org Metadata
 authRoutes.get("/me", async (c) => {
   const context = c.get("requestContext");
   const user = c.get("user");
-  const organization = c.get("organization");
+  const orgId = c.get("organizationId");
+
+  if (!user) {
+    return c.json({
+      success: true,
+      data: {
+        accessMode: context.accessMode,
+        pricingTier: context.pricingTier,
+        user: null,
+        organization: null,
+      },
+    });
+  }
+
+  const profile = await authService.getProfile(user.id, orgId || null);
 
   return c.json({
     success: true,
     data: {
       accessMode: context.accessMode,
       pricingTier: context.pricingTier,
-      user: user || null,
-      organization: organization || null,
+      user: profile.user,
+      organization: profile.organization,
     },
   });
 });
+
+// 5. Update Profile & Cyber Café details
+authRoutes.patch(
+  "/profile",
+  validationMiddleware(updateProfileSchema),
+  async (c) => {
+    const user = c.get("user");
+    if (!user) {
+      throw AppError.unauthorized("Authentication required to update profile");
+    }
+    const orgId = c.get("organizationId");
+    const data = c.get("validData") as UpdateProfileInput;
+
+    const updated = await authService.updateProfile(
+      user.id,
+      orgId || null,
+      data,
+    );
+
+    return c.json({
+      success: true,
+      message: "Profile updated successfully",
+      data: updated,
+    });
+  },
+);
+

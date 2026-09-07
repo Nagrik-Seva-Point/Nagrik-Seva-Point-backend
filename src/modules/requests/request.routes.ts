@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { validationMiddleware } from "../../middleware/validation.middleware";
+import { paymentService } from "../payment/payment.service";
 import { requestService } from "./request.service";
 import { requestRepository } from "./request.repository";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import { AppError } from "../../core/errors/AppError";
+import { logApiExecution } from "../../core/logger/api-logger";
 import {
-  type ConfirmRequestPaymentInput,
-  confirmRequestPaymentSchema,
   type CreateRequestInput,
   createRequestSchema,
   type QueryRequestInput,
@@ -28,6 +28,15 @@ requestRoutes.post(
     return c.json({ success: true, data: result });
   },
 );
+
+// 2. Confirm Payment & Execute (Cashfree / Gateway compatibility)
+requestRoutes.post("/:id/confirm-payment", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => ({}));
+  const cfPaymentId = body.gatewayPaymentId || body.cfPaymentId || body.paymentId;
+  const updatedRequest = await paymentService.confirmPaymentOrder(id, cfPaymentId);
+  return c.json({ success: true, data: updatedRequest });
+});
 
 
 // 3. Get Request by ID (Scoped by context)
@@ -98,7 +107,21 @@ requestRoutes.get("/:id/download-pdf", async (c) => {
     );
   }
 
-  return new Response(pdfData.buffer, {
+  // Audit Log: Operator accessed and downloaded customer document from DPDP vault
+  await logApiExecution({
+    organizationId: request.organizationId || context.organizationId || null,
+    userId: context.userId || null,
+    serviceCode: request.service?.code || "DOCUMENT_VAULT",
+    action: "Certificate / PDF Document Vault Download",
+    endpoint: `/api/v1/service-requests/${id}/download-pdf`,
+    reference: request.referenceNumber || id.slice(0, 8),
+    status: "SUCCESS",
+    statusCode: 200,
+    ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+    note: `Operator downloaded decrypted document from 24h ephemeral vault (Ref: ${request.referenceNumber || id})`,
+  });
+
+  return new Response(new Uint8Array(pdfData.buffer), {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",

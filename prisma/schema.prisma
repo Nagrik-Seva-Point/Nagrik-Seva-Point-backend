@@ -79,6 +79,7 @@ model User {
   members       Member[]
   requests      ServiceRequest[]
   payments      Payment[]
+  apiLogs       ApiLog[]
 }
 
 model Session {
@@ -138,6 +139,7 @@ model Organization {
   requests    ServiceRequest[]
   wallet      Wallet?
   payments    Payment[]
+  apiLogs     ApiLog[]
 }
 
 model Member {
@@ -360,4 +362,26 @@ model WalletTransaction {
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([referenceId])
+}
+
+// --- API AUDIT LOGS (SERVICE INQUIRIES & VERIFICATIONS) ---
+model ApiLog {
+  id             String        @id @default(uuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  serviceCode    String        // "PAN_DETAILS", "PAN_FIND", "KISAN_CARD", etc.
+  action         String        // "PAN Details Verification", "Aadhaar PAN Find", etc.
+  endpoint       String        // e.g. "/api/v1/pan/details/verify"
+  reference      String?       // Masked PAN or masked Aadhaar
+  status         String        @default("SUCCESS") // "SUCCESS" | "FAILED"
+  statusCode     Int           @default(200)
+  durationMs     Int?
+  ipAddress      String?
+  note           String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([serviceCode, createdAt(sort: Desc)])
 }

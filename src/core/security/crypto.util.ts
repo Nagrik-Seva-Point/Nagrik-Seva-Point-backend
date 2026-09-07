@@ -91,7 +91,7 @@ export function decryptPanToken(token: string): PanTokenPayload {
     }
 
     return parsed;
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (err instanceof AppError) throw err;
     throw AppError.badRequest(
       "Unable to verify PAN token. Please perform a fresh search.",

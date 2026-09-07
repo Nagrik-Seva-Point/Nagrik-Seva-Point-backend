@@ -3,13 +3,11 @@ import { customerService } from "../customers/customer.service";
 import { serviceService } from "../services/service.service";
 import { pricingService } from "../pricing/pricing.service";
 import { paymentService } from "../payment/payment.service";
-import { serviceEngine } from "../engine/service-engine";
 import { prisma } from "../../core/db/prisma";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import type {
-  ConfirmRequestPaymentInput,
   CreateRequestInput,
   QueryRequestInput,
 } from "./request.schema";
@@ -132,7 +130,7 @@ export class RequestService {
     let customerEmail = "citizen@nagriksevapoint.in";
     let customerPhone = "9876543210";
 
-    const rawInput = (data.input || {}) as Record<string, any>;
+    const rawInput = (data.input || {}) as Record<string, unknown>;
     if (rawInput.phone || rawInput.customerPhone || rawInput.mobile) {
       const p = String(rawInput.phone || rawInput.customerPhone || rawInput.mobile).replace(/[^0-9]/g, "").slice(-10);
       if (p.length === 10) customerPhone = p;
@@ -200,7 +198,7 @@ export class RequestService {
     if (rawInput.searchToken || rawInput.pan) {
       await ephemeralVault.stashTempSearchToken(
         request.id,
-        rawInput.searchToken || rawInput.pan,
+        String(rawInput.searchToken || rawInput.pan),
       );
     }
 
@@ -214,7 +212,11 @@ export class RequestService {
     const orderNote = `${serviceName} (Ref: ${referenceNumber})`;
 
     const paymentSession = await paymentService.createCashfreeOrderFromRequest(
-      request,
+      {
+        id: request.id,
+        amount: Number(request.amount),
+        organizationId: request.organizationId,
+      },
       context.userId || null,
       context.guestSessionId || null,
       customerName,
@@ -238,6 +240,9 @@ export class RequestService {
     return {
       ...lockedRequest,
       payment: {
+        id: paymentSession.payment_id,
+        gatewayOrderId: paymentSession.order_id,
+        orderId: paymentSession.order_id,
         payment_session_id: paymentSession.payment_session_id,
         order_id: paymentSession.order_id,
         mode: paymentSession.mode,

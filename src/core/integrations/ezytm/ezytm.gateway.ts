@@ -79,11 +79,12 @@ export class EzytmGateway {
     endpoint: string,
     params: Record<string, string>,
   ): Promise<T> {
+    const denoObj = (globalThis as Record<string, unknown>).Deno as { env: { get(k: string): string | undefined } } | undefined;
     const isTestEnv = typeof process !== "undefined"
       ? process.env.NODE_ENV === "test" || process.env.DENO_TESTING === "1"
-      : typeof (globalThis as any).Deno !== "undefined"
-      ? (globalThis as any).Deno.env.get("NODE_ENV") === "test" ||
-        (globalThis as any).Deno.env.get("DENO_TESTING") === "1"
+      : typeof denoObj !== "undefined"
+      ? denoObj.env.get("NODE_ENV") === "test" ||
+        denoObj.env.get("DENO_TESTING") === "1"
       : false;
 
     if (!this.isConfigured()) {
@@ -165,7 +166,7 @@ export class EzytmGateway {
         headers,
         body: body.toString(),
         signal: controller.signal,
-        // @ts-ignore
+        // @ts-ignore: dispatcher is supported by undiciFetch
         dispatcher,
       });
 
@@ -182,10 +183,11 @@ export class EzytmGateway {
           "GATEWAY_INVALID_RESPONSE",
         );
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearTimeout(timeoutId);
       if (err instanceof AppError) throw err;
-      if (err.name === "AbortError") {
+      const errName = err && typeof err === "object" && "name" in err ? (err as { name: string }).name : "";
+      if (errName === "AbortError") {
         logger.error(
           `[EzyTM Gateway] Timeout after 15s communicating with ${url}`,
         );
@@ -195,8 +197,9 @@ export class EzytmGateway {
         );
       }
       logger.error(`[EzyTM Gateway] Connection error to ${url}:`, err);
+      const errMsg = err instanceof Error ? err.message : String(err);
       throw AppError.badGateway(
-        err.message || "Failed to communicate with EzyTM gateway",
+        errMsg || "Failed to communicate with EzyTM gateway",
         "GATEWAY_COMMUNICATION_ERROR",
       );
     }

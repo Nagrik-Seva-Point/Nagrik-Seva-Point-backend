@@ -1,11 +1,13 @@
 {
+  "unstable": ["sloppy-imports"],
   "tasks": {
-    "dev": "deno run --watch --allow-net --allow-read --allow-write --allow-env --allow-sys --env src/index.ts",
+    "dev": "deno run --unstable-sloppy-imports --watch --allow-net --allow-read --allow-write --allow-env --allow-sys --env src/index.ts",
     "db:generate": "deno run --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 generate",
     "db:migrate": "deno run --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 migrate dev",
     "db:push": "deno run --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 db push",
     "db:seed": "deno run --allow-net --allow-read --allow-write --allow-env --allow-sys --env src/seed.ts",
     "db:studio": "deno run --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys --env npm:prisma@7.9.1 studio",
+    "build": "deno run --allow-read --allow-write --allow-env --allow-run npm:esbuild src/serverless.ts --bundle --platform=node --target=node20 --format=esm --outfile=api/index.js --external:@prisma/client --external:@prisma/adapter-pg --external:pg --external:better-auth --external:dotenv --external:undici --external:ioredis",
     "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-sys"
   },
   "imports": {
@@ -28,7 +30,15 @@
   },
   "nodeModulesDir": "auto",
   "lock": false,
-  "unstable": ["sloppy-imports"],
+  "lint": {
+    "exclude": ["api/", "node_modules/"],
+    "rules": {
+      "exclude": ["no-sloppy-imports"]
+    }
+  },
+  "fmt": {
+    "exclude": ["api/", "node_modules/"]
+  },
   "compilerOptions": {
     "lib": ["deno.window", "deno.ns"],
     "strict": true

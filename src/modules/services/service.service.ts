@@ -62,10 +62,10 @@ export class ServiceService {
         const partnerPriceRecord = service.prices.find((p) =>
           p.pricingTier === "PARTNER"
         );
-        const goldPriceRecord = service.prices.find((p) =>
+        const _goldPriceRecord = service.prices.find((p) =>
           p.pricingTier === "PARTNER_GOLD"
         );
-        const enterprisePriceRecord = service.prices.find((p) =>
+        const _enterprisePriceRecord = service.prices.find((p) =>
           p.pricingTier === "ENTERPRISE"
         );
 

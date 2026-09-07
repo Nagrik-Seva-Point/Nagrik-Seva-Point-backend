@@ -33,7 +33,7 @@ async function nodeReqToWebRequest(req: IncomingMessage): Promise<Request> {
   if (method !== "GET" && method !== "HEAD") {
     const vercelReq = req as IncomingMessage & {
       rawBody?: Buffer;
-      body?: any;
+      body?: unknown;
     };
 
     if (vercelReq.rawBody && Buffer.isBuffer(vercelReq.rawBody)) {
@@ -60,9 +60,9 @@ async function nodeReqToWebRequest(req: IncomingMessage): Promise<Request> {
   return new Request(url, {
     method,
     headers,
-    // @ts-ignore - Uint8Array is valid for Node Request body
+    // @ts-ignore: Uint8Array is valid for Node Request body
     body,
-    // @ts-ignore
+    // @ts-ignore: duplex is required for Node fetch streaming
     duplex: "half",
   });
 }
@@ -87,8 +87,11 @@ export default async function handler(
       }
     });
 
-    if ((webResponse.headers as any).getSetCookie) {
-      const allCookies = (webResponse.headers as any).getSetCookie();
+    const headersWithGetSetCookie = webResponse.headers as Headers & {
+      getSetCookie?: () => string[];
+    };
+    if (typeof headersWithGetSetCookie.getSetCookie === "function") {
+      const allCookies = headersWithGetSetCookie.getSetCookie();
       if (Array.isArray(allCookies) && allCookies.length > 0) {
         res.setHeader("set-cookie", allCookies);
       }
@@ -102,7 +105,7 @@ export default async function handler(
     } else {
       res.end();
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Vercel Serverless Handler Error:", err);
     if (!res.headersSent) {
       res.statusCode = 500;
@@ -110,7 +113,7 @@ export default async function handler(
       res.end(
         JSON.stringify({
           error: "Internal Server Error",
-          message: err?.message,
+          message: err instanceof Error ? err.message : String(err),
         }),
       );
     }

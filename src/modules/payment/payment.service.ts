@@ -3,7 +3,6 @@ import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { cashfreeGateway } from "../../core/integrations/cashfree/cashfree.gateway";
 import { serviceDispatcher } from "../services/service.dispatcher";
-import type { CreateOrderInput } from "./payment.schema";
 import { randomUUID } from "crypto";
 
 export class PaymentService {
@@ -11,7 +10,7 @@ export class PaymentService {
    * Generates a Cashfree Order from a newly created Service Request
    */
   async createCashfreeOrderFromRequest(
-    serviceRequest: any,
+    serviceRequest: { id: string; amount: number | string; organizationId?: string | null },
     userId: string | null,
     guestSessionId: string | null,
     customerName: string,
@@ -72,16 +71,18 @@ export class PaymentService {
           : "production");
 
       return {
+        payment_id: payment.id,
         payment_session_id: orderData.payment_session_id,
         order_id: orderData.order_id,
         mode,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       await prisma.payment.update({
         where: { id: payment.id },
         data: {
           status: "FAILED",
-          errorMessage: err.message || "Failed to initialize gateway order",
+          errorMessage: msg || "Failed to initialize gateway order",
         },
       });
       throw err;
@@ -164,9 +165,9 @@ export class PaymentService {
     // Attempt live check with Cashfree if configured
     let isPaid = false;
     let remotePaymentId = cfPaymentId;
-    let paymentMode: string | undefined;
-    let bankReference: string | undefined;
-    let rawResponse: any;
+    const paymentMode: string | undefined = undefined;
+    const bankReference: string | undefined = undefined;
+    let rawResponse: unknown;
 
     try {
       const cfOrder = await cashfreeGateway.getOrder(payment.orderId || payment.id);
@@ -211,7 +212,7 @@ export class PaymentService {
     details?: {
       paymentMode?: string;
       bankReference?: string;
-      rawResponse?: any;
+      rawResponse?: unknown;
     }
   ) {
     const payment = await prisma.payment.findFirst({
@@ -247,27 +248,37 @@ export class PaymentService {
         paymentMode: details?.paymentMode || payment.paymentMode || "UPI",
         bankReference: details?.bankReference || payment.bankReference,
         paidAt: new Date(),
-        gatewayResponse: details?.rawResponse || undefined,
+        gatewayResponse: details?.rawResponse ? (details.rawResponse as object) : undefined,
       },
     });
 
-    // 2. Update Service Request Status
+    // 2. Update Service Request Status & log event
     await prisma.serviceRequest.update({
       where: { id: payment.serviceRequestId },
       data: { status: "PAYMENT_CAPTURED" },
     });
 
-    // 3. Trigger Async Fulfillment (Decoupled from payment logic)
-    serviceDispatcher.fulfillAsync(payment.serviceRequestId).catch(err => {
-      logger.error(`[PaymentService] Fulfillment failed for Request ${payment.serviceRequestId}:`, err);
+    await prisma.serviceRequestEvent.create({
+      data: {
+        serviceRequestId: payment.serviceRequestId,
+        status: "PAYMENT_CAPTURED",
+        note: `Payment of ₹${Number(payment.amount).toFixed(2)} captured via Cashfree (${details?.paymentMode || payment.paymentMode || "UPI"}). Gateway Txn: ${txId}`,
+      },
     });
+
+    // 3. Trigger Fulfillment
+    try {
+      await serviceDispatcher.fulfillAsync(payment.serviceRequestId);
+    } catch (err) {
+      logger.error(`[PaymentService] Fulfillment failed for Request ${payment.serviceRequestId}:`, err);
+    }
   }
 
   async markPaymentFailed(
     identifier: string,
     details?: {
       errorMessage?: string;
-      rawResponse?: any;
+      rawResponse?: unknown;
     }
   ) {
     const payment = await prisma.payment.findFirst({
@@ -294,6 +305,14 @@ export class PaymentService {
     await prisma.serviceRequest.update({
       where: { id: payment.serviceRequestId },
       data: { status: "FAILED" },
+    });
+
+    await prisma.serviceRequestEvent.create({
+      data: {
+        serviceRequestId: payment.serviceRequestId,
+        status: "FAILED",
+        note: `Payment failed: ${details?.errorMessage || "Payment declined or cancelled by gateway"}`,
+      },
     });
   }
 }

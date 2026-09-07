@@ -34,7 +34,7 @@ export const requestContextMiddleware = (): MiddlewareHandler<
             session = {
               session: sessionRecord,
               user: sessionRecord.user,
-            } as any;
+            } as unknown as typeof session;
           }
         }
       }

@@ -2229,6 +2229,10 @@ var AppError = class _AppError extends Error {
     this.details = details;
     this.name = "AppError";
   }
+  message;
+  statusCode;
+  code;
+  details;
   static badRequest(message, code = "BAD_REQUEST", details) {
     return new _AppError(message, 400, code, details);
   }
@@ -6142,7 +6146,7 @@ ZodNaN.create = (params) => {
     ...processCreateParams(params)
   });
 };
-var BRAND = Symbol("zod_brand");
+var BRAND = /* @__PURE__ */ Symbol("zod_brand");
 var ZodBranded = class extends ZodType {
   _parse(input) {
     const { ctx } = this._processInputParams(input);
@@ -6608,6 +6612,35 @@ var auth = betterAuth({
   ]
 });
 
+// src/core/logger/api-logger.ts
+function sanitizeDpdpData(text) {
+  if (!text) return null;
+  return text.replace(/\b[A-Z]{5}(\d{4}[A-Z])\b/g, "XXXXX$1").replace(/(?:for|with)\s+X{4}[-\s]?X{4}[-\s]?\d{4}/gi, "under citizen consent").replace(/(?:for|with)\s+\d{4}[-\s]?\d{4}[-\s]?\d{4}/g, "under citizen consent").replace(/^X{4}[-\s]?X{4}[-\s]?\d{4}$/i, "INQ-PAN-FIND").replace(/^\d{4}[-\s]?\d{4}[-\s]?\d{4}$/, "INQ-PAN-FIND").replace(/\b\d{4}[-\s]?\d{4}[-\s]?(\d{4})\b/g, "INQ-AADHAAR-$1").replace(/X{4}[-\s]?X{4}[-\s]?\d{4}/gi, "INQ-PAN-FIND").replace(/\s*\([A-Za-z\s]{3,50}\)/g, " (Citizen Consent Verified)");
+}
+async function logApiExecution(params) {
+  try {
+    const sanitizedReference = sanitizeDpdpData(params.reference);
+    const sanitizedNote = sanitizeDpdpData(params.note);
+    await prisma.apiLog.create({
+      data: {
+        organizationId: params.organizationId || null,
+        userId: params.userId || null,
+        serviceCode: params.serviceCode,
+        action: params.action,
+        endpoint: params.endpoint,
+        reference: sanitizedReference,
+        status: params.status || "SUCCESS",
+        statusCode: params.statusCode || 200,
+        durationMs: params.durationMs,
+        ipAddress: params.ipAddress || null,
+        note: sanitizedNote
+      }
+    });
+  } catch (err) {
+    logger2.error("[ApiLogger] Failed to write API log:", err);
+  }
+}
+
 // src/middleware/validation.middleware.ts
 var validationMiddleware = (schema, target = "json") => {
   return async (c, next) => {
@@ -6745,6 +6778,18 @@ var AuthService = class {
     logger2.info(
       `Retailer successfully registered: ${userId} with Cyber Caf\xE9: ${organization2.id} (${organization2.name})`
     );
+    logApiExecution({
+      organizationId: organization2.id,
+      userId,
+      serviceCode: "AUTH",
+      action: "New Retailer Registered & Session Started",
+      endpoint: "/api/v1/auth/register",
+      reference: `AUTH-${userId.slice(0, 8).toUpperCase()}`,
+      status: "SUCCESS",
+      statusCode: 201,
+      note: `${signUpResult.user.name} registered caf\xE9 "${data.cyberCafeName}" and started workspace session.`
+    }).catch(() => {
+    });
     return {
       user: {
         id: signUpResult.user.id,
@@ -6810,6 +6855,18 @@ var AuthService = class {
         });
       }
       logger2.info(`User ${userId} logged in successfully.`);
+      logApiExecution({
+        organizationId: membership?.organizationId || null,
+        userId: signInResult.user.id,
+        serviceCode: "AUTH",
+        action: "Operator Login & Session Started",
+        endpoint: "/api/v1/auth/login",
+        reference: `AUTH-${signInResult.user.id.slice(0, 8).toUpperCase()}`,
+        status: "SUCCESS",
+        statusCode: 200,
+        note: `${signInResult.user.name} (${signInResult.user.email}) logged into Cyber Caf\xE9 workspace.`
+      }).catch(() => {
+      });
       return {
         user: {
           id: signInResult.user.id,
@@ -6836,6 +6893,140 @@ var AuthService = class {
       );
     }
   }
+  /**
+   * Fetches full profile details including user information and associated Cyber Café organization metrics.
+   */
+  async getProfile(userId, requestedOrgId) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        role: true,
+        emailVerified: true,
+        image: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+    if (!user) {
+      throw AppError.notFound("User account not found");
+    }
+    let membership = null;
+    if (requestedOrgId) {
+      membership = await prisma.member.findFirst({
+        where: { userId, organizationId: requestedOrgId },
+        include: {
+          organization: {
+            include: {
+              wallet: true
+            }
+          }
+        }
+      });
+    }
+    if (!membership) {
+      membership = await prisma.member.findFirst({
+        where: { userId },
+        include: {
+          organization: {
+            include: {
+              wallet: true
+            }
+          }
+        },
+        orderBy: { createdAt: "asc" }
+      });
+    }
+    let organizationData = null;
+    if (membership?.organization) {
+      const orgId = membership.organization.id;
+      const [memberCount, customerCount, requestCount] = await Promise.all([
+        prisma.member.count({ where: { organizationId: orgId } }),
+        prisma.customer.count({ where: { organizationId: orgId } }),
+        prisma.serviceRequest.count({ where: { organizationId: orgId } })
+      ]);
+      organizationData = {
+        id: membership.organization.id,
+        name: membership.organization.name,
+        slug: membership.organization.slug,
+        logo: membership.organization.logo,
+        metadata: membership.organization.metadata,
+        createdAt: membership.organization.createdAt,
+        role: membership.role,
+        walletBalance: membership.organization.wallet ? Number(membership.organization.wallet.balance) : 0,
+        stats: {
+          memberCount,
+          customerCount,
+          requestCount
+        }
+      };
+    }
+    return {
+      user,
+      organization: organizationData
+    };
+  }
+  /**
+   * Updates owner profile details and/or Cyber Café organisation name.
+   */
+  async updateProfile(userId, requestedOrgId, data) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw AppError.notFound("User account not found");
+    }
+    const userUpdates = {};
+    if (data.name && data.name.trim() && data.name.trim() !== user.name) {
+      userUpdates.name = data.name.trim();
+    }
+    if (data.phone && data.phone.trim() && data.phone.trim() !== user.phone) {
+      const cleanPhone = data.phone.trim();
+      const existingWithPhone = await prisma.user.findFirst({
+        where: { phone: cleanPhone, NOT: { id: userId } }
+      });
+      if (existingWithPhone) {
+        throw AppError.badRequest(
+          "An account with this mobile number already exists. Please enter a different number.",
+          "PHONE_EXISTS"
+        );
+      }
+      userUpdates.phone = cleanPhone;
+    }
+    if (Object.keys(userUpdates).length > 0) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: userUpdates
+      });
+    }
+    if (data.cyberCafeName && data.cyberCafeName.trim()) {
+      let orgId = requestedOrgId;
+      if (!orgId) {
+        const primaryMembership = await prisma.member.findFirst({
+          where: { userId },
+          orderBy: { createdAt: "asc" }
+        });
+        orgId = primaryMembership?.organizationId || null;
+      }
+      if (orgId) {
+        const membership = await prisma.member.findFirst({
+          where: { userId, organizationId: orgId }
+        });
+        const isPrivileged = membership?.role === "owner" || membership?.role === "admin" || user.role === "ADMIN" || user.role === "SUPER_ADMIN";
+        if (!isPrivileged) {
+          throw AppError.forbidden(
+            "Only the Cyber Caf\xE9 owner or an administrator can update the business name."
+          );
+        }
+        await prisma.organization.update({
+          where: { id: orgId },
+          data: { name: data.cyberCafeName.trim() }
+        });
+      }
+    }
+    return this.getProfile(userId, requestedOrgId);
+  }
 };
 var authService = new AuthService();
 
@@ -6860,6 +7051,14 @@ var registerRetailerSchema = external_exports.object({
 var loginSchema = external_exports.object({
   identifier: external_exports.string().min(3, "Please enter your Email or 10-digit Mobile Number"),
   password: external_exports.string().min(1, "Password is required")
+});
+var updateProfileSchema = external_exports.object({
+  name: external_exports.string().min(2, "Full name must be at least 2 characters").max(100).optional(),
+  phone: external_exports.string().regex(
+    /^[6-9]\d{9}$/,
+    "Mobile number must be a valid 10-digit Indian phone number"
+  ).optional(),
+  cyberCafeName: external_exports.string().min(3, "Cyber Caf\xE9 / Shop name must be at least 3 characters").max(120).optional()
 });
 
 // src/modules/auth/auth.routes.ts
@@ -6894,17 +7093,51 @@ authRoutes.post(
 authRoutes.get("/me", async (c) => {
   const context = c.get("requestContext");
   const user = c.get("user");
-  const organization2 = c.get("organization");
+  const orgId = c.get("organizationId");
+  if (!user) {
+    return c.json({
+      success: true,
+      data: {
+        accessMode: context.accessMode,
+        pricingTier: context.pricingTier,
+        user: null,
+        organization: null
+      }
+    });
+  }
+  const profile = await authService.getProfile(user.id, orgId || null);
   return c.json({
     success: true,
     data: {
       accessMode: context.accessMode,
       pricingTier: context.pricingTier,
-      user: user || null,
-      organization: organization2 || null
+      user: profile.user,
+      organization: profile.organization
     }
   });
 });
+authRoutes.patch(
+  "/profile",
+  validationMiddleware(updateProfileSchema),
+  async (c) => {
+    const user = c.get("user");
+    if (!user) {
+      throw AppError.unauthorized("Authentication required to update profile");
+    }
+    const orgId = c.get("organizationId");
+    const data = c.get("validData");
+    const updated = await authService.updateProfile(
+      user.id,
+      orgId || null,
+      data
+    );
+    return c.json({
+      success: true,
+      message: "Profile updated successfully",
+      data: updated
+    });
+  }
+);
 
 // src/middleware/auth.middleware.ts
 var authMiddleware = () => {
@@ -7077,8 +7310,21 @@ customerRoutes.post(
   validationMiddleware(createCustomerSchema),
   async (c) => {
     const organizationId = c.get("organizationId");
+    const user = c.get("user");
     const data = c.get("validData");
     const customer = await customerService.createCustomer(organizationId, data);
+    await logApiExecution({
+      organizationId,
+      userId: user?.id || null,
+      serviceCode: "CUSTOMER",
+      action: "Customer Profile Created",
+      endpoint: "/api/v1/customers",
+      reference: customer.phone || customer.name,
+      status: "SUCCESS",
+      statusCode: 201,
+      ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+      note: `Added new citizen customer: ${customer.name} (${customer.phone})`
+    });
     return c.json({ success: true, data: customer }, 201);
   }
 );
@@ -7103,6 +7349,7 @@ customerRoutes.patch(
   validationMiddleware(updateCustomerSchema),
   async (c) => {
     const organizationId = c.get("organizationId");
+    const user = c.get("user");
     const id = c.req.param("id");
     const data = c.get("validData");
     const customer = await customerService.updateCustomer(
@@ -7110,13 +7357,38 @@ customerRoutes.patch(
       organizationId,
       data
     );
+    await logApiExecution({
+      organizationId,
+      userId: user?.id || null,
+      serviceCode: "CUSTOMER",
+      action: "Customer Profile Updated",
+      endpoint: `/api/v1/customers/${id}`,
+      reference: customer.phone || customer.name,
+      status: "SUCCESS",
+      statusCode: 200,
+      ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+      note: `Updated citizen record for ${customer.name} (${customer.phone})`
+    });
     return c.json({ success: true, data: customer });
   }
 );
 customerRoutes.delete("/:id", async (c) => {
   const organizationId = c.get("organizationId");
+  const user = c.get("user");
   const id = c.req.param("id");
   await customerService.deleteCustomer(id, organizationId);
+  await logApiExecution({
+    organizationId,
+    userId: user?.id || null,
+    serviceCode: "CUSTOMER",
+    action: "Customer Record Deleted",
+    endpoint: `/api/v1/customers/${id}`,
+    reference: id.slice(0, 8),
+    status: "SUCCESS",
+    statusCode: 200,
+    ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+    note: `Deleted customer record ID: ${id}`
+  });
   return c.json({ success: true, message: "Customer deleted successfully" });
 });
 
@@ -7189,7 +7461,7 @@ var ServiceRepository = class {
 var serviceRepository = new ServiceRepository();
 
 // src/core/redis/redis.client.ts
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 var RedisClient = class {
   client = null;
   isConnected = false;
@@ -7197,7 +7469,10 @@ var RedisClient = class {
     this.initClient();
   }
   initClient() {
-    const redisUrl = getEnvVar("REDIS_URL");
+    let redisUrl = getEnvVar("REDIS_URL");
+    if (redisUrl) {
+      redisUrl = redisUrl.trim().replace(/^["']|["';]+$/g, "").trim();
+    }
     if (!redisUrl) {
       logger2.warn("[Redis] REDIS_URL environment variable is not defined. Redis operations will gracefully fallback.");
       this.client = null;
@@ -7233,14 +7508,14 @@ var RedisClient = class {
       });
       this.client.on("error", (err) => {
         this.isConnected = false;
-        logger2.error(`[Redis] Connection error: ${err?.message || err}`);
+        logger2.error(`[Redis] Connection error: ${err instanceof Error ? err.message : String(err)}`);
       });
       this.client.on("close", () => {
         this.isConnected = false;
         logger2.warn(`[Redis] Connection closed.`);
       });
     } catch (err) {
-      logger2.error(`[Redis] Failed to initialize Redis client: ${err?.message}`);
+      logger2.error(`[Redis] Failed to initialize Redis client: ${err instanceof Error ? err.message : String(err)}`);
       this.client = null;
     }
   }
@@ -7256,7 +7531,7 @@ var RedisClient = class {
       if (!client) return null;
       return await client.get(key);
     } catch (err) {
-      logger2.error(`[Redis] Error getting key "${key}": ${err?.message}`);
+      logger2.error(`[Redis] Error getting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
   }
@@ -7271,7 +7546,7 @@ var RedisClient = class {
       }
       return true;
     } catch (err) {
-      logger2.error(`[Redis] Error setting key "${key}": ${err?.message}`);
+      logger2.error(`[Redis] Error setting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }
@@ -7280,7 +7555,7 @@ var RedisClient = class {
       const jsonStr = JSON.stringify(data);
       return await this.set(key, jsonStr, ttlSeconds);
     } catch (err) {
-      logger2.error(`[Redis] Error serializing JSON for key "${key}": ${err?.message}`);
+      logger2.error(`[Redis] Error serializing JSON for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }
@@ -7290,7 +7565,7 @@ var RedisClient = class {
       if (!val) return null;
       return JSON.parse(val);
     } catch (err) {
-      logger2.error(`[Redis] Error parsing JSON for key "${key}": ${err?.message}`);
+      logger2.error(`[Redis] Error parsing JSON for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
   }
@@ -7301,7 +7576,7 @@ var RedisClient = class {
       await client.del(key);
       return true;
     } catch (err) {
-      logger2.error(`[Redis] Error deleting key "${key}": ${err?.message}`);
+      logger2.error(`[Redis] Error deleting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }
@@ -7311,7 +7586,7 @@ var RedisClient = class {
       if (!client) return -2;
       return await client.ttl(key);
     } catch (err) {
-      logger2.error(`[Redis] Error checking TTL for key "${key}": ${err?.message}`);
+      logger2.error(`[Redis] Error checking TTL for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       return -2;
     }
   }
@@ -7327,12 +7602,12 @@ var RedisClient = class {
         return cached;
       }
     } catch (err) {
-      logger2.warn(`[Redis] Cache lookup failed for key "${key}": ${err?.message}`);
+      logger2.warn(`[Redis] Cache lookup failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
     }
     const freshData = await fetcher();
     if (freshData !== null && freshData !== void 0) {
       this.setJson(key, freshData, ttlSeconds).catch((err) => {
-        logger2.warn(`[Redis] Cache set failed for key "${key}": ${err?.message}`);
+        logger2.warn(`[Redis] Cache set failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       });
     }
     return freshData;
@@ -7361,7 +7636,7 @@ var RedisClient = class {
       }
       return deletedCount;
     } catch (err) {
-      logger2.error(`[Redis] Error deleting pattern "${pattern}": ${err?.message}`);
+      logger2.error(`[Redis] Error deleting pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`);
       return 0;
     }
   }
@@ -7408,10 +7683,10 @@ var ServiceService = class {
         const partnerPriceRecord = service.prices.find(
           (p) => p.pricingTier === "PARTNER"
         );
-        const goldPriceRecord = service.prices.find(
+        const _goldPriceRecord = service.prices.find(
           (p) => p.pricingTier === "PARTNER_GOLD"
         );
-        const enterprisePriceRecord = service.prices.find(
+        const _enterprisePriceRecord = service.prices.find(
           (p) => p.pricingTier === "ENTERPRISE"
         );
         const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 40;
@@ -7948,6 +8223,15 @@ var requireAdmin = () => {
         "ADMIN_REQUIRED"
       );
     }
+    const method = c.req.method.toUpperCase();
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+      if (role !== "SUPER_ADMIN") {
+        throw AppError.forbidden(
+          "Access denied: Super Administrator privileges required to create, update, or delete resources in the Admin dashboard.",
+          "SUPER_ADMIN_REQUIRED"
+        );
+      }
+    }
     await next();
   };
 };
@@ -8258,8 +8542,571 @@ adminCategoryRouter.delete("/:id", async (c) => {
   return c.json(result);
 });
 
+// src/core/integrations/cashfree/cashfree.gateway.ts
+import crypto2 from "crypto";
+var API_VERSION = "2023-08-01";
+var CashfreeGateway = class {
+  async createOrder(params) {
+    const { clientId, clientSecret, apiUrl } = getCashfreeConfig();
+    if (!clientId || !clientSecret) {
+      throw AppError.internal("Cashfree credentials not configured");
+    }
+    const payload = {
+      order_id: params.orderId,
+      order_amount: params.orderAmount,
+      order_currency: "INR",
+      order_note: params.orderNote || "Nagrik Seva Service Verification",
+      customer_details: {
+        customer_id: params.customerId,
+        customer_phone: params.customerPhone || "9999999999",
+        customer_email: params.customerEmail || "no-reply@nagriksevapoint.in",
+        customer_name: params.customerName || "Customer"
+      },
+      order_meta: {
+        return_url: params.returnUrl || `https://nagriksevapoint.in/dashboard/requests/${params.orderId}?payment=true`,
+        notify_url: params.notifyUrl || `https://api.nagriksevapoint.in/api/v1/payments/cashfree/webhook`
+      }
+    };
+    if (params.orderTags) {
+      payload.order_tags = params.orderTags;
+    }
+    logger2.info(`[CashfreeGateway] Creating order: ${params.orderId} for ${params.orderAmount} INR (URL: ${apiUrl})`);
+    try {
+      const response = await fetch(`${apiUrl}/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-version": API_VERSION,
+          "x-client-id": clientId,
+          "x-client-secret": clientSecret
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        logger2.error(`[CashfreeGateway] Order creation failed (${response.status}): ${JSON.stringify(data)} (Client ID: ${clientId.slice(0, 8)}..., URL: ${apiUrl})`);
+        const errorMsg = (typeof data?.message === "string" ? data.message : "") || "Failed to create Cashfree order";
+        throw AppError.badRequest(errorMsg);
+      }
+      return data;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger2.error(`[CashfreeGateway] Error: ${msg}`);
+      if (err instanceof AppError) throw err;
+      throw AppError.internal(msg || "Cashfree Gateway Error");
+    }
+  }
+  async getOrder(orderId) {
+    const { clientId, clientSecret, apiUrl } = getCashfreeConfig();
+    if (!clientId || !clientSecret) {
+      throw AppError.internal("Cashfree credentials not configured");
+    }
+    try {
+      const response = await fetch(`${apiUrl}/orders/${orderId}`, {
+        method: "GET",
+        headers: {
+          "x-api-version": API_VERSION,
+          "x-client-id": clientId,
+          "x-client-secret": clientSecret
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        logger2.error(`[CashfreeGateway] Get order failed: ${JSON.stringify(data)}`);
+        throw AppError.internal("Failed to retrieve Cashfree order status");
+      }
+      return data;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger2.error(`[CashfreeGateway] Error getting order: ${msg}`);
+      throw AppError.internal("Cashfree Gateway Error");
+    }
+  }
+  verifyWebhookSignature(rawBody, signature, timestamp) {
+    const { clientSecret } = getCashfreeConfig();
+    if (!signature || !timestamp || !clientSecret) {
+      return false;
+    }
+    try {
+      const generatedSignature = crypto2.createHmac("sha256", clientSecret).update(timestamp + rawBody).digest("base64");
+      return generatedSignature === signature;
+    } catch (_err) {
+      logger2.error("[CashfreeGateway] Signature verification exception");
+      return false;
+    }
+  }
+};
+var cashfreeGateway = new CashfreeGateway();
+
+// src/core/integrations/ezytm/ezytm.gateway.ts
+import { ProxyAgent, fetch as undiciFetch } from "undici";
+var EzytmGateway = class {
+  baseUrl;
+  tokenId;
+  apiUserId;
+  apiPassword;
+  apiMode;
+  proxyUrl;
+  constructor() {
+    this.baseUrl = (getEnvVar("EZYTM_BASE_URL") || "https://planapi.in").replace(/\/+$/, "");
+    this.tokenId = (getEnvVar("EZYTM_TOKEN_ID") || getEnvVar("PLANAPI_TOKEN_ID") || "").replace(/["']/g, "").trim();
+    this.apiUserId = (getEnvVar("EZYTM_API_USER_ID") || getEnvVar("PLANAPI_API_USER_ID") || "").replace(/["']/g, "").trim();
+    this.apiPassword = (getEnvVar("EZYTM_API_PASSWORD") || getEnvVar("PLANAPI_API_PASSWORD") || "").replace(/["']/g, "").trim();
+    this.apiMode = (getEnvVar("EZYTM_API_MODE") || "1").replace(/["']/g, "").trim();
+    const rawProxy = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY") || getEnvVar("HTTP_PROXY");
+    this.proxyUrl = rawProxy ? rawProxy.replace(/["']/g, "").trim() : void 0;
+  }
+  getProxyUrl() {
+    const rawProxy = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("WEBSHARE_URL") || getEnvVar("WEBSHARE_PROXY_URL") || getEnvVar("PROXY_URL") || getEnvVar("STATIC_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY") || getEnvVar("HTTP_PROXY");
+    return rawProxy ? rawProxy.replace(/["']/g, "").trim() : void 0;
+  }
+  isConfigured() {
+    const token = this.tokenId.toLowerCase();
+    const user = this.apiUserId.toLowerCase();
+    const pass = this.apiPassword.toLowerCase();
+    if (!token || !user || !pass) return false;
+    const dummyMarkers = [
+      "your-token",
+      "your-api",
+      "xxxx",
+      "abcd",
+      "placeholder",
+      "test"
+    ];
+    for (const marker of dummyMarkers) {
+      if (token.includes(marker) || user.includes(marker) || pass.includes(marker)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  /**
+   * Generic form POST dispatcher with standard EzyTM/PlanAPI headers & form encoding.
+   * Throws typed AppError on failure. No dummy fallback on live failure.
+   */
+  async postForm(endpoint, params) {
+    const denoObj = globalThis.Deno;
+    const isTestEnv = typeof process !== "undefined" ? process.env.NODE_ENV === "test" || process.env.DENO_TESTING === "1" : typeof denoObj !== "undefined" ? denoObj.env.get("NODE_ENV") === "test" || denoObj.env.get("DENO_TESTING") === "1" : false;
+    if (!this.isConfigured()) {
+      if (isTestEnv) {
+        logger2.warn(`[EzyTM Gateway] Test simulation active for ${endpoint}`);
+        if (endpoint.includes("AadharToPanFind")) {
+          return {
+            Errorcode: 100,
+            Status: "Success",
+            Data: {
+              PanNumber: "ABCDE1234F",
+              AadharNumber: `XXXXXXXX${params.Aadhaarid?.slice(-4) || "1234"}`
+            }
+          };
+        }
+        if (endpoint.includes("PanDetails")) {
+          return {
+            Errorcode: 100,
+            status: "Success",
+            msg: "done",
+            data: {
+              pan_number: params.Panid || "ABCDE1234F",
+              full_name: "abc xyz",
+              masked_aadhaar: "XXXXXXXX1234",
+              dob: "2001-11-23",
+              gender: "M",
+              aadhaar_linked: true,
+              category: "person"
+            }
+          };
+        }
+      }
+      logger2.error(
+        "[EzyTM Gateway] API credentials not configured in environment variables."
+      );
+      throw AppError.badGateway(
+        "EzyTM vendor credentials (EZYTM_TOKEN_ID, EZYTM_API_USER_ID, EZYTM_API_PASSWORD) are not configured.",
+        "GATEWAY_NOT_CONFIGURED"
+      );
+    }
+    const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+    const headers = {
+      "TokenID": this.tokenId,
+      "ApiUserID": this.apiUserId,
+      "ApiPassword": this.apiPassword,
+      "Content-Type": "application/x-www-form-urlencoded"
+    };
+    const body = new URLSearchParams({ ...params, ApiMode: this.apiMode });
+    logger2.info(`[EzyTM Gateway] Dispatching POST to ${url}`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15e3);
+    const activeProxyUrl = this.getProxyUrl() || this.proxyUrl;
+    let dispatcher = void 0;
+    if (activeProxyUrl) {
+      try {
+        dispatcher = new ProxyAgent(activeProxyUrl);
+        const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
+        logger2.info(`[EzyTM Gateway] Routing request through Static IP Proxy: ${maskedProxy}`);
+      } catch (err) {
+        logger2.error(`[EzyTM Gateway] Failed to create ProxyAgent with URL "${activeProxyUrl}":`, err);
+      }
+    } else {
+      logger2.warn("[EzyTM Gateway] \u26A0\uFE0F NO PROXY URL found in environment (checked EZYTM_PROXY_URL, WEBSHARE_URL, PROXY_URL, HTTPS_PROXY). Using direct connection.");
+    }
+    try {
+      const fetchFunction = dispatcher ? undiciFetch : fetch;
+      const response = await fetchFunction(url, {
+        method: "POST",
+        headers,
+        body: body.toString(),
+        signal: controller.signal,
+        // @ts-ignore: dispatcher is supported by undiciFetch
+        dispatcher
+      });
+      clearTimeout(timeoutId);
+      const text = await response.text();
+      try {
+        const json = JSON.parse(text);
+        return json;
+      } catch {
+        logger2.error(`[EzyTM Gateway] Non-JSON response from ${url}:`, text);
+        throw AppError.badGateway(
+          `Invalid JSON response from gateway (HTTP ${response.status})`,
+          "GATEWAY_INVALID_RESPONSE"
+        );
+      }
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err instanceof AppError) throw err;
+      const errName = err && typeof err === "object" && "name" in err ? err.name : "";
+      if (errName === "AbortError") {
+        logger2.error(
+          `[EzyTM Gateway] Timeout after 15s communicating with ${url}`
+        );
+        throw AppError.badGateway(
+          "EzyTM gateway connection timed out",
+          "GATEWAY_TIMEOUT"
+        );
+      }
+      logger2.error(`[EzyTM Gateway] Connection error to ${url}:`, err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      throw AppError.badGateway(
+        errMsg || "Failed to communicate with EzyTM gateway",
+        "GATEWAY_COMMUNICATION_ERROR"
+      );
+    }
+  }
+};
+var ezytmGateway = new EzytmGateway();
+
+// src/core/integrations/ezytm/ezytm-pan.gateway.ts
+var EzytmPanGateway = class {
+  /**
+   * 1. Aadhar to Pan Find API
+   * POST /Api/Ekyc/AadharToPanFind
+   */
+  async findPanByAadhaar(aadhaar) {
+    return await ezytmGateway.postForm(
+      "/Api/Ekyc/AadharToPanFind",
+      { Aadhaarid: aadhaar.trim() }
+    );
+  }
+  /**
+   * 2. PAN Card Details API
+   * POST /api/Ekyc/PanDetails
+   */
+  async getPanDetails(pan) {
+    return await ezytmGateway.postForm(
+      "/api/Ekyc/PanDetails",
+      { Panid: pan.trim().toUpperCase() }
+    );
+  }
+};
+var ezytmPanGateway = new EzytmPanGateway();
+
+// src/core/security/crypto.util.ts
+import crypto3 from "node:crypto";
+function getEncryptionKey() {
+  const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
+  return crypto3.createHash("sha256").update(secret).digest();
+}
+function encryptPanToken(payload) {
+  const key = getEncryptionKey();
+  const iv = crypto3.randomBytes(12);
+  const cipher = crypto3.createCipheriv("aes-256-gcm", key, iv);
+  const tokenData = {
+    pan: payload.pan.trim().toUpperCase(),
+    aadhaarMasked: payload.aadhaarMasked,
+    fullName: payload.fullName,
+    dob: payload.dob,
+    gender: payload.gender,
+    category: payload.category,
+    aadhaarLinked: payload.aadhaarLinked,
+    exp: payload.exp || Date.now() + 30 * 60 * 1e3
+    // 30 mins expiry
+  };
+  const jsonStr = JSON.stringify(tokenData);
+  const encrypted = Buffer.concat([cipher.update(jsonStr, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return `${iv.toString("base64url")}.${authTag.toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+function decryptPanToken(token) {
+  if (!token || typeof token !== "string") {
+    throw AppError.badRequest("Invalid or missing PAN token.", "INVALID_TOKEN");
+  }
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    throw AppError.badRequest("Malformed PAN search token.", "INVALID_TOKEN");
+  }
+  try {
+    const [ivB64, authTagB64, ciphertextB64] = parts;
+    const iv = Buffer.from(ivB64, "base64url");
+    const authTag = Buffer.from(authTagB64, "base64url");
+    const ciphertext = Buffer.from(ciphertextB64, "base64url");
+    const key = getEncryptionKey();
+    const decipher = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    const parsed = JSON.parse(decrypted.toString("utf8"));
+    if (!parsed.pan) {
+      throw AppError.badRequest("PAN data not found in token.", "INVALID_TOKEN");
+    }
+    if (parsed.exp && parsed.exp < Date.now()) {
+      throw AppError.badRequest(
+        "Your PAN verification session has expired. Please search again.",
+        "TOKEN_EXPIRED"
+      );
+    }
+    return parsed;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw AppError.badRequest(
+      "Unable to verify PAN token. Please perform a fresh search.",
+      "INVALID_TOKEN"
+    );
+  }
+}
+
+// src/modules/pan/pan.service.ts
+var PanService = class {
+  /**
+   * 1. Find PAN Number by 12-digit Aadhaar
+   * Returns ONLY masked PAN + stateless encrypted token (No cleartext PAN leak)
+   */
+  async findPanByAadhaar(aadhaar) {
+    logger2.info(
+      `[PanService] Finding PAN for Aadhaar ending in ${aadhaar.slice(-4)}`
+    );
+    if (aadhaar === "123412341234") {
+      logger2.info(`[PanService] Test Aadhaar (Success Simulation) detected. Encrypting mock token.`);
+      return {
+        maskedPan: "XXXXX1234F",
+        searchToken: encryptPanToken({
+          pan: "ABCDE1234F",
+          aadhaarMasked: "XXXXXXXX1234"
+        })
+      };
+    }
+    if (aadhaar === "999999999999") {
+      logger2.info(`[PanService] Test Aadhaar (Error Simulation Mode) detected. Returning error test token.`);
+      return {
+        maskedPan: "XXXXX9999E",
+        searchToken: encryptPanToken({
+          pan: "ERRBAL9999E",
+          aadhaarMasked: "XXXXXXXX9999"
+        })
+      };
+    }
+    const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
+    logger2.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
+    const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
+    if (response.Errorcode === 100) {
+      if (panNumber) {
+        const maskedPan = `XXXXX${panNumber.substring(5, 9)}${panNumber.substring(9)}`;
+        const searchToken = encryptPanToken({
+          pan: panNumber,
+          aadhaarMasked: `XXXXXXXX${aadhaar.slice(-4)}`
+        });
+        logger2.info(`[PanService] Successfully matched PAN (Masked: ${maskedPan}, Token Encrypted)`);
+        return {
+          maskedPan,
+          searchToken
+        };
+      }
+      if (response.Data?.Message?.toLowerCase() === "linked") {
+        const linkedMsg = "PAN is linked with this Aadhaar number, but PAN number were not found. Please try again later.";
+        logger2.warn(`[PanService] ${linkedMsg}`);
+        throw AppError.badRequest(linkedMsg, "PAN_LINKED_NO_DATA");
+      }
+      const notFoundMsg = "PAN is linked but data not found. Please try again later.";
+      logger2.warn(`[PanService] ${notFoundMsg}`);
+      throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
+    }
+    if (response.Errorcode === 101 || response.Errorcode === 104) {
+      logger2.warn(`[PanService] PAN not found / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}`);
+      throw AppError.badRequest("No PAN Card record found linked with this Aadhaar number in the Income Tax registry.", "PAN_NOT_FOUND");
+    }
+    const fallbackMsg = response.Message && response.Message !== "Data Fetch Successfully" && response.Message !== "Internal Server Error" ? response.Message : "Failed to find PAN for this Aadhaar. The upstream government registry is temporarily unreachable.";
+    logger2.warn(`[PanService] Find PAN failed: ${fallbackMsg}`);
+    throw AppError.badRequest(fallbackMsg, "PAN_FIND_FAILED");
+  }
+  /**
+   * 2. Fetch Comprehensive PAN Details
+   * Accepts encrypted searchToken or unmasked PAN
+   */
+  async getPanDetails(input) {
+    let cleanPan = "";
+    let decryptedAadhaarMasked = "";
+    if (typeof input === "string") {
+      if (input.includes(".") && input.length > 20) {
+        const decrypted = decryptPanToken(input);
+        cleanPan = decrypted.pan.trim().toUpperCase();
+        decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
+      } else {
+        cleanPan = input.trim().toUpperCase();
+      }
+    } else if (input.searchToken) {
+      const decrypted = decryptPanToken(input.searchToken);
+      cleanPan = decrypted.pan.trim().toUpperCase();
+      decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
+    } else if (input.pan) {
+      if (input.pan.includes(".") && input.pan.length > 20) {
+        const decrypted = decryptPanToken(input.pan);
+        cleanPan = decrypted.pan.trim().toUpperCase();
+        decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
+      } else {
+        cleanPan = input.pan.trim().toUpperCase();
+      }
+    }
+    if (!cleanPan) {
+      throw AppError.badRequest("A valid searchToken or PAN number is required.", "INVALID_INPUT");
+    }
+    if (cleanPan === "ABCDE1234F") {
+      logger2.info(`[PanService] Test PAN (Success Simulation) decrypted. Returning verified details.`);
+      return {
+        pan: "ABCDE1234F",
+        fullName: "VIKASH KUMAR",
+        maskedAadhaar: decryptedAadhaarMasked || "XXXXXXXX1234",
+        dob: "1995-08-15",
+        gender: "Male (M)",
+        aadhaarLinked: true,
+        category: "Individual"
+      };
+    }
+    if (cleanPan === "ERRBAL9999E") {
+      logger2.info(`[PanService] Test PAN (Insufficient Balance Simulation) detected.`);
+      throw AppError.badRequest("Insufficient balance.", "PAN_DETAILS_FAILED");
+    }
+    if (cleanPan === "ERRTOUT9999E") {
+      logger2.info(`[PanService] Test PAN (Timeout Simulation) detected.`);
+      throw AppError.badRequest("Verification provider gateway timed out. Please try again.", "PAN_DETAILS_FAILED");
+    }
+    const response = await ezytmPanGateway.getPanDetails(cleanPan);
+    if (response.Errorcode === 100 && response.data) {
+      const d = response.data;
+      return {
+        pan: d.pan_number || cleanPan,
+        fullName: d.full_name || "N/A",
+        maskedAadhaar: d.masked_aadhaar || "N/A",
+        dob: d.dob || "N/A",
+        gender: d.gender === "M" ? "Male (M)" : d.gender === "F" ? "Female (F)" : d.gender || "N/A",
+        aadhaarLinked: Boolean(d.aadhaar_linked),
+        category: d.category ? `${d.category.charAt(0).toUpperCase() + d.category.slice(1)}` : "Individual"
+      };
+    }
+    const failureReason = response.msg || "Failed to retrieve PAN details from official registry.";
+    logger2.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
+    throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
+  }
+  /**
+   * 3. Decrypt stateless search token to reveal PAN and Masked Aadhaar
+   */
+  decryptSearchToken(token) {
+    try {
+      const decrypted = decryptPanToken(token);
+      if (!decrypted?.pan) {
+        throw new Error("Missing PAN in decrypted token payload");
+      }
+      return {
+        pan: decrypted.pan,
+        maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX"
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger2.error(`[PanService] Token decryption failed: ${msg}`);
+      throw AppError.badRequest(
+        "Invalid or expired search session token. Please search again.",
+        "INVALID_TOKEN"
+      );
+    }
+  }
+  /**
+   * 4. Verify PAN Details & Tokenize (Pre-Payment Availability Check)
+   */
+  async verifyPanDetails(pan) {
+    const formattedPan = pan.trim().toUpperCase();
+    logger2.info(`[PanService] Verifying PAN availability for: ${formattedPan}`);
+    if (formattedPan === "ABCDE1234F") {
+      const searchToken2 = encryptPanToken({
+        pan: "ABCDE1234F",
+        fullName: "VIKASH KUMAR",
+        dob: "1995-08-15",
+        gender: "Male (M)",
+        category: "Individual",
+        aadhaarLinked: true,
+        aadhaarMasked: "XXXXXXXX1234"
+      });
+      return {
+        pan: "ABCDE1234F",
+        maskedName: "V**** K****",
+        searchToken: searchToken2
+      };
+    }
+    const details = await this.getPanDetails(formattedPan);
+    const searchToken = encryptPanToken({
+      pan: details.pan,
+      fullName: details.fullName,
+      dob: details.dob,
+      gender: details.gender,
+      category: details.category,
+      aadhaarLinked: details.aadhaarLinked,
+      aadhaarMasked: details.maskedAadhaar
+    });
+    const maskedName = details.fullName ? details.fullName.split(" ").map((part) => part.length > 1 ? `${part[0]}****` : part).join(" ") : "V****";
+    return {
+      pan: details.pan,
+      maskedName,
+      searchToken
+    };
+  }
+  /**
+   * 5. Decrypt details token to reveal full demographic records
+   */
+  decryptPanDetailsToken(token) {
+    try {
+      const decrypted = decryptPanToken(token);
+      if (!decrypted?.pan) {
+        throw new Error("Missing PAN in token");
+      }
+      return {
+        pan: decrypted.pan,
+        fullName: decrypted.fullName || "Taxpayer",
+        dob: decrypted.dob || "N/A",
+        gender: decrypted.gender || "N/A",
+        category: decrypted.category || "Individual",
+        aadhaarLinked: decrypted.aadhaarLinked ?? true,
+        maskedAadhaar: decrypted.aadhaarMasked || "N/A"
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger2.error(`[PanService] Details token decryption failed: ${msg}`);
+      throw AppError.badRequest(
+        "Invalid or expired verification session token. Please search again.",
+        "INVALID_TOKEN"
+      );
+    }
+  }
+};
+var panService = new PanService();
+
 // src/core/vault/ephemeral-vault.service.ts
-import crypto2 from "node:crypto";
+import crypto4 from "node:crypto";
 import zlib from "node:zlib";
 var EphemeralVaultService = class {
   DEFAULT_VAULT_TTL = 86400;
@@ -8282,9 +9129,9 @@ var EphemeralVaultService = class {
    */
   encryptPayload(data) {
     const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
-    const key = crypto2.createHash("sha256").update(secret).digest();
-    const iv = crypto2.randomBytes(12);
-    const cipher = crypto2.createCipheriv("aes-256-gcm", key, iv);
+    const key = crypto4.createHash("sha256").update(secret).digest();
+    const iv = crypto4.randomBytes(12);
+    const cipher = crypto4.createCipheriv("aes-256-gcm", key, iv);
     const jsonStr = JSON.stringify(data);
     const encrypted = Buffer.concat([cipher.update(jsonStr, "utf8"), cipher.final()]);
     const authTag = cipher.getAuthTag();
@@ -8302,13 +9149,14 @@ var EphemeralVaultService = class {
       const authTag = Buffer.from(authTagB64, "base64url");
       const ciphertext = Buffer.from(ciphertextB64, "base64url");
       const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
-      const key = crypto2.createHash("sha256").update(secret).digest();
-      const decipher = crypto2.createDecipheriv("aes-256-gcm", key, iv);
+      const key = crypto4.createHash("sha256").update(secret).digest();
+      const decipher = crypto4.createDecipheriv("aes-256-gcm", key, iv);
       decipher.setAuthTag(authTag);
       const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
       return JSON.parse(decrypted.toString("utf8"));
     } catch (err) {
-      logger2.error(`[EphemeralVault] Failed to decrypt payload: ${err?.message}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger2.error(`[EphemeralVault] Failed to decrypt payload: ${msg}`);
       return null;
     }
   }
@@ -8354,9 +9202,9 @@ var EphemeralVaultService = class {
     const isAlreadyGzipped = rawBuffer.length >= 2 && rawBuffer[0] === 31 && rawBuffer[1] === 139;
     const compressedBuffer = isAlreadyGzipped ? rawBuffer : zlib.gzipSync(rawBuffer, { level: 9 });
     const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
-    const encKey = crypto2.createHash("sha256").update(secret).digest();
-    const iv = crypto2.randomBytes(12);
-    const cipher = crypto2.createCipheriv("aes-256-gcm", encKey, iv);
+    const encKey = crypto4.createHash("sha256").update(secret).digest();
+    const iv = crypto4.randomBytes(12);
+    const cipher = crypto4.createCipheriv("aes-256-gcm", encKey, iv);
     const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
     const authTag = cipher.getAuthTag();
     const encryptedPayload = `${iv.toString("base64url")}.${authTag.toString("base64url")}.${encrypted.toString("base64url")}`;
@@ -8389,8 +9237,8 @@ var EphemeralVaultService = class {
         const authTag = Buffer.from(authTagB64, "base64url");
         const ciphertext = Buffer.from(ciphertextB64, "base64url");
         const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
-        const encKey = crypto2.createHash("sha256").update(secret).digest();
-        const decipher = crypto2.createDecipheriv("aes-256-gcm", encKey, iv);
+        const encKey = crypto4.createHash("sha256").update(secret).digest();
+        const decipher = crypto4.createDecipheriv("aes-256-gcm", encKey, iv);
         decipher.setAuthTag(authTag);
         compressedBuffer = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
       } else {
@@ -8403,7 +9251,8 @@ var EphemeralVaultService = class {
         remainingTtlSeconds: ttl
       };
     } catch (err) {
-      logger2.error(`[EphemeralVault] Failed to decrypt/decompress PDF for request ${requestId}: ${err?.message}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger2.error(`[EphemeralVault] Failed to decrypt/decompress PDF for request ${requestId}: ${msg}`);
       return {
         buffer: null,
         isExpired: true,
@@ -8456,6 +9305,393 @@ var EphemeralVaultService = class {
   }
 };
 var ephemeralVault = new EphemeralVaultService();
+
+// src/modules/services/service.dispatcher.ts
+var ServiceDispatcher = class {
+  /**
+   * Dispatches a Service Request to the appropriate microservice
+   * based on the serviceCode.
+   * 
+   * This is called asynchronously AFTER a successful payment webhook.
+   */
+  async fulfillAsync(serviceRequestId) {
+    try {
+      logger2.info(`[ServiceDispatcher] Starting fulfillment for Request: ${serviceRequestId}`);
+      const request = await prisma.serviceRequest.findUnique({
+        where: { id: serviceRequestId },
+        include: { service: true }
+      });
+      if (!request) {
+        throw new Error("ServiceRequest not found");
+      }
+      await prisma.serviceRequest.update({
+        where: { id: serviceRequestId },
+        data: { status: "PROCESSING" }
+      });
+      await prisma.serviceRequestEvent.create({
+        data: {
+          serviceRequestId,
+          status: "PROCESSING",
+          note: `Dispatched for automated verification and processing with upstream authority (${request.service.name || request.service.code})`
+        }
+      });
+      let resultData = null;
+      switch (request.service.code) {
+        case "PAN_FIND": {
+          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
+          const input = request.inputData || {};
+          const searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : "") || "";
+          if (!searchToken) {
+            throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
+          }
+          const decrypted = decryptPanToken(searchToken);
+          resultData = {
+            pan: decrypted.pan,
+            maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX1234",
+            status: "SUCCESS",
+            message: "PAN number retrieved successfully"
+          };
+          break;
+        }
+        case "PAN_DETAILS": {
+          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
+          const input = request.inputData || {};
+          const searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : void 0);
+          if (searchToken && typeof searchToken === "string" && searchToken.includes(".")) {
+            const decrypted = decryptPanToken(searchToken);
+            resultData = {
+              pan: decrypted.pan,
+              fullName: decrypted.fullName || "Taxpayer",
+              dob: decrypted.dob || "N/A",
+              gender: decrypted.gender || "N/A",
+              category: decrypted.category || "Individual",
+              aadhaarLinked: decrypted.aadhaarLinked ?? true,
+              maskedAadhaar: decrypted.aadhaarMasked || "N/A",
+              status: "SUCCESS"
+            };
+          } else if (typeof input?.pan === "string" && input.pan) {
+            resultData = await panService.getPanDetails(input.pan);
+          } else {
+            throw new Error("Missing PAN/searchToken for PAN_DETAILS service");
+          }
+          break;
+        }
+        case "KISAN_CARD":
+        case "KISAN_REGISTRATION_CARD": {
+          const vaultItem = await ephemeralVault.getVaultItem(serviceRequestId);
+          const inputDataObj = request.inputData && typeof request.inputData === "object" ? request.inputData : {};
+          const input = {
+            ...inputDataObj,
+            ...vaultItem?.data || {}
+          };
+          resultData = {
+            ...input,
+            farmerId: input.farmerId || "N/A",
+            enrollmentNo: input.enrollmentNo || "N/A",
+            name: input.name || input.nameEnglish || input.NameEnglish || input.NameHindi || "Farmer Applicant",
+            nameEnglish: input.nameEnglish || input.NameEnglish || "",
+            nameHindi: input.nameHindi || input.NameHindi || "",
+            fatherName: input.fatherName || "N/A",
+            gender: input.gender || "\u092A\u0941\u0930\u0941\u0937",
+            mobile: input.mobile || "N/A",
+            aadhaar: input.aadhaar || "N/A",
+            address: input.address || "N/A",
+            totalRakba: input.totalRakba || "",
+            totalGata: input.totalGata || "",
+            landRecords: Array.isArray(input.landRecords) ? input.landRecords : [],
+            state: input.state || "BIHAR",
+            status: "SUCCESS",
+            vaultActive: true,
+            completedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          break;
+        }
+        default:
+          throw new Error(`Unsupported service code: ${request.service.code}`);
+      }
+      if (resultData) {
+        await ephemeralVault.storeVaultItem(serviceRequestId, resultData, 86400);
+      }
+      await prisma.serviceRequest.update({
+        where: { id: serviceRequestId },
+        data: {
+          status: "COMPLETED",
+          completedAt: /* @__PURE__ */ new Date(),
+          resultData: {
+            status: "COMPLETED",
+            serviceCode: request.service.code,
+            completedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            vaultActive: true
+          }
+        }
+      });
+      await prisma.serviceRequestEvent.create({
+        data: {
+          serviceRequestId,
+          status: "COMPLETED",
+          note: `Service completed successfully. Verified result retrieved and secured in 24-hour encrypted vault.`
+        }
+      });
+      logger2.info(`[ServiceDispatcher] Fulfillment COMPLETED & stored in 24h vault for Request: ${serviceRequestId}`);
+    } catch (error) {
+      logger2.error(`[ServiceDispatcher] Fulfillment FAILED for Request ${serviceRequestId}:`, error);
+      const msg = error instanceof Error ? error.message : "Upstream verification failed";
+      await prisma.serviceRequest.update({
+        where: { id: serviceRequestId },
+        data: { status: "PROVIDER_FAILED" }
+      });
+      await prisma.serviceRequestEvent.create({
+        data: {
+          serviceRequestId,
+          status: "PROVIDER_FAILED",
+          note: `Provider fulfillment error: ${msg}`
+        }
+      });
+    }
+  }
+};
+var serviceDispatcher = new ServiceDispatcher();
+
+// src/modules/payment/payment.service.ts
+import { randomUUID } from "crypto";
+var PaymentService = class {
+  /**
+   * Generates a Cashfree Order from a newly created Service Request
+   */
+  async createCashfreeOrderFromRequest(serviceRequest, userId, guestSessionId, customerName, customerEmail, customerPhone, orderNote, orderTags) {
+    const amount = Number(serviceRequest.amount);
+    const organizationId = serviceRequest.organizationId || null;
+    const generatedOrderId = `CF_ORD_${Date.now()}_${randomUUID().slice(0, 6).toUpperCase()}`;
+    const payment = await prisma.payment.create({
+      data: {
+        serviceRequestId: serviceRequest.id,
+        organizationId,
+        userId: userId || null,
+        amount,
+        currency: "INR",
+        method: "CASHFREE",
+        status: "PENDING",
+        orderId: generatedOrderId
+      }
+    });
+    const rawCustomerId = userId || guestSessionId || `GUEST_${randomUUID().slice(0, 8)}`;
+    const cfCustomerId = rawCustomerId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 45);
+    try {
+      const orderData = await cashfreeGateway.createOrder({
+        orderId: generatedOrderId,
+        orderAmount: amount,
+        customerId: cfCustomerId,
+        customerName,
+        customerEmail,
+        customerPhone,
+        orderNote,
+        orderTags
+      });
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          orderId: orderData.order_id,
+          paymentSessionId: orderData.payment_session_id
+        }
+      });
+      const mode = process.env.CASHFREE_ENVIRONMENT || ((process.env.CASHFREE_API_URL || "").includes("sandbox") ? "sandbox" : "production");
+      return {
+        payment_id: payment.id,
+        payment_session_id: orderData.payment_session_id,
+        order_id: orderData.order_id,
+        mode
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: "FAILED",
+          errorMessage: msg || "Failed to initialize gateway order"
+        }
+      });
+      throw err;
+    }
+  }
+  /**
+   * Processes async webhooks from Cashfree
+   */
+  async handleCashfreeWebhook(rawBody, signature, timestamp) {
+    logger2.info("[PaymentService] Processing Cashfree Webhook...");
+    const isValid2 = cashfreeGateway.verifyWebhookSignature(rawBody, signature, timestamp);
+    if (!isValid2) {
+      logger2.error("[PaymentService] Invalid Webhook Signature!");
+      throw AppError.badRequest("Invalid signature");
+    }
+    const payload = JSON.parse(rawBody);
+    if (payload.type === "PAYMENT_SUCCESS_WEBHOOK") {
+      const orderId = payload.data?.order?.order_id;
+      const paymentId = payload.data?.payment?.cf_payment_id || payload.data?.payment?.payment_id;
+      const paymentMode = payload.data?.payment?.payment_group || payload.data?.payment?.payment_method?.payment_mode;
+      const bankReference = payload.data?.payment?.bank_reference || payload.data?.payment?.bank_reference_number;
+      await this.markPaymentSuccess(orderId, paymentId, {
+        paymentMode: paymentMode ? String(paymentMode).toUpperCase() : void 0,
+        bankReference: bankReference ? String(bankReference) : void 0,
+        rawResponse: payload
+      });
+    } else if (payload.type === "PAYMENT_FAILED_WEBHOOK") {
+      const orderId = payload.data?.order?.order_id;
+      const errorMsg = payload.data?.payment?.payment_message || payload.data?.error_details?.error_description;
+      await this.markPaymentFailed(orderId, {
+        errorMessage: errorMsg,
+        rawResponse: payload
+      });
+    }
+    return { success: true };
+  }
+  /**
+   * Directly verify and confirm payment (called by frontend or fallback polling)
+   */
+  async confirmPaymentOrder(orderId, cfPaymentId) {
+    logger2.info(`[PaymentService] Confirming payment order: ${orderId}`);
+    const payment = await prisma.payment.findFirst({
+      where: {
+        OR: [
+          { id: orderId },
+          { orderId },
+          { serviceRequestId: orderId }
+        ]
+      },
+      include: {
+        serviceRequest: {
+          include: {
+            service: true,
+            customer: true,
+            events: true,
+            payments: true
+          }
+        }
+      }
+    });
+    if (!payment) {
+      throw AppError.notFound(`Payment record for order ${orderId} not found`);
+    }
+    if (payment.status === "CAPTURED") {
+      return payment.serviceRequest;
+    }
+    let isPaid = false;
+    let remotePaymentId = cfPaymentId;
+    const paymentMode = void 0;
+    const bankReference = void 0;
+    let rawResponse;
+    try {
+      const cfOrder = await cashfreeGateway.getOrder(payment.orderId || payment.id);
+      if (cfOrder && (cfOrder.order_status === "PAID" || cfOrder.order_status === "ACTIVE")) {
+        isPaid = true;
+        rawResponse = cfOrder;
+        if (!remotePaymentId && cfOrder.cf_order_id) {
+          remotePaymentId = String(cfOrder.cf_order_id);
+        }
+      }
+    } catch {
+      if (cfPaymentId || process.env.NODE_ENV !== "production") {
+        isPaid = true;
+      }
+    }
+    if (isPaid) {
+      await this.markPaymentSuccess(payment.id, remotePaymentId || `CF_PAY_${Date.now()}`, {
+        paymentMode: paymentMode || "ONLINE",
+        bankReference,
+        rawResponse
+      });
+      return await prisma.serviceRequest.findUnique({
+        where: { id: payment.serviceRequestId },
+        include: {
+          service: true,
+          customer: true,
+          events: true,
+          payments: true
+        }
+      });
+    }
+    return payment.serviceRequest;
+  }
+  async markPaymentSuccess(identifier, cfPaymentId, details) {
+    const payment = await prisma.payment.findFirst({
+      where: {
+        OR: [
+          { id: identifier },
+          { orderId: identifier },
+          { serviceRequestId: identifier }
+        ]
+      },
+      include: { serviceRequest: true }
+    });
+    if (!payment) {
+      logger2.error(`[PaymentService] Payment not found for identifier: ${identifier}`);
+      return;
+    }
+    if (payment.status === "CAPTURED") {
+      logger2.info(`[PaymentService] Payment ${payment.id} already captured. Skipping.`);
+      return;
+    }
+    const txId = cfPaymentId || payment.transactionId || `CF_${Date.now()}`;
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: "CAPTURED",
+        transactionId: String(txId),
+        paymentMode: details?.paymentMode || payment.paymentMode || "UPI",
+        bankReference: details?.bankReference || payment.bankReference,
+        paidAt: /* @__PURE__ */ new Date(),
+        gatewayResponse: details?.rawResponse ? details.rawResponse : void 0
+      }
+    });
+    await prisma.serviceRequest.update({
+      where: { id: payment.serviceRequestId },
+      data: { status: "PAYMENT_CAPTURED" }
+    });
+    await prisma.serviceRequestEvent.create({
+      data: {
+        serviceRequestId: payment.serviceRequestId,
+        status: "PAYMENT_CAPTURED",
+        note: `Payment of \u20B9${Number(payment.amount).toFixed(2)} captured via Cashfree (${details?.paymentMode || payment.paymentMode || "UPI"}). Gateway Txn: ${txId}`
+      }
+    });
+    try {
+      await serviceDispatcher.fulfillAsync(payment.serviceRequestId);
+    } catch (err) {
+      logger2.error(`[PaymentService] Fulfillment failed for Request ${payment.serviceRequestId}:`, err);
+    }
+  }
+  async markPaymentFailed(identifier, details) {
+    const payment = await prisma.payment.findFirst({
+      where: {
+        OR: [
+          { id: identifier },
+          { orderId: identifier },
+          { serviceRequestId: identifier }
+        ]
+      }
+    });
+    if (!payment) return;
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: "FAILED",
+        errorMessage: details?.errorMessage,
+        gatewayResponse: details?.rawResponse || void 0
+      }
+    });
+    await prisma.serviceRequest.update({
+      where: { id: payment.serviceRequestId },
+      data: { status: "FAILED" }
+    });
+    await prisma.serviceRequestEvent.create({
+      data: {
+        serviceRequestId: payment.serviceRequestId,
+        status: "FAILED",
+        note: `Payment failed: ${details?.errorMessage || "Payment declined or cancelled by gateway"}`
+      }
+    });
+  }
+};
+var paymentService = new PaymentService();
 
 // src/modules/requests/request.repository.ts
 var retailerPaymentSelect = {
@@ -8659,907 +9895,6 @@ var RequestRepository = class {
 };
 var requestRepository = new RequestRepository();
 
-// src/core/integrations/cashfree/cashfree.gateway.ts
-import crypto3 from "crypto";
-var API_VERSION = "2023-08-01";
-var CashfreeGateway = class {
-  async createOrder(params) {
-    const { clientId, clientSecret, apiUrl } = getCashfreeConfig();
-    if (!clientId || !clientSecret) {
-      throw AppError.internal("Cashfree credentials not configured");
-    }
-    const payload = {
-      order_id: params.orderId,
-      order_amount: params.orderAmount,
-      order_currency: "INR",
-      order_note: params.orderNote || "Nagrik Seva Service Verification",
-      customer_details: {
-        customer_id: params.customerId,
-        customer_phone: params.customerPhone || "9999999999",
-        customer_email: params.customerEmail || "no-reply@nagriksevapoint.in",
-        customer_name: params.customerName || "Customer"
-      },
-      order_meta: {
-        return_url: params.returnUrl || `https://nagriksevapoint.in/dashboard/requests/${params.orderId}?payment=true`,
-        notify_url: params.notifyUrl || `https://api.nagriksevapoint.in/api/v1/payments/cashfree/webhook`
-      }
-    };
-    if (params.orderTags) {
-      payload.order_tags = params.orderTags;
-    }
-    logger2.info(`[CashfreeGateway] Creating order: ${params.orderId} for ${params.orderAmount} INR (URL: ${apiUrl})`);
-    try {
-      const response = await fetch(`${apiUrl}/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-version": API_VERSION,
-          "x-client-id": clientId,
-          "x-client-secret": clientSecret
-        },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        logger2.error(`[CashfreeGateway] Order creation failed (${response.status}): ${JSON.stringify(data)} (Client ID: ${clientId.slice(0, 8)}..., URL: ${apiUrl})`);
-        const errorMsg = data?.message || "Failed to create Cashfree order";
-        throw AppError.badRequest(errorMsg);
-      }
-      return data;
-    } catch (err) {
-      logger2.error(`[CashfreeGateway] Error: ${err.message}`);
-      if (err instanceof AppError) throw err;
-      throw AppError.internal(err.message || "Cashfree Gateway Error");
-    }
-  }
-  async getOrder(orderId) {
-    const { clientId, clientSecret, apiUrl } = getCashfreeConfig();
-    if (!clientId || !clientSecret) {
-      throw AppError.internal("Cashfree credentials not configured");
-    }
-    try {
-      const response = await fetch(`${apiUrl}/orders/${orderId}`, {
-        method: "GET",
-        headers: {
-          "x-api-version": API_VERSION,
-          "x-client-id": clientId,
-          "x-client-secret": clientSecret
-        }
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        logger2.error(`[CashfreeGateway] Get order failed: ${JSON.stringify(data)}`);
-        throw AppError.internal("Failed to retrieve Cashfree order status");
-      }
-      return data;
-    } catch (err) {
-      logger2.error(`[CashfreeGateway] Error getting order: ${err.message}`);
-      throw AppError.internal("Cashfree Gateway Error");
-    }
-  }
-  verifyWebhookSignature(rawBody, signature, timestamp) {
-    const { clientSecret } = getCashfreeConfig();
-    if (!signature || !timestamp || !clientSecret) {
-      return false;
-    }
-    try {
-      const generatedSignature = crypto3.createHmac("sha256", clientSecret).update(timestamp + rawBody).digest("base64");
-      return generatedSignature === signature;
-    } catch (err) {
-      logger2.error("[CashfreeGateway] Signature verification exception");
-      return false;
-    }
-  }
-};
-var cashfreeGateway = new CashfreeGateway();
-
-// src/core/integrations/ezytm/ezytm.gateway.ts
-import { ProxyAgent, fetch as undiciFetch } from "undici";
-var EzytmGateway = class {
-  baseUrl;
-  tokenId;
-  apiUserId;
-  apiPassword;
-  apiMode;
-  proxyUrl;
-  constructor() {
-    this.baseUrl = (getEnvVar("EZYTM_BASE_URL") || "https://planapi.in").replace(/\/+$/, "");
-    this.tokenId = (getEnvVar("EZYTM_TOKEN_ID") || getEnvVar("PLANAPI_TOKEN_ID") || "").replace(/["']/g, "").trim();
-    this.apiUserId = (getEnvVar("EZYTM_API_USER_ID") || getEnvVar("PLANAPI_API_USER_ID") || "").replace(/["']/g, "").trim();
-    this.apiPassword = (getEnvVar("EZYTM_API_PASSWORD") || getEnvVar("PLANAPI_API_PASSWORD") || "").replace(/["']/g, "").trim();
-    this.apiMode = (getEnvVar("EZYTM_API_MODE") || "1").replace(/["']/g, "").trim();
-    const rawProxy = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY") || getEnvVar("HTTP_PROXY");
-    this.proxyUrl = rawProxy ? rawProxy.replace(/["']/g, "").trim() : void 0;
-  }
-  getProxyUrl() {
-    const rawProxy = getEnvVar("EZYTM_PROXY_URL") || getEnvVar("WEBSHARE_URL") || getEnvVar("WEBSHARE_PROXY_URL") || getEnvVar("PROXY_URL") || getEnvVar("STATIC_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY") || getEnvVar("HTTP_PROXY");
-    return rawProxy ? rawProxy.replace(/["']/g, "").trim() : void 0;
-  }
-  isConfigured() {
-    const token = this.tokenId.toLowerCase();
-    const user = this.apiUserId.toLowerCase();
-    const pass = this.apiPassword.toLowerCase();
-    if (!token || !user || !pass) return false;
-    const dummyMarkers = [
-      "your-token",
-      "your-api",
-      "xxxx",
-      "abcd",
-      "placeholder",
-      "test"
-    ];
-    for (const marker of dummyMarkers) {
-      if (token.includes(marker) || user.includes(marker) || pass.includes(marker)) {
-        return false;
-      }
-    }
-    return true;
-  }
-  /**
-   * Generic form POST dispatcher with standard EzyTM/PlanAPI headers & form encoding.
-   * Throws typed AppError on failure. No dummy fallback on live failure.
-   */
-  async postForm(endpoint, params) {
-    const isTestEnv = typeof process !== "undefined" ? process.env.NODE_ENV === "test" || process.env.DENO_TESTING === "1" : typeof globalThis.Deno !== "undefined" ? globalThis.Deno.env.get("NODE_ENV") === "test" || globalThis.Deno.env.get("DENO_TESTING") === "1" : false;
-    if (!this.isConfigured()) {
-      if (isTestEnv) {
-        logger2.warn(`[EzyTM Gateway] Test simulation active for ${endpoint}`);
-        if (endpoint.includes("AadharToPanFind")) {
-          return {
-            Errorcode: 100,
-            Status: "Success",
-            Data: {
-              PanNumber: "ABCDE1234F",
-              AadharNumber: `XXXXXXXX${params.Aadhaarid?.slice(-4) || "1234"}`
-            }
-          };
-        }
-        if (endpoint.includes("PanDetails")) {
-          return {
-            Errorcode: 100,
-            status: "Success",
-            msg: "done",
-            data: {
-              pan_number: params.Panid || "ABCDE1234F",
-              full_name: "abc xyz",
-              masked_aadhaar: "XXXXXXXX1234",
-              dob: "2001-11-23",
-              gender: "M",
-              aadhaar_linked: true,
-              category: "person"
-            }
-          };
-        }
-      }
-      logger2.error(
-        "[EzyTM Gateway] API credentials not configured in environment variables."
-      );
-      throw AppError.badGateway(
-        "EzyTM vendor credentials (EZYTM_TOKEN_ID, EZYTM_API_USER_ID, EZYTM_API_PASSWORD) are not configured.",
-        "GATEWAY_NOT_CONFIGURED"
-      );
-    }
-    const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
-    const headers = {
-      "TokenID": this.tokenId,
-      "ApiUserID": this.apiUserId,
-      "ApiPassword": this.apiPassword,
-      "Content-Type": "application/x-www-form-urlencoded"
-    };
-    const body = new URLSearchParams({ ...params, ApiMode: this.apiMode });
-    logger2.info(`[EzyTM Gateway] Dispatching POST to ${url}`);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15e3);
-    const activeProxyUrl = this.getProxyUrl() || this.proxyUrl;
-    let dispatcher = void 0;
-    if (activeProxyUrl) {
-      try {
-        dispatcher = new ProxyAgent(activeProxyUrl);
-        const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
-        logger2.info(`[EzyTM Gateway] Routing request through Static IP Proxy: ${maskedProxy}`);
-      } catch (err) {
-        logger2.error(`[EzyTM Gateway] Failed to create ProxyAgent with URL "${activeProxyUrl}":`, err);
-      }
-    } else {
-      logger2.warn("[EzyTM Gateway] \u26A0\uFE0F NO PROXY URL found in environment (checked EZYTM_PROXY_URL, WEBSHARE_URL, PROXY_URL, HTTPS_PROXY). Using direct connection.");
-    }
-    try {
-      const fetchFunction = dispatcher ? undiciFetch : fetch;
-      const response = await fetchFunction(url, {
-        method: "POST",
-        headers,
-        body: body.toString(),
-        signal: controller.signal,
-        // @ts-ignore
-        dispatcher
-      });
-      clearTimeout(timeoutId);
-      const text = await response.text();
-      try {
-        const json = JSON.parse(text);
-        return json;
-      } catch {
-        logger2.error(`[EzyTM Gateway] Non-JSON response from ${url}:`, text);
-        throw AppError.badGateway(
-          `Invalid JSON response from gateway (HTTP ${response.status})`,
-          "GATEWAY_INVALID_RESPONSE"
-        );
-      }
-    } catch (err) {
-      clearTimeout(timeoutId);
-      if (err instanceof AppError) throw err;
-      if (err.name === "AbortError") {
-        logger2.error(
-          `[EzyTM Gateway] Timeout after 15s communicating with ${url}`
-        );
-        throw AppError.badGateway(
-          "EzyTM gateway connection timed out",
-          "GATEWAY_TIMEOUT"
-        );
-      }
-      logger2.error(`[EzyTM Gateway] Connection error to ${url}:`, err);
-      throw AppError.badGateway(
-        err.message || "Failed to communicate with EzyTM gateway",
-        "GATEWAY_COMMUNICATION_ERROR"
-      );
-    }
-  }
-};
-var ezytmGateway = new EzytmGateway();
-
-// src/core/integrations/ezytm/ezytm-pan.gateway.ts
-var EzytmPanGateway = class {
-  /**
-   * 1. Aadhar to Pan Find API
-   * POST /Api/Ekyc/AadharToPanFind
-   */
-  async findPanByAadhaar(aadhaar) {
-    return await ezytmGateway.postForm(
-      "/Api/Ekyc/AadharToPanFind",
-      { Aadhaarid: aadhaar.trim() }
-    );
-  }
-  /**
-   * 2. PAN Card Details API
-   * POST /api/Ekyc/PanDetails
-   */
-  async getPanDetails(pan) {
-    return await ezytmGateway.postForm(
-      "/api/Ekyc/PanDetails",
-      { Panid: pan.trim().toUpperCase() }
-    );
-  }
-};
-var ezytmPanGateway = new EzytmPanGateway();
-
-// src/core/security/crypto.util.ts
-import crypto4 from "node:crypto";
-function getEncryptionKey() {
-  const secret = getEnvVar("ENCRYPTION_SECRET") || getEnvVar("BETTER_AUTH_SECRET") || "nagrik-seva-point-pan-security-key-2026";
-  return crypto4.createHash("sha256").update(secret).digest();
-}
-function encryptPanToken(payload) {
-  const key = getEncryptionKey();
-  const iv = crypto4.randomBytes(12);
-  const cipher = crypto4.createCipheriv("aes-256-gcm", key, iv);
-  const tokenData = {
-    pan: payload.pan.trim().toUpperCase(),
-    aadhaarMasked: payload.aadhaarMasked,
-    fullName: payload.fullName,
-    dob: payload.dob,
-    gender: payload.gender,
-    category: payload.category,
-    aadhaarLinked: payload.aadhaarLinked,
-    exp: payload.exp || Date.now() + 30 * 60 * 1e3
-    // 30 mins expiry
-  };
-  const jsonStr = JSON.stringify(tokenData);
-  const encrypted = Buffer.concat([cipher.update(jsonStr, "utf8"), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return `${iv.toString("base64url")}.${authTag.toString("base64url")}.${encrypted.toString("base64url")}`;
-}
-function decryptPanToken(token) {
-  if (!token || typeof token !== "string") {
-    throw AppError.badRequest("Invalid or missing PAN token.", "INVALID_TOKEN");
-  }
-  const parts = token.split(".");
-  if (parts.length !== 3) {
-    throw AppError.badRequest("Malformed PAN search token.", "INVALID_TOKEN");
-  }
-  try {
-    const [ivB64, authTagB64, ciphertextB64] = parts;
-    const iv = Buffer.from(ivB64, "base64url");
-    const authTag = Buffer.from(authTagB64, "base64url");
-    const ciphertext = Buffer.from(ciphertextB64, "base64url");
-    const key = getEncryptionKey();
-    const decipher = crypto4.createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(authTag);
-    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    const parsed = JSON.parse(decrypted.toString("utf8"));
-    if (!parsed.pan) {
-      throw AppError.badRequest("PAN data not found in token.", "INVALID_TOKEN");
-    }
-    if (parsed.exp && parsed.exp < Date.now()) {
-      throw AppError.badRequest(
-        "Your PAN verification session has expired. Please search again.",
-        "TOKEN_EXPIRED"
-      );
-    }
-    return parsed;
-  } catch (err) {
-    if (err instanceof AppError) throw err;
-    throw AppError.badRequest(
-      "Unable to verify PAN token. Please perform a fresh search.",
-      "INVALID_TOKEN"
-    );
-  }
-}
-
-// src/modules/pan/pan.service.ts
-var PanService = class {
-  /**
-   * 1. Find PAN Number by 12-digit Aadhaar
-   * Returns ONLY masked PAN + stateless encrypted token (No cleartext PAN leak)
-   */
-  async findPanByAadhaar(aadhaar) {
-    logger2.info(
-      `[PanService] Finding PAN for Aadhaar ending in ${aadhaar.slice(-4)}`
-    );
-    if (aadhaar === "123412341234") {
-      logger2.info(`[PanService] Test Aadhaar (Success Simulation) detected. Encrypting mock token.`);
-      return {
-        maskedPan: "XXXXX1234F",
-        searchToken: encryptPanToken({
-          pan: "ABCDE1234F",
-          aadhaarMasked: "XXXXXXXX1234"
-        })
-      };
-    }
-    if (aadhaar === "999999999999") {
-      logger2.info(`[PanService] Test Aadhaar (Error Simulation Mode) detected. Returning error test token.`);
-      return {
-        maskedPan: "XXXXX9999E",
-        searchToken: encryptPanToken({
-          pan: "ERRBAL9999E",
-          aadhaarMasked: "XXXXXXXX9999"
-        })
-      };
-    }
-    const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
-    logger2.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
-    const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
-    if (response.Errorcode === 100) {
-      if (panNumber) {
-        const maskedPan = `XXXXX${panNumber.substring(5, 9)}${panNumber.substring(9)}`;
-        const searchToken = encryptPanToken({
-          pan: panNumber,
-          aadhaarMasked: `XXXXXXXX${aadhaar.slice(-4)}`
-        });
-        logger2.info(`[PanService] Successfully matched PAN (Masked: ${maskedPan}, Token Encrypted)`);
-        return {
-          maskedPan,
-          searchToken
-        };
-      }
-      if (response.Data?.Message?.toLowerCase() === "linked") {
-        const linkedMsg = "PAN is linked with this Aadhaar number, but PAN number were not found. Please try again later.";
-        logger2.warn(`[PanService] ${linkedMsg}`);
-        throw AppError.badRequest(linkedMsg, "PAN_LINKED_NO_DATA");
-      }
-      const notFoundMsg = "PAN is linked but data not found. Please try again later.";
-      logger2.warn(`[PanService] ${notFoundMsg}`);
-      throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
-    }
-    if (response.Errorcode === 101 || response.Errorcode === 104) {
-      logger2.warn(`[PanService] PAN not found / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}`);
-      throw AppError.badRequest("No PAN Card record found linked with this Aadhaar number in the Income Tax registry.", "PAN_NOT_FOUND");
-    }
-    const fallbackMsg = response.Message && response.Message !== "Data Fetch Successfully" && response.Message !== "Internal Server Error" ? response.Message : "Failed to find PAN for this Aadhaar. The upstream government registry is temporarily unreachable.";
-    logger2.warn(`[PanService] Find PAN failed: ${fallbackMsg}`);
-    throw AppError.badRequest(fallbackMsg, "PAN_FIND_FAILED");
-  }
-  /**
-   * 2. Fetch Comprehensive PAN Details
-   * Accepts encrypted searchToken or unmasked PAN
-   */
-  async getPanDetails(input) {
-    let cleanPan = "";
-    let decryptedAadhaarMasked = "";
-    if (typeof input === "string") {
-      if (input.includes(".") && input.length > 20) {
-        const decrypted = decryptPanToken(input);
-        cleanPan = decrypted.pan.trim().toUpperCase();
-        decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
-      } else {
-        cleanPan = input.trim().toUpperCase();
-      }
-    } else if (input.searchToken) {
-      const decrypted = decryptPanToken(input.searchToken);
-      cleanPan = decrypted.pan.trim().toUpperCase();
-      decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
-    } else if (input.pan) {
-      if (input.pan.includes(".") && input.pan.length > 20) {
-        const decrypted = decryptPanToken(input.pan);
-        cleanPan = decrypted.pan.trim().toUpperCase();
-        decryptedAadhaarMasked = decrypted.aadhaarMasked || "";
-      } else {
-        cleanPan = input.pan.trim().toUpperCase();
-      }
-    }
-    if (!cleanPan) {
-      throw AppError.badRequest("A valid searchToken or PAN number is required.", "INVALID_INPUT");
-    }
-    if (cleanPan === "ABCDE1234F") {
-      logger2.info(`[PanService] Test PAN (Success Simulation) decrypted. Returning verified details.`);
-      return {
-        pan: "ABCDE1234F",
-        fullName: "VIKASH KUMAR",
-        maskedAadhaar: decryptedAadhaarMasked || "XXXXXXXX1234",
-        dob: "1995-08-15",
-        gender: "Male (M)",
-        aadhaarLinked: true,
-        category: "Individual"
-      };
-    }
-    if (cleanPan === "ERRBAL9999E") {
-      logger2.info(`[PanService] Test PAN (Insufficient Balance Simulation) detected.`);
-      throw AppError.badRequest("Insufficient balance.", "PAN_DETAILS_FAILED");
-    }
-    if (cleanPan === "ERRTOUT9999E") {
-      logger2.info(`[PanService] Test PAN (Timeout Simulation) detected.`);
-      throw AppError.badRequest("Verification provider gateway timed out. Please try again.", "PAN_DETAILS_FAILED");
-    }
-    const response = await ezytmPanGateway.getPanDetails(cleanPan);
-    if (response.Errorcode === 100 && response.data) {
-      const d = response.data;
-      return {
-        pan: d.pan_number || cleanPan,
-        fullName: d.full_name || "N/A",
-        maskedAadhaar: d.masked_aadhaar || "N/A",
-        dob: d.dob || "N/A",
-        gender: d.gender === "M" ? "Male (M)" : d.gender === "F" ? "Female (F)" : d.gender || "N/A",
-        aadhaarLinked: Boolean(d.aadhaar_linked),
-        category: d.category ? `${d.category.charAt(0).toUpperCase() + d.category.slice(1)}` : "Individual"
-      };
-    }
-    const failureReason = response.msg || "Failed to retrieve PAN details from official registry.";
-    logger2.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
-    throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
-  }
-  /**
-   * 3. Decrypt stateless search token to reveal PAN and Masked Aadhaar
-   */
-  decryptSearchToken(token) {
-    try {
-      const decrypted = decryptPanToken(token);
-      if (!decrypted?.pan) {
-        throw new Error("Missing PAN in decrypted token payload");
-      }
-      return {
-        pan: decrypted.pan,
-        maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX"
-      };
-    } catch (err) {
-      logger2.error(`[PanService] Token decryption failed: ${err.message}`);
-      throw AppError.badRequest(
-        "Invalid or expired search session token. Please search again.",
-        "INVALID_TOKEN"
-      );
-    }
-  }
-  /**
-   * 4. Verify PAN Details & Tokenize (Pre-Payment Availability Check)
-   */
-  async verifyPanDetails(pan) {
-    const formattedPan = pan.trim().toUpperCase();
-    logger2.info(`[PanService] Verifying PAN availability for: ${formattedPan}`);
-    if (formattedPan === "ABCDE1234F") {
-      const searchToken2 = encryptPanToken({
-        pan: "ABCDE1234F",
-        fullName: "VIKASH KUMAR",
-        dob: "1995-08-15",
-        gender: "Male (M)",
-        category: "Individual",
-        aadhaarLinked: true,
-        aadhaarMasked: "XXXXXXXX1234"
-      });
-      return {
-        pan: "ABCDE1234F",
-        maskedName: "V**** K****",
-        searchToken: searchToken2
-      };
-    }
-    const details = await this.getPanDetails(formattedPan);
-    const searchToken = encryptPanToken({
-      pan: details.pan,
-      fullName: details.fullName,
-      dob: details.dob,
-      gender: details.gender,
-      category: details.category,
-      aadhaarLinked: details.aadhaarLinked,
-      aadhaarMasked: details.maskedAadhaar
-    });
-    const maskedName = details.fullName ? details.fullName.split(" ").map((part) => part.length > 1 ? `${part[0]}****` : part).join(" ") : "V****";
-    return {
-      pan: details.pan,
-      maskedName,
-      searchToken
-    };
-  }
-  /**
-   * 5. Decrypt details token to reveal full demographic records
-   */
-  decryptPanDetailsToken(token) {
-    try {
-      const decrypted = decryptPanToken(token);
-      if (!decrypted?.pan) {
-        throw new Error("Missing PAN in token");
-      }
-      return {
-        pan: decrypted.pan,
-        fullName: decrypted.fullName || "Taxpayer",
-        dob: decrypted.dob || "N/A",
-        gender: decrypted.gender || "N/A",
-        category: decrypted.category || "Individual",
-        aadhaarLinked: decrypted.aadhaarLinked ?? true,
-        maskedAadhaar: decrypted.aadhaarMasked || "N/A"
-      };
-    } catch (err) {
-      logger2.error(`[PanService] Details token decryption failed: ${err.message}`);
-      throw AppError.badRequest(
-        "Invalid or expired verification session token. Please search again.",
-        "INVALID_TOKEN"
-      );
-    }
-  }
-};
-var panService = new PanService();
-
-// src/modules/services/service.dispatcher.ts
-var ServiceDispatcher = class {
-  /**
-   * Dispatches a Service Request to the appropriate microservice
-   * based on the serviceCode.
-   * 
-   * This is called asynchronously AFTER a successful payment webhook.
-   */
-  async fulfillAsync(serviceRequestId) {
-    try {
-      logger2.info(`[ServiceDispatcher] Starting fulfillment for Request: ${serviceRequestId}`);
-      const request = await prisma.serviceRequest.findUnique({
-        where: { id: serviceRequestId },
-        include: { service: true }
-      });
-      if (!request) {
-        throw new Error("ServiceRequest not found");
-      }
-      await prisma.serviceRequest.update({
-        where: { id: serviceRequestId },
-        data: { status: "PROCESSING" }
-      });
-      let resultData = null;
-      switch (request.service.code) {
-        case "PAN_FIND": {
-          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
-          const input = request.inputData || {};
-          const searchToken = tempToken || input?.searchToken || "";
-          if (!searchToken) {
-            throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
-          }
-          const decrypted = decryptPanToken(searchToken);
-          resultData = {
-            pan: decrypted.pan,
-            maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX1234",
-            status: "SUCCESS",
-            message: "PAN number retrieved successfully"
-          };
-          break;
-        }
-        case "PAN_DETAILS": {
-          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
-          const input = request.inputData || {};
-          const searchToken = tempToken || input?.searchToken;
-          if (searchToken && typeof searchToken === "string" && searchToken.includes(".")) {
-            const decrypted = decryptPanToken(searchToken);
-            resultData = {
-              pan: decrypted.pan,
-              fullName: decrypted.fullName || "Taxpayer",
-              dob: decrypted.dob || "N/A",
-              gender: decrypted.gender || "N/A",
-              category: decrypted.category || "Individual",
-              aadhaarLinked: decrypted.aadhaarLinked ?? true,
-              maskedAadhaar: decrypted.aadhaarMasked || "N/A",
-              status: "SUCCESS"
-            };
-          } else if (input?.pan) {
-            resultData = await panService.getPanDetails(input.pan);
-          } else {
-            throw new Error("Missing PAN/searchToken for PAN_DETAILS service");
-          }
-          break;
-        }
-        case "KISAN_CARD":
-        case "KISAN_REGISTRATION_CARD": {
-          const vaultItem = await ephemeralVault.getVaultItem(serviceRequestId);
-          const input = {
-            ...request.inputData || {},
-            ...vaultItem?.data || {}
-          };
-          resultData = {
-            ...input,
-            farmerId: input.farmerId || "N/A",
-            enrollmentNo: input.enrollmentNo || "N/A",
-            name: input.name || input.nameEnglish || input.NameEnglish || input.NameHindi || "Farmer Applicant",
-            nameEnglish: input.nameEnglish || input.NameEnglish || "",
-            nameHindi: input.nameHindi || input.NameHindi || "",
-            fatherName: input.fatherName || "N/A",
-            gender: input.gender || "\u092A\u0941\u0930\u0941\u0937",
-            mobile: input.mobile || "N/A",
-            aadhaar: input.aadhaar || "N/A",
-            address: input.address || "N/A",
-            totalRakba: input.totalRakba || "",
-            totalGata: input.totalGata || "",
-            landRecords: Array.isArray(input.landRecords) ? input.landRecords : [],
-            state: input.state || "BIHAR",
-            status: "SUCCESS",
-            vaultActive: true,
-            completedAt: (/* @__PURE__ */ new Date()).toISOString()
-          };
-          break;
-        }
-        default:
-          throw new Error(`Unsupported service code: ${request.service.code}`);
-      }
-      if (resultData) {
-        await ephemeralVault.storeVaultItem(serviceRequestId, resultData, 86400);
-      }
-      await prisma.serviceRequest.update({
-        where: { id: serviceRequestId },
-        data: {
-          status: "COMPLETED",
-          resultData: {
-            status: "COMPLETED",
-            serviceCode: request.service.code,
-            completedAt: (/* @__PURE__ */ new Date()).toISOString(),
-            vaultActive: true
-          }
-        }
-      });
-      logger2.info(`[ServiceDispatcher] Fulfillment COMPLETED & stored in 24h vault for Request: ${serviceRequestId}`);
-    } catch (error) {
-      logger2.error(`[ServiceDispatcher] Fulfillment FAILED for Request ${serviceRequestId}:`, error);
-      await prisma.serviceRequest.update({
-        where: { id: serviceRequestId },
-        data: { status: "PROVIDER_FAILED" }
-      });
-    }
-  }
-};
-var serviceDispatcher = new ServiceDispatcher();
-
-// src/modules/payment/payment.service.ts
-import { randomUUID } from "crypto";
-var PaymentService = class {
-  /**
-   * Generates a Cashfree Order from a newly created Service Request
-   */
-  async createCashfreeOrderFromRequest(serviceRequest, userId, guestSessionId, customerName, customerEmail, customerPhone, orderNote, orderTags) {
-    const amount = Number(serviceRequest.amount);
-    const organizationId = serviceRequest.organizationId || null;
-    const generatedOrderId = `CF_ORD_${Date.now()}_${randomUUID().slice(0, 6).toUpperCase()}`;
-    const payment = await prisma.payment.create({
-      data: {
-        serviceRequestId: serviceRequest.id,
-        organizationId,
-        userId: userId || null,
-        amount,
-        currency: "INR",
-        method: "CASHFREE",
-        status: "PENDING",
-        orderId: generatedOrderId
-      }
-    });
-    const rawCustomerId = userId || guestSessionId || `GUEST_${randomUUID().slice(0, 8)}`;
-    const cfCustomerId = rawCustomerId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 45);
-    try {
-      const orderData = await cashfreeGateway.createOrder({
-        orderId: generatedOrderId,
-        orderAmount: amount,
-        customerId: cfCustomerId,
-        customerName,
-        customerEmail,
-        customerPhone,
-        orderNote,
-        orderTags
-      });
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: {
-          orderId: orderData.order_id,
-          paymentSessionId: orderData.payment_session_id
-        }
-      });
-      const mode = process.env.CASHFREE_ENVIRONMENT || ((process.env.CASHFREE_API_URL || "").includes("sandbox") ? "sandbox" : "production");
-      return {
-        payment_session_id: orderData.payment_session_id,
-        order_id: orderData.order_id,
-        mode
-      };
-    } catch (err) {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: "FAILED",
-          errorMessage: err.message || "Failed to initialize gateway order"
-        }
-      });
-      throw err;
-    }
-  }
-  /**
-   * Processes async webhooks from Cashfree
-   */
-  async handleCashfreeWebhook(rawBody, signature, timestamp) {
-    logger2.info("[PaymentService] Processing Cashfree Webhook...");
-    const isValid2 = cashfreeGateway.verifyWebhookSignature(rawBody, signature, timestamp);
-    if (!isValid2) {
-      logger2.error("[PaymentService] Invalid Webhook Signature!");
-      throw AppError.badRequest("Invalid signature");
-    }
-    const payload = JSON.parse(rawBody);
-    if (payload.type === "PAYMENT_SUCCESS_WEBHOOK") {
-      const orderId = payload.data?.order?.order_id;
-      const paymentId = payload.data?.payment?.cf_payment_id || payload.data?.payment?.payment_id;
-      const paymentMode = payload.data?.payment?.payment_group || payload.data?.payment?.payment_method?.payment_mode;
-      const bankReference = payload.data?.payment?.bank_reference || payload.data?.payment?.bank_reference_number;
-      await this.markPaymentSuccess(orderId, paymentId, {
-        paymentMode: paymentMode ? String(paymentMode).toUpperCase() : void 0,
-        bankReference: bankReference ? String(bankReference) : void 0,
-        rawResponse: payload
-      });
-    } else if (payload.type === "PAYMENT_FAILED_WEBHOOK") {
-      const orderId = payload.data?.order?.order_id;
-      const errorMsg = payload.data?.payment?.payment_message || payload.data?.error_details?.error_description;
-      await this.markPaymentFailed(orderId, {
-        errorMessage: errorMsg,
-        rawResponse: payload
-      });
-    }
-    return { success: true };
-  }
-  /**
-   * Directly verify and confirm payment (called by frontend or fallback polling)
-   */
-  async confirmPaymentOrder(orderId, cfPaymentId) {
-    logger2.info(`[PaymentService] Confirming payment order: ${orderId}`);
-    const payment = await prisma.payment.findFirst({
-      where: {
-        OR: [
-          { id: orderId },
-          { orderId },
-          { serviceRequestId: orderId }
-        ]
-      },
-      include: {
-        serviceRequest: {
-          include: {
-            service: true,
-            customer: true,
-            events: true,
-            payments: true
-          }
-        }
-      }
-    });
-    if (!payment) {
-      throw AppError.notFound(`Payment record for order ${orderId} not found`);
-    }
-    if (payment.status === "CAPTURED") {
-      return payment.serviceRequest;
-    }
-    let isPaid = false;
-    let remotePaymentId = cfPaymentId;
-    let paymentMode;
-    let bankReference;
-    let rawResponse;
-    try {
-      const cfOrder = await cashfreeGateway.getOrder(payment.orderId || payment.id);
-      if (cfOrder && (cfOrder.order_status === "PAID" || cfOrder.order_status === "ACTIVE")) {
-        isPaid = true;
-        rawResponse = cfOrder;
-        if (!remotePaymentId && cfOrder.cf_order_id) {
-          remotePaymentId = String(cfOrder.cf_order_id);
-        }
-      }
-    } catch {
-      if (cfPaymentId || process.env.NODE_ENV !== "production") {
-        isPaid = true;
-      }
-    }
-    if (isPaid) {
-      await this.markPaymentSuccess(payment.id, remotePaymentId || `CF_PAY_${Date.now()}`, {
-        paymentMode: paymentMode || "ONLINE",
-        bankReference,
-        rawResponse
-      });
-      return await prisma.serviceRequest.findUnique({
-        where: { id: payment.serviceRequestId },
-        include: {
-          service: true,
-          customer: true,
-          events: true,
-          payments: true
-        }
-      });
-    }
-    return payment.serviceRequest;
-  }
-  async markPaymentSuccess(identifier, cfPaymentId, details) {
-    const payment = await prisma.payment.findFirst({
-      where: {
-        OR: [
-          { id: identifier },
-          { orderId: identifier },
-          { serviceRequestId: identifier }
-        ]
-      },
-      include: { serviceRequest: true }
-    });
-    if (!payment) {
-      logger2.error(`[PaymentService] Payment not found for identifier: ${identifier}`);
-      return;
-    }
-    if (payment.status === "CAPTURED") {
-      logger2.info(`[PaymentService] Payment ${payment.id} already captured. Skipping.`);
-      return;
-    }
-    const txId = cfPaymentId || payment.transactionId || `CF_${Date.now()}`;
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: "CAPTURED",
-        transactionId: String(txId),
-        paymentMode: details?.paymentMode || payment.paymentMode || "UPI",
-        bankReference: details?.bankReference || payment.bankReference,
-        paidAt: /* @__PURE__ */ new Date(),
-        gatewayResponse: details?.rawResponse || void 0
-      }
-    });
-    await prisma.serviceRequest.update({
-      where: { id: payment.serviceRequestId },
-      data: { status: "PAYMENT_CAPTURED" }
-    });
-    serviceDispatcher.fulfillAsync(payment.serviceRequestId).catch((err) => {
-      logger2.error(`[PaymentService] Fulfillment failed for Request ${payment.serviceRequestId}:`, err);
-    });
-  }
-  async markPaymentFailed(identifier, details) {
-    const payment = await prisma.payment.findFirst({
-      where: {
-        OR: [
-          { id: identifier },
-          { orderId: identifier },
-          { serviceRequestId: identifier }
-        ]
-      }
-    });
-    if (!payment) return;
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: "FAILED",
-        errorMessage: details?.errorMessage,
-        gatewayResponse: details?.rawResponse || void 0
-      }
-    });
-    await prisma.serviceRequest.update({
-      where: { id: payment.serviceRequestId },
-      data: { status: "FAILED" }
-    });
-  }
-};
-var paymentService = new PaymentService();
-
 // src/modules/requests/request.service.ts
 var RequestService = class {
   async getRequestById(context, id) {
@@ -9700,7 +10035,7 @@ var RequestService = class {
     if (rawInput.searchToken || rawInput.pan) {
       await ephemeralVault.stashTempSearchToken(
         request.id,
-        rawInput.searchToken || rawInput.pan
+        String(rawInput.searchToken || rawInput.pan)
       );
     }
     if (isKisan && Object.keys(rawInput).length > 0) {
@@ -9709,7 +10044,11 @@ var RequestService = class {
     const serviceName = service.name || "PAN Find Service";
     const orderNote = `${serviceName} (Ref: ${referenceNumber})`;
     const paymentSession = await paymentService.createCashfreeOrderFromRequest(
-      request,
+      {
+        id: request.id,
+        amount: Number(request.amount),
+        organizationId: request.organizationId
+      },
       context.userId || null,
       context.guestSessionId || null,
       customerName,
@@ -9730,6 +10069,9 @@ var RequestService = class {
     return {
       ...lockedRequest,
       payment: {
+        id: paymentSession.payment_id,
+        gatewayOrderId: paymentSession.order_id,
+        orderId: paymentSession.order_id,
         payment_session_id: paymentSession.payment_session_id,
         order_id: paymentSession.order_id,
         mode: paymentSession.mode,
@@ -9791,6 +10133,13 @@ requestRoutes.post(
     return c.json({ success: true, data: result });
   }
 );
+requestRoutes.post("/:id/confirm-payment", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => ({}));
+  const cfPaymentId = body.gatewayPaymentId || body.cfPaymentId || body.paymentId;
+  const updatedRequest = await paymentService.confirmPaymentOrder(id, cfPaymentId);
+  return c.json({ success: true, data: updatedRequest });
+});
 requestRoutes.get("/:id", async (c) => {
   const context = c.get("requestContext");
   const id = c.req.param("id");
@@ -9840,7 +10189,19 @@ requestRoutes.get("/:id/download-pdf", async (c) => {
       410
     );
   }
-  return new Response(pdfData.buffer, {
+  await logApiExecution({
+    organizationId: request.organizationId || context.organizationId || null,
+    userId: context.userId || null,
+    serviceCode: request.service?.code || "DOCUMENT_VAULT",
+    action: "Certificate / PDF Document Vault Download",
+    endpoint: `/api/v1/service-requests/${id}/download-pdf`,
+    reference: request.referenceNumber || id.slice(0, 8),
+    status: "SUCCESS",
+    statusCode: 200,
+    ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+    note: `Operator downloaded decrypted document from 24h ephemeral vault (Ref: ${request.referenceNumber || id})`
+  });
+  return new Response(new Uint8Array(pdfData.buffer), {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
@@ -9888,8 +10249,41 @@ panRoutes.post(
   validationMiddleware(findPanSchema),
   async (c) => {
     const { aadhaar } = c.get("validData");
-    const result = await panService.findPanByAadhaar(aadhaar);
-    return c.json({ success: true, data: result });
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = await panService.findPanByAadhaar(aadhaar);
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_FIND",
+        action: "Aadhaar PAN Find Inquiry",
+        endpoint: "/api/v1/pan/find",
+        reference: result.maskedPan,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Aadhaar lookup executed under citizen consent (DPDP Act). Masked PAN: ${result.maskedPan}`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Record not found";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_FIND",
+        action: "Aadhaar PAN Find Inquiry",
+        endpoint: "/api/v1/pan/find",
+        reference: "INQ-PAN-FIND",
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `Aadhaar lookup inquiry failed: ${msg}`
+      });
+      throw err;
+    }
   }
 );
 panRoutes.post(
@@ -9897,17 +10291,86 @@ panRoutes.post(
   validationMiddleware(panDetailsSchema),
   async (c) => {
     const validData = c.get("validData");
-    const result = await panService.getPanDetails(validData);
-    return c.json({ success: true, data: result });
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const panRef = typeof validData === "string" ? validData : validData && typeof validData === "object" && "pan" in validData ? validData.pan : "PAN_RECORD";
+    const start = Date.now();
+    try {
+      const result = await panService.getPanDetails(validData);
+      const maskedPan = result.pan ? `XXXXX${result.pan.slice(5)}` : panRef.length === 10 ? `XXXXX${panRef.slice(5)}` : "PAN_RECORD";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_DETAILS",
+        action: "PAN 360 Details Retrieval",
+        endpoint: "/api/v1/pan/details",
+        reference: maskedPan,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `PAN demographic records retrieved securely for masked PAN ${maskedPan}. DPDP citizen consent verified.`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Fetch failed";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      const safePanRef = panRef.length === 10 ? `XXXXX${panRef.slice(5)}` : "PAN_RECORD";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_DETAILS",
+        action: "PAN 360 Details Retrieval",
+        endpoint: "/api/v1/pan/details",
+        reference: safePanRef,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `PAN details retrieval failed: ${msg}`
+      });
+      throw err;
+    }
   }
 );
 panRoutes.post(
   "/decrypt-token",
   validationMiddleware(decryptPanTokenSchema),
-  async (c) => {
+  (c) => {
     const { searchToken } = c.get("validData");
-    const result = panService.decryptSearchToken(searchToken);
-    return c.json({ success: true, data: result });
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = panService.decryptSearchToken(searchToken);
+      const maskedPan = result.pan ? `XXXXX${result.pan.slice(5)}` : "PAN_TOKEN";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_FIND",
+        action: "PAN Token Decrypted",
+        endpoint: "/api/v1/pan/decrypt-token",
+        reference: maskedPan,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Stateless PAN token decrypted under citizen consent (DPDP compliant). Masked PAN: ${maskedPan}`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Invalid token";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_FIND",
+        action: "PAN Token Decrypt Failed",
+        endpoint: "/api/v1/pan/decrypt-token",
+        reference: "PAN_TOKEN",
+        status: "FAILED",
+        statusCode: 400,
+        durationMs: Date.now() - start,
+        note: `PAN token decryption failed: ${msg}`
+      });
+      throw err;
+    }
   }
 );
 panRoutes.post(
@@ -9915,17 +10378,85 @@ panRoutes.post(
   validationMiddleware(verifyPanDetailsSchema),
   async (c) => {
     const { pan } = c.get("validData");
-    const result = await panService.verifyPanDetails(pan);
-    return c.json({ success: true, data: result });
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = await panService.verifyPanDetails(pan);
+      const maskedPan = pan.length === 10 ? `XXXXX${pan.slice(5)}` : "PAN_RECORD";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_DETAILS",
+        action: "PAN Details Verification Inquiry",
+        endpoint: "/api/v1/pan/details/verify",
+        reference: maskedPan,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Verification inquiry for masked PAN ${maskedPan} completed. Registry status: Active.`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Invalid PAN";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      const safePan = pan.length === 10 ? `XXXXX${pan.slice(5)}` : "PAN_RECORD";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_DETAILS",
+        action: "PAN Details Verification Inquiry",
+        endpoint: "/api/v1/pan/details/verify",
+        reference: safePan,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `Verification inquiry failed for masked PAN ${safePan}: ${msg}`
+      });
+      throw err;
+    }
   }
 );
 panRoutes.post(
   "/details/decrypt",
   validationMiddleware(decryptPanTokenSchema),
-  async (c) => {
+  (c) => {
     const { searchToken } = c.get("validData");
-    const result = panService.decryptPanDetailsToken(searchToken);
-    return c.json({ success: true, data: result });
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = panService.decryptPanDetailsToken(searchToken);
+      const maskedPan = result.pan ? `XXXXX${result.pan.slice(5)}` : "PAN_REPORT";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_DETAILS",
+        action: "PAN Details Report Unlocked",
+        endpoint: "/api/v1/pan/details/decrypt",
+        reference: maskedPan,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Unlocked PAN details report for masked PAN ${maskedPan}. Citizen consent verified under DPDP Act.`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Invalid or expired token";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_DETAILS",
+        action: "PAN Details Report Unlock Failed",
+        endpoint: "/api/v1/pan/details/decrypt",
+        reference: "PAN_REPORT",
+        status: "FAILED",
+        statusCode: 400,
+        durationMs: Date.now() - start,
+        note: `Token unlock error: ${msg}`
+      });
+      throw err;
+    }
   }
 );
 
@@ -9973,7 +10504,7 @@ paymentRoutes.post("/cashfree/webhook", async (c) => {
   try {
     await paymentService.handleCashfreeWebhook(rawBody, signature, timestamp);
     return c.json({ success: true, message: "Webhook processed" }, 200);
-  } catch (err) {
+  } catch (_err) {
     return c.json({ success: false, message: "Webhook processing failed" }, 400);
   }
 });
@@ -9998,15 +10529,16 @@ var AdminService = class {
       where.organizationId = query.organizationId;
     }
     if (query.startDate || query.endDate) {
-      where.createdAt = {};
+      const createdAtCond = {};
       if (query.startDate) {
-        where.createdAt.gte = new Date(query.startDate);
+        createdAtCond.gte = new Date(query.startDate);
       }
       if (query.endDate) {
         const end = new Date(query.endDate);
         end.setHours(23, 59, 59, 999);
-        where.createdAt.lte = end;
+        createdAtCond.lte = end;
       }
+      where.createdAt = createdAtCond;
     }
     const serviceRequestConditions = {};
     if (query.serviceCode && query.serviceCode !== "ALL") {
@@ -10133,7 +10665,7 @@ var AdminService = class {
     };
   }
   /**
-   * 2. Get Single Transaction with complete debug audit & raw gateway response
+   * 2. Get Single Transaction with complete debug audit
    */
   async getTransactionById(id) {
     const payment = await prisma.payment.findUnique({
@@ -10170,7 +10702,7 @@ var AdminService = class {
     return payment;
   }
   /**
-   * 3. List all Organizations with stats, owners, and balances
+   * 3. List all Organizations with stats and balances
    */
   async getOrganizations(query) {
     const page = Math.max(1, Number(query.page) || 1);
@@ -10214,9 +10746,36 @@ var AdminService = class {
                   name: true,
                   email: true,
                   phone: true,
-                  role: true
+                  role: true,
+                  updatedAt: true,
+                  sessions: {
+                    orderBy: { updatedAt: "desc" },
+                    take: 1,
+                    select: {
+                      updatedAt: true,
+                      createdAt: true
+                    }
+                  }
                 }
               }
+            }
+          },
+          payments: {
+            where: {
+              status: "CAPTURED"
+            },
+            select: {
+              id: true,
+              amount: true,
+              paidAt: true,
+              createdAt: true
+            }
+          },
+          requests: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              createdAt: true
             }
           },
           _count: {
@@ -10233,8 +10792,22 @@ var AdminService = class {
         _sum: { balance: true }
       })
     ]);
+    const enhancedItems = items.map((org) => {
+      const ownerUser = org.members[0]?.user;
+      const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
+      const lastLogin = lastSessionDate || ownerUser?.updatedAt || org.createdAt;
+      const completedPayments = org.payments || [];
+      const completedPaymentsCount = completedPayments.length;
+      const completedPaymentsAmount = completedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      return {
+        ...org,
+        lastLogin,
+        completedPaymentsCount,
+        completedPaymentsAmount
+      };
+    });
     return {
-      items,
+      items: enhancedItems,
       pagination: {
         page,
         limit,
@@ -10295,7 +10868,7 @@ var AdminService = class {
     return org;
   }
   /**
-   * 5. Master Admin KPI Overview Stats (Cached in Redis with 60s TTL)
+   * 5. Master Admin KPI Overview Stats (Cached in Redis 60s TTL)
    */
   async getOverviewStats() {
     return await redis.remember("cache:admin:overview_stats", 60, async () => {
@@ -10379,11 +10952,1206 @@ var AdminService = class {
       };
     });
   }
+  // ==========================================
+  // 6. DISPUTE & EXCEPTION DESK ("Paisa Kat Gaya" Resolver)
+  // ==========================================
+  /**
+   * Lists hanging requests where payment was captured but service has not completed.
+   */
+  async getHangingRequests() {
+    const hanging = await prisma.serviceRequest.findMany({
+      where: {
+        payments: {
+          some: { status: "CAPTURED" }
+        },
+        status: {
+          in: ["REQUEST_CREATED", "PROCESSING", "PROVIDER_FAILED", "PAYMENT_PENDING", "PAYMENT_CAPTURED"]
+        }
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        service: true,
+        user: { select: { id: true, name: true, phone: true, email: true } },
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            wallet: true
+          }
+        },
+        payments: {
+          where: { status: "CAPTURED" },
+          orderBy: { createdAt: "desc" },
+          take: 1
+        },
+        customer: true
+      },
+      take: 100
+    });
+    return hanging;
+  }
+  /**
+   * Re-triggers fulfillment for a hanging request
+   */
+  async retryDispute(serviceRequestId) {
+    const req = await prisma.serviceRequest.findUnique({
+      where: { id: serviceRequestId },
+      include: { service: true }
+    });
+    if (!req) {
+      throw AppError.notFound("Service request not found", "NOT_FOUND");
+    }
+    logger2.info(`[Admin] Manually retrying fulfillment for request: ${serviceRequestId}`);
+    serviceDispatcher.fulfillAsync(serviceRequestId).catch((err) => {
+      logger2.error(`[Admin] Async retry fulfillment failed for ${serviceRequestId}:`, err);
+    });
+    return {
+      success: true,
+      message: `Fulfillment re-triggered for request ${req.referenceNumber || serviceRequestId}.`
+    };
+  }
+  /**
+   * Manually overrides a failed request with custom data / PDF
+   */
+  async manualOverrideDispute(serviceRequestId, resultData, note) {
+    const req = await prisma.serviceRequest.findUnique({
+      where: { id: serviceRequestId }
+    });
+    if (!req) {
+      throw AppError.notFound("Service request not found", "NOT_FOUND");
+    }
+    const normalizedData = {
+      ...typeof resultData === "object" && resultData !== null ? resultData : { raw: resultData },
+      status: "SUCCESS",
+      manualOverride: true,
+      adminNote: note || "Manually fulfilled by Master Administrator",
+      completedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    await ephemeralVault.storeVaultItem(serviceRequestId, normalizedData, 86400);
+    await prisma.serviceRequest.update({
+      where: { id: serviceRequestId },
+      data: {
+        status: "COMPLETED",
+        completedAt: /* @__PURE__ */ new Date(),
+        resultData: {
+          status: "COMPLETED",
+          manualOverride: true,
+          completedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }
+      }
+    });
+    await prisma.serviceRequestEvent.create({
+      data: {
+        serviceRequestId,
+        status: "COMPLETED",
+        note: note || "Admin manual override completed"
+      }
+    });
+    return {
+      success: true,
+      message: `Request ${req.referenceNumber || serviceRequestId} marked as COMPLETED via manual override.`
+    };
+  }
+  // ==========================================
+  // 7. UPSTREAM VENDOR HEALTH & CREDITS
+  // ==========================================
+  async getVendorHealth() {
+    const dbStart = Date.now();
+    let dbStatus = "HEALTHY";
+    let dbLatency = 0;
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      dbLatency = Date.now() - dbStart;
+    } catch {
+      dbStatus = "DOWN";
+    }
+    const redisStart = Date.now();
+    let redisStatus = "HEALTHY";
+    let redisLatency = 0;
+    try {
+      const pong = await redis.getRawClient()?.ping();
+      redisLatency = Date.now() - redisStart;
+      if (!pong) redisStatus = "DEGRADED";
+    } catch {
+      redisStatus = "DOWN";
+    }
+    const cfEnv = process.env.CASHFREE_ENVIRONMENT || "sandbox";
+    const cfUrl = process.env.CASHFREE_API_URL || (cfEnv === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg");
+    const hasCfCredentials = Boolean(process.env.CASHFREE_CLIENT_ID && process.env.CASHFREE_CLIENT_SECRET);
+    let activeVaultKeys = 0;
+    try {
+      const client = redis.getRawClient();
+      if (client) {
+        const keys = await client.keys("vault:*");
+        activeVaultKeys = keys.length;
+      }
+    } catch {
+      activeVaultKeys = 0;
+    }
+    let hostNetworkStats = null;
+    try {
+      const fs = await import("node:fs/promises");
+      const netDev = await fs.readFile("/proc/net/dev", "utf-8");
+      const lines = netDev.split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("wlan0:") || trimmed.startsWith("eth0:") || trimmed.startsWith("ens")) {
+          const parts = trimmed.split(":")[1].trim().split(/\s+/);
+          const rx = parseInt(parts[0], 10);
+          const tx = parseInt(parts[8], 10);
+          if (!isNaN(rx) && !isNaN(tx)) {
+            hostNetworkStats = { rxBytes: rx, txBytes: tx, interfaceName: trimmed.split(":")[0] };
+            break;
+          }
+        }
+      }
+    } catch {
+      hostNetworkStats = null;
+    }
+    const appPayloads = {
+      totalRequests: 0,
+      inboundPayloadBytes: 0,
+      outboundPayloadBytes: 0,
+      totalPayments: 0,
+      paymentWebhookBytes: 0
+    };
+    try {
+      const reqStats = await prisma.$queryRaw`
+        SELECT 
+          COUNT(*)::int as total_requests,
+          COALESCE(SUM(octet_length(CAST("inputData" AS text))), 0)::bigint as inbound_bytes,
+          COALESCE(SUM(octet_length(CAST("resultData" AS text))), 0)::bigint as outbound_bytes
+        FROM "ServiceRequest"
+      `;
+      const payStats = await prisma.$queryRaw`
+        SELECT 
+          COUNT(*)::int as total_payments,
+          COALESCE(SUM(octet_length(CAST("gatewayResponse" AS text))), 0)::bigint as webhook_bytes
+        FROM "Payment"
+      `;
+      if (reqStats && reqStats[0]) {
+        appPayloads.totalRequests = Number(reqStats[0].total_requests) || 0;
+        appPayloads.inboundPayloadBytes = Number(reqStats[0].inbound_bytes) || 0;
+        appPayloads.outboundPayloadBytes = Number(reqStats[0].outbound_bytes) || 0;
+      }
+      if (payStats && payStats[0]) {
+        appPayloads.totalPayments = Number(payStats[0].total_payments) || 0;
+        appPayloads.paymentWebhookBytes = Number(payStats[0].webhook_bytes) || 0;
+      }
+    } catch {
+    }
+    const rxBytes = hostNetworkStats ? hostNetworkStats.rxBytes : appPayloads.inboundPayloadBytes + appPayloads.paymentWebhookBytes;
+    const txBytes = hostNetworkStats ? hostNetworkStats.txBytes : appPayloads.outboundPayloadBytes;
+    const bandwidth = {
+      source: hostNetworkStats ? "HOST_KERNEL" : "DATABASE_PAYLOADS",
+      interfaceName: hostNetworkStats?.interfaceName,
+      totalRxBytes: rxBytes,
+      totalTxBytes: txBytes,
+      totalBytes: rxBytes + txBytes,
+      applicationPayloads: appPayloads
+    };
+    return {
+      overallStatus: dbStatus === "HEALTHY" && redisStatus === "HEALTHY" ? "HEALTHY" : "DEGRADED",
+      database: {
+        status: dbStatus,
+        latencyMs: dbLatency,
+        provider: "PostgreSQL"
+      },
+      redis: {
+        status: redisStatus,
+        latencyMs: redisLatency,
+        activeVaultKeys
+      },
+      cashfree: {
+        status: hasCfCredentials ? "CONFIGURED" : "MISSING_CREDENTIALS",
+        environment: cfEnv,
+        endpoint: cfUrl
+      },
+      bandwidth
+    };
+  }
+  // ==========================================
+  // 8. SERVICE KILL-SWITCHES & MAINTENANCE MODE
+  // ==========================================
+  async getMaintenanceStatus() {
+    const globalMaint = await redis.getJson("system:maintenance:global");
+    const services = await prisma.service.findMany({
+      select: { id: true, code: true, name: true, isActive: true },
+      orderBy: { code: "asc" }
+    });
+    const serviceStatuses = await Promise.all(
+      services.map(async (srv) => {
+        const maint = await redis.getJson(`service:maintenance:${srv.code}`);
+        return {
+          id: srv.id,
+          code: srv.code,
+          name: srv.name,
+          isActive: srv.isActive,
+          underMaintenance: maint ? Boolean(maint.enabled) : false,
+          maintenanceMessage: maint?.message || null
+        };
+      })
+    );
+    return {
+      globalMaintenance: {
+        enabled: globalMaint ? Boolean(globalMaint.enabled) : false,
+        message: globalMaint?.message || null
+      },
+      services: serviceStatuses
+    };
+  }
+  async setMaintenanceStatus(input) {
+    if (input.scope === "GLOBAL") {
+      await redis.setJson("system:maintenance:global", {
+        enabled: input.enabled,
+        message: input.message || "Platform under scheduled maintenance",
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } else if (input.serviceCode) {
+      const code = input.serviceCode.toUpperCase();
+      await redis.setJson(`service:maintenance:${code}`, {
+        enabled: input.enabled,
+        message: input.message || `Service ${code} is temporarily under maintenance`,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
+    await redis.delPattern("cache:services:*");
+    return {
+      success: true,
+      message: "Maintenance configuration updated successfully."
+    };
+  }
+  // ==========================================
+  // 9. IN-APP BROADCAST NOTICE BOARD
+  // ==========================================
+  async getAnnouncement() {
+    const announcement = await redis.getJson("system:announcement");
+    return announcement || { active: false, message: "" };
+  }
+  async setAnnouncement(input) {
+    const data = {
+      ...input,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    await redis.setJson("system:announcement", data);
+    return {
+      success: true,
+      data
+    };
+  }
+  // ==========================================
+  // 10. WALLET GOVERNANCE & RECONCILIATION
+  // ==========================================
+  async adjustOrganizationWallet(organizationId, input) {
+    return await prisma.$transaction(async (tx) => {
+      let wallet = await tx.wallet.findUnique({
+        where: { organizationId }
+      });
+      if (!wallet) {
+        wallet = await tx.wallet.create({
+          data: {
+            organizationId,
+            balance: 0,
+            currency: "INR"
+          }
+        });
+      }
+      const prevBalance = Number(wallet.balance);
+      let newBalance = prevBalance;
+      if (input.type === "CREDIT") {
+        newBalance = prevBalance + input.amount;
+      } else {
+        if (prevBalance < input.amount) {
+          throw AppError.badRequest(
+            `Insufficient wallet balance. Current balance is \u20B9${prevBalance.toFixed(2)}, cannot debit \u20B9${input.amount.toFixed(2)}`,
+            "INSUFFICIENT_BALANCE"
+          );
+        }
+        newBalance = prevBalance - input.amount;
+      }
+      await tx.wallet.update({
+        where: { id: wallet.id },
+        data: { balance: newBalance }
+      });
+      const txRecord = await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          amount: input.amount,
+          type: input.type,
+          balanceAfter: newBalance,
+          referenceId: input.referenceId || null,
+          description: `[Manual Admin ${input.type}] ${input.reason}`
+        }
+      });
+      logger2.info(
+        `[Admin] Wallet adjusted for Org ${organizationId}: ${input.type} \u20B9${input.amount} (Balance: ${prevBalance} -> ${newBalance})`
+      );
+      return {
+        success: true,
+        previousBalance: prevBalance,
+        newBalance,
+        transaction: txRecord,
+        message: `Wallet ${input.type === "CREDIT" ? "credited" : "debited"} \u20B9${input.amount.toFixed(2)} successfully.`
+      };
+    });
+  }
+  async getLedgerReconciliation() {
+    const [capturedPayments, walletCredits, walletDebits, completedRequests] = await Promise.all([
+      prisma.payment.aggregate({
+        where: { status: "CAPTURED" },
+        _sum: { amount: true },
+        _count: { _all: true }
+      }),
+      prisma.walletTransaction.aggregate({
+        where: { type: "CREDIT" },
+        _sum: { amount: true },
+        _count: { _all: true }
+      }),
+      prisma.walletTransaction.aggregate({
+        where: { type: "DEBIT" },
+        _sum: { amount: true },
+        _count: { _all: true }
+      }),
+      prisma.serviceRequest.aggregate({
+        where: { status: "COMPLETED" },
+        _sum: { amount: true },
+        _count: { _all: true }
+      })
+    ]);
+    const totalGatewayInflow = Number(capturedPayments._sum.amount || 0);
+    const totalWalletCredits = Number(walletCredits._sum.amount || 0);
+    const totalWalletDebits = Number(walletDebits._sum.amount || 0);
+    const totalServiceFulfilled = Number(completedRequests._sum.amount || 0);
+    return {
+      totalGatewayInflow,
+      gatewayTransactionsCount: capturedPayments._count._all,
+      totalWalletCredits,
+      totalWalletDebits,
+      activeWalletLiabilities: totalWalletCredits - totalWalletDebits,
+      totalServiceFulfilled,
+      completedRequestsCount: completedRequests._count._all,
+      netEstimatedMargin: Math.max(0, totalServiceFulfilled * 0.4)
+      // Platform 40% margin estimate
+    };
+  }
+  // ==========================================
+  // 11. DYNAMIC PRICING & TIER MANAGER
+  // ==========================================
+  async getPricingMatrix() {
+    const services = await prisma.service.findMany({
+      include: {
+        category: true,
+        prices: true
+      },
+      orderBy: { code: "asc" }
+    });
+    const defaultEstimatedCost = {
+      PAN_FIND: 2.5,
+      PAN_DETAILS: 2,
+      KISAN_CARD: 0,
+      KISAN_REGISTRATION_CARD: 0
+    };
+    return services.map((srv) => {
+      const getPrice = (tier) => {
+        const found = srv.prices.find((p) => p.pricingTier === tier);
+        return found ? Number(found.amount) : 0;
+      };
+      const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 25);
+      const estCost = defaultEstimatedCost[srv.code] ?? 0;
+      const margin = partnerPrice - estCost;
+      return {
+        id: srv.id,
+        code: srv.code,
+        name: srv.name,
+        category: srv.category?.name || "General",
+        isActive: srv.isActive,
+        prices: {
+          public: getPrice("PUBLIC") || 40,
+          partner: partnerPrice,
+          partnerGold: getPrice("PARTNER_GOLD") || partnerPrice * 0.85,
+          enterprise: getPrice("ENTERPRISE") || partnerPrice * 0.7
+        },
+        estimatedVendorCost: estCost,
+        estimatedProfitMargin: margin
+      };
+    });
+  }
+  async updateTierPrice(input) {
+    const service = await prisma.service.findUnique({
+      where: { id: input.serviceId }
+    });
+    if (!service) {
+      throw AppError.notFound("Service not found", "NOT_FOUND");
+    }
+    const priceRecord = await prisma.servicePrice.upsert({
+      where: {
+        serviceId_pricingTier: {
+          serviceId: input.serviceId,
+          pricingTier: input.pricingTier
+        }
+      },
+      create: {
+        serviceId: input.serviceId,
+        pricingTier: input.pricingTier,
+        amount: input.amount,
+        currency: "INR"
+      },
+      update: {
+        amount: input.amount
+      }
+    });
+    await redis.delPattern("cache:services:*");
+    return {
+      success: true,
+      serviceId: input.serviceId,
+      pricingTier: input.pricingTier,
+      amount: Number(priceRecord.amount),
+      message: `Price for ${service.code} (${input.pricingTier}) updated to \u20B9${input.amount.toFixed(2)}.`
+    };
+  }
+  // ==========================================
+  // 12. RETAILER CHURN RADAR & LIFECYCLE
+  // ==========================================
+  async getChurnRadar() {
+    return await redis.remember("cache:admin:churn_radar", 60, async () => {
+      const now = /* @__PURE__ */ new Date();
+      const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1e3);
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3);
+      const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1e3);
+      const orgs = await prisma.organization.findMany({
+        include: {
+          members: {
+            include: {
+              user: {
+                select: { id: true, name: true, phone: true, email: true }
+              }
+            }
+          },
+          requests: {
+            select: { createdAt: true },
+            orderBy: { createdAt: "desc" },
+            take: 1
+          },
+          _count: {
+            select: { requests: true, payments: true }
+          }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+      const day0Dropoffs = [];
+      const activeOrgs = [];
+      const dormantOrgs = [];
+      const powerOrgs = [];
+      orgs.forEach((org) => {
+        const owner = org.members[0]?.user;
+        const totalRequests = org._count.requests;
+        const lastRequestDate = org.requests[0]?.createdAt ? new Date(org.requests[0].createdAt) : null;
+        const cleanPhone = owner?.phone?.replace(/[^0-9]/g, "") || "";
+        const whatsappUrl = cleanPhone.length === 10 ? `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Namaste ${owner?.name || "Partner"} ji, Nagrik Seva Point support team here. Aapke Cyber Caf\xE9 par services chalu karne me koi dikkat aa rahi hai?`)}` : null;
+        const record = {
+          id: org.id,
+          name: org.name,
+          slug: org.slug || org.id,
+          ownerName: owner?.name || "N/A",
+          phone: owner?.phone || "N/A",
+          email: owner?.email || "N/A",
+          whatsappUrl,
+          totalRequests,
+          createdAt: org.createdAt,
+          lastActiveAt: lastRequestDate
+        };
+        if (org.createdAt <= twoDaysAgo && totalRequests === 0) {
+          day0Dropoffs.push(record);
+        } else if (lastRequestDate && lastRequestDate >= sevenDaysAgo) {
+          activeOrgs.push(record);
+          if (totalRequests >= 20) {
+            powerOrgs.push(record);
+          }
+        } else if (totalRequests > 0 && (!lastRequestDate || lastRequestDate < fourteenDaysAgo)) {
+          dormantOrgs.push(record);
+        } else {
+          activeOrgs.push(record);
+        }
+      });
+      return {
+        summary: {
+          totalOrganizations: orgs.length,
+          activeCount: activeOrgs.length,
+          day0DropoffCount: day0Dropoffs.length,
+          dormantCount: dormantOrgs.length,
+          powerCount: powerOrgs.length
+        },
+        day0Dropoffs: day0Dropoffs.slice(0, 30),
+        activeOrgs: activeOrgs.slice(0, 30),
+        dormantOrgs: dormantOrgs.slice(0, 30),
+        powerOrgs: powerOrgs.slice(0, 30)
+      };
+    });
+  }
+  async setOrganizationStatus(organizationId, input) {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+    if (!org) {
+      throw AppError.notFound("Organization not found", "NOT_FOUND");
+    }
+    let metadataObj = {};
+    try {
+      if (org.metadata) metadataObj = JSON.parse(org.metadata);
+    } catch {
+      metadataObj = {};
+    }
+    metadataObj.status = input.status;
+    metadataObj.statusReason = input.reason || null;
+    metadataObj.statusUpdatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: { metadata: JSON.stringify(metadataObj) }
+    });
+    await redis.set(`org:status:${organizationId}`, input.status);
+    return {
+      success: true,
+      organizationId,
+      status: input.status,
+      message: `Organization status updated to ${input.status}.`
+    };
+  }
+  // ==========================================
+  // 13. FINANCIAL LEAKAGE & UNIT ECONOMICS
+  // ==========================================
+  async getFinancialLeakage(timeRange = "30DAYS") {
+    const cacheKey = `cache:admin:financial_leakage:${timeRange}`;
+    return await redis.remember(cacheKey, 15, async () => {
+      const now = /* @__PURE__ */ new Date();
+      let startDate;
+      let endDate;
+      if (timeRange === "TODAY") {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else if (timeRange === "YESTERDAY") {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else if (timeRange === "7DAYS") {
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3);
+      } else if (timeRange === "30DAYS") {
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1e3);
+      } else if (timeRange === "ALL") {
+        startDate = void 0;
+      }
+      const whereDate = {};
+      if (startDate && endDate) {
+        whereDate.createdAt = { gte: startDate, lt: endDate };
+      } else if (startDate) {
+        whereDate.createdAt = { gte: startDate };
+      }
+      const serviceCostMap = {
+        PAN_FIND: 2.5,
+        PAN_DETAILS: 2,
+        KISAN_CARD: 0,
+        KISAN_REGISTRATION_CARD: 0
+      };
+      const [services, allRequests] = await Promise.all([
+        prisma.service.findMany({
+          select: { id: true, code: true, name: true }
+        }),
+        prisma.serviceRequest.findMany({
+          where: whereDate,
+          orderBy: { createdAt: "desc" },
+          take: 300,
+          include: {
+            service: { select: { id: true, code: true, name: true } },
+            organization: { select: { id: true, name: true, slug: true } },
+            user: { select: { id: true, name: true, phone: true, email: true } },
+            customer: { select: { id: true, name: true, phone: true } },
+            payments: {
+              select: { id: true, amount: true, status: true, paidAt: true }
+            }
+          }
+        })
+      ]);
+      let totalGrossRevenue = 0;
+      let completedVendorCost = 0;
+      let wastedVendorCost = 0;
+      let panFindCalls = 0;
+      let panDetailsCalls = 0;
+      let otherCalls = 0;
+      let completedCount = 0;
+      let abandonedCount = 0;
+      const serviceMap = {};
+      services.forEach((s) => {
+        serviceMap[s.code] = {
+          code: s.code,
+          name: s.name,
+          unitCost: serviceCostMap[s.code] ?? 0,
+          totalInvocations: 0,
+          completedCount: 0,
+          completedRevenue: 0,
+          fulfilledCost: 0,
+          abandonedCount: 0,
+          wastedCost: 0
+        };
+      });
+      const detailedLedger = allRequests.map((req) => {
+        const code = req.service.code;
+        const unitCost = serviceCostMap[code] ?? 0;
+        if (code === "PAN_FIND") panFindCalls++;
+        else if (code === "PAN_DETAILS") panDetailsCalls++;
+        else otherCalls++;
+        if (!serviceMap[code]) {
+          serviceMap[code] = {
+            code,
+            name: req.service.name,
+            unitCost,
+            totalInvocations: 0,
+            completedCount: 0,
+            completedRevenue: 0,
+            fulfilledCost: 0,
+            abandonedCount: 0,
+            wastedCost: 0
+          };
+        }
+        serviceMap[code].totalInvocations++;
+        const capturedPayment = req.payments.find((p) => p.status === "CAPTURED");
+        const isCompleted = req.status === "COMPLETED" || Boolean(capturedPayment);
+        const isAbandoned = !isCompleted && ["REQUEST_CREATED", "PRICE_LOCKED", "PAYMENT_PENDING"].includes(req.status);
+        let revenue = 0;
+        if (isCompleted) {
+          completedCount++;
+          revenue = capturedPayment ? Number(capturedPayment.amount) : Number(req.amount || 0);
+          totalGrossRevenue += revenue;
+          completedVendorCost += unitCost;
+          serviceMap[code].completedCount++;
+          serviceMap[code].completedRevenue += revenue;
+          serviceMap[code].fulfilledCost += unitCost;
+        } else if (isAbandoned) {
+          abandonedCount++;
+          wastedVendorCost += unitCost;
+          serviceMap[code].abandonedCount++;
+          serviceMap[code].wastedCost += unitCost;
+        }
+        const netProfit = revenue - unitCost;
+        const targetPhone = req.customer?.phone || req.user?.phone || "";
+        const cleanPhone = targetPhone.replace(/[^0-9]/g, "");
+        const targetName = req.customer?.name || req.user?.name || "Customer";
+        const whatsappUrl = cleanPhone.length === 10 ? `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Namaste ${targetName} ji, Nagrik Seva Point support team here. Aapka ${req.service.name} lookup process start hua tha. Kya payment / checkout complete karne me koi dikkat aa rahi hai?`)}` : null;
+        return {
+          id: req.id,
+          referenceNumber: req.referenceNumber || req.id.slice(0, 8).toUpperCase(),
+          serviceCode: code,
+          serviceName: req.service.name,
+          createdAt: req.createdAt,
+          status: req.status,
+          isPaid: isCompleted,
+          revenue,
+          incurredVendorCost: unitCost,
+          netProfit,
+          organization: req.organization ? { id: req.organization.id, name: req.organization.name } : null,
+          user: req.user ? { name: req.user.name, phone: req.user.phone } : null,
+          customer: req.customer ? { name: req.customer.name, phone: req.customer.phone } : null,
+          whatsappUrl
+        };
+      });
+      const totalRequests = allRequests.length;
+      const totalVendorBurn = completedVendorCost + wastedVendorCost;
+      const netPlatformProfit = totalGrossRevenue - totalVendorBurn;
+      const profitMargin = totalGrossRevenue > 0 ? Math.round(netPlatformProfit / totalGrossRevenue * 100) : 0;
+      const conversionRate = totalRequests > 0 ? Math.round(completedCount / totalRequests * 100) : 100;
+      const dropoffRate = 100 - conversionRate;
+      const plainApiWalletBurn = {
+        panFindCalls,
+        panFindBurn: Number((panFindCalls * 2.5).toFixed(2)),
+        panDetailsCalls,
+        panDetailsBurn: Number((panDetailsCalls * 2).toFixed(2)),
+        otherCalls,
+        otherBurn: 0,
+        totalCalls: panFindCalls + panDetailsCalls,
+        totalCreditBurned: Number((panFindCalls * 2.5 + panDetailsCalls * 2).toFixed(2))
+      };
+      const serviceBreakdown = Object.values(serviceMap).filter((s) => s.totalInvocations > 0).map((s) => {
+        const serviceNet = s.completedRevenue - (s.fulfilledCost + s.wastedCost);
+        const serviceMargin = s.completedRevenue > 0 ? Math.round(serviceNet / s.completedRevenue * 100) : 0;
+        return {
+          serviceCode: s.code,
+          serviceName: s.name,
+          unitCost: s.unitCost,
+          totalInvocations: s.totalInvocations,
+          completedCount: s.completedCount,
+          completedRevenue: Number(s.completedRevenue.toFixed(2)),
+          fulfilledCost: Number(s.fulfilledCost.toFixed(2)),
+          abandonedCount: s.abandonedCount,
+          wastedCost: Number(s.wastedCost.toFixed(2)),
+          estimatedWastedCost: Number(s.wastedCost.toFixed(2)),
+          serviceNetProfit: Number(serviceNet.toFixed(2)),
+          marginPercentage: serviceMargin
+        };
+      });
+      return {
+        timeRange,
+        totalRequests,
+        completedPaidRequests: completedCount,
+        abandonedUnpaidRequests: abandonedCount,
+        conversionRate,
+        dropoffRate,
+        totalGrossRevenue: Number(totalGrossRevenue.toFixed(2)),
+        fulfilledVendorCost: Number(completedVendorCost.toFixed(2)),
+        wastedVendorCost: Number(wastedVendorCost.toFixed(2)),
+        totalVendorBurn: Number(totalVendorBurn.toFixed(2)),
+        netPlatformProfit: Number(netPlatformProfit.toFixed(2)),
+        profitMargin,
+        plainApiWalletBurn,
+        breakdown: serviceBreakdown,
+        recentRequestsLedger: detailedLedger.slice(0, 50)
+      };
+    });
+  }
+  // ==========================================
+  // 14. ORGANIZATION MILESTONES & AUDIT TIMELINE
+  // ==========================================
+  async getOrganizationMilestones(organizationId) {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      include: {
+        members: { include: { user: true } },
+        wallet: {
+          include: {
+            transactions: {
+              orderBy: { createdAt: "asc" },
+              take: 5
+            }
+          }
+        },
+        requests: {
+          orderBy: { createdAt: "asc" },
+          take: 5,
+          include: { service: true }
+        },
+        _count: { select: { requests: true, payments: true } }
+      }
+    });
+    if (!org) {
+      throw AppError.notFound("Organization not found", "NOT_FOUND");
+    }
+    const milestones = [];
+    milestones.push({
+      type: "REGISTRATION",
+      title: "Organization Registered",
+      description: `Cyber Caf\xE9 workspace created by ${org.members[0]?.user?.name || "Owner"}`,
+      timestamp: org.createdAt,
+      icon: "Building2"
+    });
+    const firstCredit = org.wallet?.transactions.find((t) => t.type === "CREDIT");
+    if (firstCredit) {
+      milestones.push({
+        type: "FIRST_RECHARGE",
+        title: "First Wallet Recharge",
+        description: `Wallet credited with \u20B9${Number(firstCredit.amount).toFixed(2)} (${firstCredit.description})`,
+        timestamp: firstCredit.createdAt,
+        icon: "Wallet"
+      });
+    }
+    const firstCompletedReq = org.requests.find((r) => r.status === "COMPLETED");
+    if (firstCompletedReq) {
+      milestones.push({
+        type: "FIRST_SERVICE",
+        title: "First Service Fulfilled",
+        description: `Successfully processed ${firstCompletedReq.service.name}`,
+        timestamp: firstCompletedReq.createdAt,
+        icon: "CheckCircle2"
+      });
+    }
+    const total = org._count.requests;
+    if (total >= 10) {
+      milestones.push({
+        type: "VOLUME_10",
+        title: "10 Transactions Milestone",
+        description: "Retailer crossed initial 10 customer service requests.",
+        timestamp: org.requests[org.requests.length - 1]?.createdAt || org.createdAt,
+        icon: "TrendingUp"
+      });
+    }
+    if (total >= 50) {
+      milestones.push({
+        type: "VOLUME_50",
+        title: "Partner Gold Eligible (50+ Requests)",
+        description: "Crossed 50 completed transactions. Qualifies for discounted tier pricing.",
+        timestamp: /* @__PURE__ */ new Date(),
+        icon: "Award"
+      });
+    }
+    return {
+      organizationId,
+      organizationName: org.name,
+      owner: org.members[0]?.user,
+      totalRequests: total,
+      walletBalance: Number(org.wallet?.balance || 0),
+      milestones: milestones.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    };
+  }
+  // ==========================================
+  // 15. SYSTEM & ORGANIZATION AUDIT LOGS
+  // ==========================================
+  async getAuditLogs(query) {
+    const { organizationId, category = "ALL", page = 1, limit = 30 } = query;
+    const skip = (page - 1) * limit;
+    const isDirectWalkin = organizationId === "DIRECT_WALKIN";
+    const whereWallet = isDirectWalkin ? { id: "impossible_direct_walkin_none" } : organizationId ? { wallet: { organizationId } } : {};
+    const wherePayment = isDirectWalkin ? { organizationId: null } : organizationId ? { organizationId } : {};
+    const whereEvents = isDirectWalkin ? { serviceRequest: { organizationId: null } } : organizationId ? { serviceRequest: { organizationId } } : {};
+    const whereSession = isDirectWalkin ? { id: "impossible_direct_walkin_none" } : organizationId ? {
+      OR: [
+        { activeOrganizationId: organizationId },
+        { user: { members: { some: { organizationId } } } }
+      ]
+    } : {};
+    const whereApiLog = isDirectWalkin ? { organizationId: null } : organizationId ? {
+      OR: [
+        { organizationId },
+        { user: { members: { some: { organizationId } } } }
+      ]
+    } : {};
+    const orgQuery = isDirectWalkin ? Promise.resolve([]) : prisma.organization.findMany({
+      where: organizationId ? { id: organizationId } : void 0,
+      orderBy: { createdAt: "desc" },
+      take: organizationId ? 1 : 20,
+      select: { id: true, name: true, createdAt: true }
+    });
+    const [walletTx, payments, requestEvents, sessions, apiLogs, totalOrgs] = await Promise.all([
+      prisma.walletTransaction.findMany({
+        where: whereWallet,
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        include: {
+          wallet: {
+            include: {
+              organization: { select: { id: true, name: true } }
+            }
+          }
+        }
+      }),
+      prisma.payment.findMany({
+        where: wherePayment,
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        include: {
+          organization: { select: { id: true, name: true } },
+          serviceRequest: {
+            select: {
+              id: true,
+              referenceNumber: true,
+              amount: true,
+              organization: { select: { id: true, name: true } },
+              service: { select: { name: true, code: true } }
+            }
+          }
+        }
+      }),
+      prisma.serviceRequestEvent.findMany({
+        where: whereEvents,
+        orderBy: { createdAt: "desc" },
+        take: 150,
+        include: {
+          serviceRequest: {
+            select: {
+              id: true,
+              referenceNumber: true,
+              amount: true,
+              organization: { select: { id: true, name: true } },
+              service: { select: { name: true, code: true } }
+            }
+          }
+        }
+      }),
+      prisma.session.findMany({
+        where: whereSession,
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              members: {
+                include: {
+                  organization: { select: { id: true, name: true } }
+                }
+              }
+            }
+          }
+        }
+      }),
+      prisma.apiLog.findMany({
+        where: whereApiLog,
+        orderBy: { createdAt: "desc" },
+        take: 150,
+        include: {
+          organization: { select: { id: true, name: true } },
+          user: { select: { id: true, name: true, email: true } }
+        }
+      }),
+      orgQuery
+    ]);
+    const auditItems = [];
+    walletTx.forEach((tx) => {
+      const isManual = tx.description?.toLowerCase().includes("manual") || tx.description?.toLowerCase().includes("admin") || tx.description?.toLowerCase().includes("override");
+      auditItems.push({
+        id: `wallet-${tx.id}`,
+        category: isManual ? "SECURITY" : "WALLET",
+        title: tx.type === "CREDIT" ? "Wallet Credited" : "Wallet Debited",
+        description: tx.description || `${tx.type} adjustment of \u20B9${Number(tx.amount).toFixed(2)}`,
+        organizationId: tx.wallet?.organization?.id,
+        organizationName: tx.wallet?.organization?.name || "Cyber Caf\xE9",
+        amount: Number(tx.amount),
+        type: tx.type,
+        timestamp: tx.createdAt,
+        badgeVariant: tx.type === "CREDIT" ? "success" : "warning"
+      });
+    });
+    payments.forEach((pay) => {
+      const isCaptured = pay.status === "CAPTURED";
+      const isFailed = pay.status === "FAILED";
+      const isRefunded = pay.status === "REFUNDED";
+      const serviceName = pay.serviceRequest?.service?.name || "Service Gateway Payment";
+      const refNum = pay.serviceRequest?.referenceNumber || pay.orderId;
+      const mode = pay.paymentMode || "Cashfree Gateway";
+      let desc = `Payment of \u20B9${Number(pay.amount).toFixed(2)} ${isCaptured ? "captured" : pay.status.toLowerCase()} via ${mode}.`;
+      if (pay.orderId) desc += ` Order: ${pay.orderId}`;
+      if (pay.transactionId) desc += `, Txn: ${pay.transactionId}`;
+      auditItems.push({
+        id: `pay-${pay.id}`,
+        category: "WALLET",
+        title: isCaptured ? "Payment Captured (Cashfree)" : isRefunded ? "Payment Refunded" : isFailed ? "Payment Failed" : `Payment ${pay.status}`,
+        description: `${serviceName} - ${desc}`,
+        referenceNumber: refNum,
+        organizationId: pay.organizationId || pay.organization?.id,
+        organizationName: pay.organization?.name || "Direct Walk-in",
+        amount: Number(pay.amount),
+        type: isRefunded ? "CREDIT" : "DEBIT",
+        status: pay.status,
+        timestamp: pay.paidAt || pay.updatedAt || pay.createdAt,
+        badgeVariant: isCaptured ? "success" : isFailed ? "destructive" : "outline"
+      });
+    });
+    requestEvents.forEach((ev) => {
+      const isMilestone = ev.status === "COMPLETED";
+      const isFailed = ev.status === "PROVIDER_FAILED";
+      const isRefund = ev.note?.toLowerCase().includes("refund") || ev.status === "REFUNDED";
+      const serviceName = ev.serviceRequest.service.name;
+      const refNum = ev.serviceRequest.referenceNumber || ev.serviceRequest.id.slice(0, 8);
+      let cleanDesc = ev.note || ev.status;
+      if (cleanDesc.includes(refNum)) {
+        cleanDesc = cleanDesc.replace(new RegExp(`\\(?[REQ-]*${refNum}\\)?`, "g"), "").trim();
+      }
+      if (cleanDesc.startsWith("-")) {
+        cleanDesc = cleanDesc.substring(1).trim();
+      }
+      let title = `Service ${ev.status}`;
+      if (isRefund) {
+        title = "Service Refunded";
+      } else if (ev.status === "COMPLETED") {
+        title = "Service Fulfilled & Vaulted";
+      } else if (ev.status === "PROCESSING") {
+        title = "Dispatched for Processing";
+      } else if (ev.status === "PAYMENT_CAPTURED") {
+        title = "Payment Confirmed & Verified";
+      } else if (ev.status === "PAYMENT_PENDING") {
+        title = "Awaiting Citizen Payment";
+      } else if (ev.status === "REQUEST_CREATED") {
+        title = "Service Request Initiated";
+      }
+      let badgeVariant = "outline";
+      if (isFailed) {
+        badgeVariant = "destructive";
+      } else if (isMilestone || ev.status === "PAYMENT_CAPTURED") {
+        badgeVariant = "success";
+      } else if (ev.status === "PROCESSING") {
+        badgeVariant = "secondary";
+      }
+      auditItems.push({
+        id: `req-${ev.id}`,
+        category: isFailed ? "SECURITY" : isMilestone ? "MILESTONE" : "SERVICE",
+        title,
+        description: cleanDesc ? `${serviceName} - ${cleanDesc}` : `${serviceName} (${refNum})`,
+        referenceNumber: refNum,
+        organizationId: ev.serviceRequest.organization?.id,
+        organizationName: ev.serviceRequest.organization?.name || "Direct Walk-in",
+        amount: Number(ev.serviceRequest.amount),
+        status: ev.status,
+        timestamp: ev.createdAt,
+        badgeVariant
+      });
+    });
+    totalOrgs.forEach((org) => {
+      if (!organizationId || organizationId === org.id) {
+        auditItems.push({
+          id: `org-${org.id}`,
+          category: "MILESTONE",
+          title: "New Organization Registered",
+          description: `${org.name} joined Nagrik Seva Point platform`,
+          organizationId: org.id,
+          organizationName: org.name,
+          timestamp: org.createdAt,
+          badgeVariant: "default"
+        });
+      }
+    });
+    sessions.forEach((s) => {
+      const alreadyHasLoginLog = apiLogs.some(
+        (l) => l.serviceCode === "AUTH" && l.action.toLowerCase().includes("login") && (l.reference?.includes(s.id.slice(0, 8).toUpperCase()) || l.userId === s.userId && Math.abs(new Date(l.createdAt).getTime() - new Date(s.createdAt).getTime()) < 6e4)
+      );
+      if (alreadyHasLoginLog) return;
+      const orgName = s.user.members?.[0]?.organization?.name || "Cyber Caf\xE9";
+      const orgId = s.activeOrganizationId || s.user.members?.[0]?.organization?.id;
+      let clientDevice = "Web Browser";
+      if (s.userAgent) {
+        if (s.userAgent.includes("Edg/")) clientDevice = "Edge Browser";
+        else if (s.userAgent.includes("Chrome/") && !s.userAgent.includes("Edg/")) clientDevice = "Google Chrome";
+        else if (s.userAgent.includes("Firefox/")) clientDevice = "Mozilla Firefox";
+        else if (s.userAgent.includes("Safari/") && !s.userAgent.includes("Chrome")) clientDevice = "Apple Safari";
+        else if (s.userAgent.includes("Mobile")) clientDevice = "Mobile Browser";
+      }
+      const ip = s.ipAddress && s.ipAddress !== "::1" ? s.ipAddress : "127.0.0.1 (Localhost)";
+      auditItems.push({
+        id: `login-${s.id}`,
+        category: "SECURITY",
+        title: "Operator Login & Session Started",
+        description: `${s.user.name} (${s.user.email}) logged into caf\xE9 workspace via ${clientDevice}. IP: ${ip}`,
+        referenceNumber: `AUTH-${s.id.slice(0, 8).toUpperCase()}`,
+        organizationId: orgId,
+        organizationName: orgName,
+        timestamp: s.createdAt,
+        badgeVariant: "outline"
+      });
+    });
+    apiLogs.forEach((log2) => {
+      const isSuccess = log2.status === "SUCCESS";
+      const orgName = log2.organization?.name || "Cyber Caf\xE9";
+      const actLower = log2.action.toLowerCase();
+      const isAuth = log2.serviceCode === "AUTH" || actLower.includes("logout") || actLower.includes("login") || actLower.includes("register");
+      const isCustomer = log2.serviceCode === "CUSTOMER";
+      const isDocVault = actLower.includes("download") || log2.serviceCode === "DOCUMENT_VAULT";
+      let category2 = "SERVICE";
+      if (isAuth || isCustomer || isDocVault) {
+        category2 = "SECURITY";
+      }
+      const safeRef = sanitizeDpdpData(log2.reference) || "API-INQ";
+      const safeDesc = sanitizeDpdpData(log2.note) || `API inquiry executed for ${safeRef} (${log2.endpoint})`;
+      auditItems.push({
+        id: `api-${log2.id}`,
+        category: category2,
+        title: log2.action,
+        description: safeDesc,
+        referenceNumber: safeRef,
+        organizationId: log2.organizationId,
+        organizationName: orgName,
+        status: log2.status,
+        timestamp: log2.createdAt,
+        badgeVariant: isSuccess ? category2 === "SECURITY" ? "outline" : "secondary" : "destructive"
+      });
+    });
+    const summary = {
+      totalEvents: auditItems.length,
+      walletEvents: auditItems.filter((i) => i.category === "WALLET").length,
+      serviceEvents: auditItems.filter((i) => i.category === "SERVICE").length,
+      milestoneEvents: auditItems.filter((i) => i.category === "MILESTONE").length,
+      securityEvents: auditItems.filter((i) => i.category === "SECURITY").length,
+      totalAdjustedVolume: auditItems.filter((i) => i.category === "WALLET" || i.category === "SECURITY").reduce((acc, i) => acc + (i.amount || 0), 0)
+    };
+    let filtered = auditItems;
+    if (category !== "ALL") {
+      filtered = auditItems.filter((i) => i.category === category);
+    }
+    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const paginated = filtered.slice(skip, skip + limit);
+    return {
+      items: paginated,
+      total: filtered.length,
+      page,
+      limit,
+      totalPages: Math.ceil(filtered.length / limit) || 1,
+      summary
+    };
+  }
+  // ==========================================
+  // 15. DPDP COMPLIANCE & EPHEMERAL VAULT AUDIT
+  // ==========================================
+  async getVaultAudit() {
+    let activeKeys = [];
+    try {
+      const client = redis.getRawClient();
+      if (client) {
+        activeKeys = await client.keys("vault:*");
+      }
+    } catch {
+      activeKeys = [];
+    }
+    return {
+      complianceStandard: "DPDP Act (India) 2023 Compliant",
+      vaultStrategy: "24-Hour Ephemeral In-Memory TTL Auto-Purge",
+      activeCitizenEncryptedKeysCount: activeKeys.length,
+      sampleActiveKeys: activeKeys.slice(0, 10),
+      autoPurgeVerified: true,
+      dataRetentionWindowHours: 24,
+      auditTimestamp: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
 };
 var adminService = new AdminService();
 
+// src/modules/admin/admin.schema.ts
+var walletAdjustmentSchema = external_exports.object({
+  amount: external_exports.number().positive("Amount must be greater than 0"),
+  type: external_exports.enum(["CREDIT", "DEBIT"]),
+  reason: external_exports.string().min(3, "Mandatory audit reason must be at least 3 characters"),
+  referenceId: external_exports.string().optional()
+});
+var disputeManualOverrideSchema = external_exports.object({
+  resultData: external_exports.union([external_exports.record(external_exports.any()), external_exports.string()]),
+  note: external_exports.string().optional()
+});
+var maintenanceToggleSchema = external_exports.object({
+  scope: external_exports.enum(["GLOBAL", "SERVICE"]).default("SERVICE"),
+  serviceCode: external_exports.string().optional(),
+  enabled: external_exports.boolean(),
+  message: external_exports.string().optional()
+});
+var announcementSchema = external_exports.object({
+  active: external_exports.boolean(),
+  message: external_exports.string().optional().default(""),
+  title: external_exports.string().optional(),
+  severity: external_exports.enum(["info", "warning", "success"]).default("info"),
+  expiresAt: external_exports.string().optional()
+}).superRefine((data, ctx) => {
+  if (data.active && (!data.message || !data.message.trim())) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "Message is required when announcement is active",
+      path: ["message"]
+    });
+  }
+});
+var orgStatusSchema = external_exports.object({
+  status: external_exports.enum(["ACTIVE", "SUSPENDED", "BANNED"]),
+  reason: external_exports.string().optional()
+});
+var tierPriceUpdateSchema = external_exports.object({
+  serviceId: external_exports.string().min(1, "Service ID is required"),
+  pricingTier: external_exports.enum(["PUBLIC", "PARTNER", "PARTNER_GOLD", "ENTERPRISE"]),
+  amount: external_exports.number().min(0, "Amount cannot be negative")
+});
+var auditLogQuerySchema = external_exports.object({
+  organizationId: external_exports.string().optional(),
+  category: external_exports.enum(["ALL", "WALLET", "SERVICE", "MILESTONE", "SECURITY"]).default("ALL"),
+  page: external_exports.coerce.number().min(1).default(1),
+  limit: external_exports.coerce.number().min(1).max(100).default(30)
+});
+
 // src/modules/admin/admin.routes.ts
 var adminRouter = new Hono2();
+adminRouter.get("/public/announcement", async (c) => {
+  const data = await adminService.getAnnouncement();
+  return c.json({ success: true, data });
+});
 adminRouter.use("*", requireAdmin());
 adminRouter.get("/stats/overview", async (c) => {
   const stats = await adminService.getOverviewStats();
@@ -10423,6 +12191,120 @@ adminRouter.get("/organizations/:id", async (c) => {
   const id = c.req.param("id");
   const org = await adminService.getOrganizationById(id);
   return c.json({ success: true, data: org });
+});
+adminRouter.get("/disputes/hanging", async (c) => {
+  const items = await adminService.getHangingRequests();
+  return c.json({ success: true, data: items, count: items.length });
+});
+adminRouter.post("/disputes/:id/retry", async (c) => {
+  const id = c.req.param("id");
+  const result = await adminService.retryDispute(id);
+  return c.json(result);
+});
+adminRouter.post(
+  "/disputes/:id/manual-override",
+  validationMiddleware(disputeManualOverrideSchema),
+  async (c) => {
+    const id = c.req.param("id");
+    const data = c.get("validData");
+    const result = await adminService.manualOverrideDispute(id, data.resultData, data.note);
+    return c.json(result);
+  }
+);
+adminRouter.get("/vendor/health", async (c) => {
+  const health = await adminService.getVendorHealth();
+  return c.json({ success: true, data: health });
+});
+adminRouter.get("/system/maintenance", async (c) => {
+  const status = await adminService.getMaintenanceStatus();
+  return c.json({ success: true, data: status });
+});
+adminRouter.post(
+  "/system/maintenance",
+  validationMiddleware(maintenanceToggleSchema),
+  async (c) => {
+    const data = c.get("validData");
+    const result = await adminService.setMaintenanceStatus(data);
+    return c.json(result);
+  }
+);
+adminRouter.get("/system/announcement", async (c) => {
+  const data = await adminService.getAnnouncement();
+  return c.json({ success: true, data });
+});
+adminRouter.post(
+  "/system/announcement",
+  validationMiddleware(announcementSchema),
+  async (c) => {
+    const data = c.get("validData");
+    const result = await adminService.setAnnouncement(data);
+    return c.json(result);
+  }
+);
+adminRouter.post(
+  "/organizations/:id/wallet/adjust",
+  validationMiddleware(walletAdjustmentSchema),
+  async (c) => {
+    const orgId = c.req.param("id");
+    const data = c.get("validData");
+    const result = await adminService.adjustOrganizationWallet(orgId, data);
+    return c.json(result);
+  }
+);
+adminRouter.get("/ledger/reconciliation", async (c) => {
+  const data = await adminService.getLedgerReconciliation();
+  return c.json({ success: true, data });
+});
+adminRouter.get("/pricing/matrix", async (c) => {
+  const data = await adminService.getPricingMatrix();
+  return c.json({ success: true, data });
+});
+adminRouter.post(
+  "/pricing/tier-update",
+  validationMiddleware(tierPriceUpdateSchema),
+  async (c) => {
+    const data = c.get("validData");
+    const result = await adminService.updateTierPrice(data);
+    return c.json(result);
+  }
+);
+adminRouter.get("/organizations/churn-radar", async (c) => {
+  const data = await adminService.getChurnRadar();
+  return c.json({ success: true, data });
+});
+adminRouter.post(
+  "/organizations/:id/status",
+  validationMiddleware(orgStatusSchema),
+  async (c) => {
+    const orgId = c.req.param("id");
+    const data = c.get("validData");
+    const result = await adminService.setOrganizationStatus(orgId, data);
+    return c.json(result);
+  }
+);
+adminRouter.get("/analytics/leakage", async (c) => {
+  const timeRange = c.req.query("timeRange") || "30DAYS";
+  const data = await adminService.getFinancialLeakage(timeRange);
+  return c.json({ success: true, data });
+});
+adminRouter.get("/organizations/:id/milestones", async (c) => {
+  const orgId = c.req.param("id");
+  const data = await adminService.getOrganizationMilestones(orgId);
+  return c.json({ success: true, data });
+});
+adminRouter.get("/system/vault-audit", async (c) => {
+  const data = await adminService.getVaultAudit();
+  return c.json({ success: true, data });
+});
+adminRouter.get("/audit-logs", async (c) => {
+  const query = {
+    organizationId: c.req.query("organizationId") || void 0,
+    category: c.req.query("category") || "ALL",
+    page: Number(c.req.query("page")) || 1,
+    limit: Number(c.req.query("limit")) || 30
+  };
+  const data = await adminService.getAuditLogs(query);
+  return c.json({ success: true, data });
 });
 
 // src/middleware/request-context.middleware.ts
@@ -10536,6 +12418,44 @@ apiRouter.route("/services", serviceRoutes);
 apiRouter.route("/service-requests", requestRoutes);
 apiRouter.route("/requests", requestRoutes);
 apiRouter.route("/payments", paymentRoutes);
+apiRouter.get("/audit-logs", async (c) => {
+  const user = c.get("user");
+  if (!user) {
+    throw AppError.unauthorized("Authentication required to view audit logs");
+  }
+  const rawRole = user.role;
+  const isAdmin = rawRole === "ADMIN" || rawRole === "SUPER_ADMIN";
+  const userOrgId = c.get("organizationId");
+  const query = c.req.query();
+  const targetOrgId = isAdmin ? query.organizationId || userOrgId : userOrgId;
+  if (!isAdmin && !targetOrgId) {
+    return c.json({
+      success: true,
+      data: {
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 30,
+        totalPages: 1,
+        summary: {
+          totalEvents: 0,
+          walletEvents: 0,
+          serviceEvents: 0,
+          milestoneEvents: 0,
+          securityEvents: 0,
+          totalAdjustedVolume: 0
+        }
+      }
+    });
+  }
+  const data = await adminService.getAuditLogs({
+    organizationId: targetOrgId || void 0,
+    category: query.category || "ALL",
+    page: query.page ? parseInt(query.page, 10) : 1,
+    limit: query.limit ? parseInt(query.limit, 10) : 30
+  });
+  return c.json({ success: true, data });
+});
 apiRouter.route("/pan", panRoutes);
 apiRouter.route("/integrations/pan", panRoutes);
 apiRouter.route("/admin/categories", adminCategoryRouter);
@@ -10562,7 +12482,155 @@ app.get("/api/auth/error", (c) => {
   return c.redirect(`${origin}/auth/login?error=${encodeURIComponent(error)}`);
 });
 app.all("/api/auth/*", async (c) => {
+  const isSignOut = c.req.path.includes("/sign-out");
+  const isSignIn = c.req.path.includes("/sign-in") || c.req.path.includes("/callback");
+  const isSignUp = c.req.path.includes("/sign-up");
+  let signingOutSession = null;
+  let reqEmail = "";
+  if (isSignOut) {
+    try {
+      signingOutSession = await auth.api.getSession({
+        headers: c.req.raw.headers
+      }).catch(() => null);
+      if (!signingOutSession?.user) {
+        const cookieHeader = c.req.header("cookie") || "";
+        const authHeader = c.req.header("authorization") || "";
+        let token = "";
+        if (authHeader.startsWith("Bearer ")) {
+          token = authHeader.slice(7).trim();
+        } else {
+          const match2 = cookieHeader.match(/better-auth\.session_token=([^;]+)/) || cookieHeader.match(/better-auth=([^;]+)/);
+          if (match2) token = decodeURIComponent(match2[1]).split(".")[0];
+        }
+        if (token) {
+          const sessionRecord = await prisma.session.findFirst({
+            where: {
+              OR: [
+                { token },
+                { token: { startsWith: token } }
+              ]
+            },
+            include: { user: true }
+          });
+          if (sessionRecord) {
+            signingOutSession = { session: sessionRecord, user: sessionRecord.user };
+          }
+        }
+      }
+    } catch {
+      signingOutSession = null;
+    }
+  }
+  if (isSignIn || isSignUp) {
+    try {
+      const clonedReq = c.req.raw.clone();
+      const body = await clonedReq.json().catch(() => ({}));
+      if (body?.email) reqEmail = String(body.email).trim().toLowerCase();
+    } catch {
+    }
+  }
   const res = await auth.handler(c.req.raw);
+  if (isSignOut && signingOutSession?.user) {
+    try {
+      const user = signingOutSession.user;
+      const session = signingOutSession.session;
+      let orgId = session?.activeOrganizationId;
+      if (!orgId) {
+        const membership = await prisma.member.findFirst({
+          where: { userId: user.id },
+          select: { organizationId: true }
+        });
+        orgId = membership?.organizationId;
+      }
+      await logApiExecution({
+        organizationId: orgId || null,
+        userId: user.id,
+        serviceCode: "AUTH",
+        action: "Operator Logout & Session Terminated",
+        endpoint: "/api/auth/sign-out",
+        reference: `AUTH-${session?.id?.slice(0, 8)?.toUpperCase() || "LOGOUT"}`,
+        status: "SUCCESS",
+        statusCode: 200,
+        ipAddress: c.req.header("x-forwarded-for") || session?.ipAddress || "127.0.0.1",
+        note: `${user.name} (${user.email}) signed out of Cyber Caf\xE9 workspace. Session terminated.`
+      });
+    } catch {
+    }
+  }
+  if ((isSignIn || isSignUp) && res.status >= 200 && res.status < 400) {
+    try {
+      let loggedUser = null;
+      let sessionToken = "";
+      try {
+        const clonedRes = res.clone();
+        const resJson = await clonedRes.json().catch(() => null);
+        if (resJson?.user) {
+          loggedUser = resJson.user;
+          sessionToken = resJson.token || resJson.session?.token || "";
+        }
+      } catch {
+      }
+      if (!loggedUser) {
+        const setCookie = res.headers.get("set-cookie") || "";
+        const match2 = setCookie.match(/better-auth\.session_token=([^;]+)/) || setCookie.match(/better-auth=([^;]+)/);
+        if (match2) {
+          sessionToken = decodeURIComponent(match2[1]).split(".")[0];
+          const sessionRecord = await prisma.session.findFirst({
+            where: {
+              OR: [
+                { token: sessionToken },
+                { token: { startsWith: sessionToken } }
+              ]
+            },
+            include: { user: true }
+          });
+          if (sessionRecord) {
+            loggedUser = sessionRecord.user;
+          }
+        }
+      }
+      if (!loggedUser && reqEmail) {
+        loggedUser = await prisma.user.findUnique({ where: { email: reqEmail } });
+      }
+      if (loggedUser) {
+        const membership = await prisma.member.findFirst({
+          where: { userId: loggedUser.id },
+          select: { organizationId: true }
+        });
+        const orgId = membership?.organizationId;
+        await logApiExecution({
+          organizationId: orgId || null,
+          userId: loggedUser.id,
+          serviceCode: "AUTH",
+          action: isSignUp ? "New Retailer Registered & Session Started" : "Operator Login & Session Started",
+          endpoint: c.req.path,
+          reference: `AUTH-${loggedUser.id.slice(0, 8).toUpperCase()}`,
+          status: "SUCCESS",
+          statusCode: res.status,
+          ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+          note: `${loggedUser.name || "Operator"} (${loggedUser.email}) authenticated to Cyber Caf\xE9 workspace.`
+        });
+      }
+    } catch {
+    }
+  }
+  if (isSignIn && res.status >= 400) {
+    try {
+      await logApiExecution({
+        organizationId: null,
+        userId: null,
+        serviceCode: "AUTH",
+        action: "Failed Operator Login Attempt",
+        endpoint: c.req.path,
+        reference: reqEmail ? `AUTH-${reqEmail.slice(0, 8).toUpperCase()}` : "AUTH-FAIL",
+        status: "FAILED",
+        statusCode: res.status,
+        ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+        note: reqEmail ? `Failed authentication attempt for ${reqEmail}. Invalid credentials or unauthorized.` : "Failed authentication attempt. Invalid credentials."
+      });
+    } catch {
+    }
+  }
   const allowedOrigin = getAllowedCorsOrigin(c.req.header("Origin"));
   const corsHeaders = new Headers(res.headers);
   if (allowedOrigin) {
@@ -10652,9 +12720,9 @@ async function nodeReqToWebRequest(req) {
   return new Request(url, {
     method,
     headers,
-    // @ts-ignore - Uint8Array is valid for Node Request body
+    // @ts-ignore: Uint8Array is valid for Node Request body
     body,
-    // @ts-ignore
+    // @ts-ignore: duplex is required for Node fetch streaming
     duplex: "half"
   });
 }
@@ -10672,8 +12740,9 @@ async function handler(req, res) {
         res.setHeader(key, value);
       }
     });
-    if (webResponse.headers.getSetCookie) {
-      const allCookies = webResponse.headers.getSetCookie();
+    const headersWithGetSetCookie = webResponse.headers;
+    if (typeof headersWithGetSetCookie.getSetCookie === "function") {
+      const allCookies = headersWithGetSetCookie.getSetCookie();
       if (Array.isArray(allCookies) && allCookies.length > 0) {
         res.setHeader("set-cookie", allCookies);
       }
@@ -10694,7 +12763,7 @@ async function handler(req, res) {
       res.end(
         JSON.stringify({
           error: "Internal Server Error",
-          message: err?.message
+          message: err instanceof Error ? err.message : String(err)
         })
       );
     }

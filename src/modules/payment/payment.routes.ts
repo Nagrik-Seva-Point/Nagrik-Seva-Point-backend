@@ -63,7 +63,7 @@ paymentRoutes.post("/cashfree/webhook", async (c) => {
   try {
     await paymentService.handleCashfreeWebhook(rawBody, signature, timestamp);
     return c.json({ success: true, message: "Webhook processed" }, 200);
-  } catch (err) {
+  } catch (_err) {
     // If signature fails, throw 400. Otherwise 500.
     return c.json({ success: false, message: "Webhook processing failed" }, 400);
   }

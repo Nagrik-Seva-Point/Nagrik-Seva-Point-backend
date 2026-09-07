@@ -25,7 +25,7 @@ export interface CashfreeOrderResponse {
   order_amount: number;
   order_currency: string;
   cf_order_id?: string | number;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export class CashfreeGateway {
@@ -37,7 +37,7 @@ export class CashfreeGateway {
       throw AppError.internal("Cashfree credentials not configured");
     }
 
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       order_id: params.orderId,
       order_amount: params.orderAmount,
       order_currency: "INR",
@@ -72,19 +72,20 @@ export class CashfreeGateway {
         body: JSON.stringify(payload),
       });
 
-      const data: any = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       if (!response.ok) {
         logger.error(`[CashfreeGateway] Order creation failed (${response.status}): ${JSON.stringify(data)} (Client ID: ${clientId.slice(0, 8)}..., URL: ${apiUrl})`);
-        const errorMsg = data?.message || "Failed to create Cashfree order";
+        const errorMsg = (typeof data?.message === "string" ? data.message : "") || "Failed to create Cashfree order";
         throw AppError.badRequest(errorMsg);
       }
 
-      return data as CashfreeOrderResponse;
-    } catch (err: any) {
-      logger.error(`[CashfreeGateway] Error: ${err.message}`);
+      return data as unknown as CashfreeOrderResponse;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CashfreeGateway] Error: ${msg}`);
       if (err instanceof AppError) throw err;
-      throw AppError.internal(err.message || "Cashfree Gateway Error");
+      throw AppError.internal(msg || "Cashfree Gateway Error");
     }
   }
 
@@ -112,8 +113,9 @@ export class CashfreeGateway {
       }
 
       return data as CashfreeOrderResponse;
-    } catch (err: any) {
-      logger.error(`[CashfreeGateway] Error getting order: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CashfreeGateway] Error getting order: ${msg}`);
       throw AppError.internal("Cashfree Gateway Error");
     }
   }
@@ -131,7 +133,7 @@ export class CashfreeGateway {
         .digest("base64");
 
       return generatedSignature === signature;
-    } catch (err) {
+    } catch (_err) {
       logger.error("[CashfreeGateway] Signature verification exception");
       return false;
     }

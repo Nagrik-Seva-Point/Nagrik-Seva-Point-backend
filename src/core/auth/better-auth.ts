@@ -74,7 +74,7 @@ export const auth = betterAuth({
     before: createAuthMiddleware(async (ctx) => {
       // 1. Check phone number uniqueness on /sign-up/email before database insertion
       if (ctx.path === "/sign-up/email") {
-        const body = ctx.body as Record<string, any> | undefined;
+        const body = ctx.body as Record<string, unknown> | undefined;
         if (body && typeof body.phone === "string" && body.phone.trim()) {
           const cleanPhone = body.phone.trim();
           const existing = await prisma.user.findFirst({

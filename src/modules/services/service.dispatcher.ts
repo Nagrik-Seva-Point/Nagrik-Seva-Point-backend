@@ -3,7 +3,6 @@ import { logger } from "../../core/logger/logger";
 import { panService } from "../pan/pan.service";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import { decryptPanToken } from "../../core/security/crypto.util";
-import { AppError } from "../../core/errors/AppError";
 
 export class ServiceDispatcher {
   
@@ -32,14 +31,22 @@ export class ServiceDispatcher {
         data: { status: "PROCESSING" },
       });
 
-      let resultData: any = null;
+      await prisma.serviceRequestEvent.create({
+        data: {
+          serviceRequestId,
+          status: "PROCESSING",
+          note: `Dispatched for automated verification and processing with upstream authority (${request.service.name || request.service.code})`,
+        },
+      });
+
+      let resultData: Record<string, unknown> | null = null;
 
       // 2. Route to specific service handlers
       switch (request.service.code) {
         case "PAN_FIND": {
           const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
-          const input = (request.inputData || {}) as any;
-          const searchToken = tempToken || input?.searchToken || "";
+          const input = (request.inputData || {}) as Record<string, unknown>;
+          const searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : "") || "";
           
           if (!searchToken) {
             throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
@@ -57,8 +64,8 @@ export class ServiceDispatcher {
 
         case "PAN_DETAILS": {
           const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
-          const input = (request.inputData || {}) as any;
-          const searchToken = tempToken || input?.searchToken;
+          const input = (request.inputData || {}) as Record<string, unknown>;
+          const searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : undefined);
 
           if (searchToken && typeof searchToken === "string" && searchToken.includes(".")) {
             const decrypted = decryptPanToken(searchToken);
@@ -72,8 +79,8 @@ export class ServiceDispatcher {
               maskedAadhaar: decrypted.aadhaarMasked || "N/A",
               status: "SUCCESS",
             };
-          } else if (input?.pan) {
-            resultData = await panService.getPanDetails(input.pan);
+          } else if (typeof input?.pan === "string" && input.pan) {
+            resultData = (await panService.getPanDetails(input.pan)) as unknown as Record<string, unknown>;
           } else {
             throw new Error("Missing PAN/searchToken for PAN_DETAILS service");
           }
@@ -83,8 +90,9 @@ export class ServiceDispatcher {
         case "KISAN_CARD":
         case "KISAN_REGISTRATION_CARD": {
           const vaultItem = await ephemeralVault.getVaultItem(serviceRequestId);
-          const input = {
-            ...((request.inputData || {}) as any),
+          const inputDataObj = (request.inputData && typeof request.inputData === "object" ? request.inputData : {}) as Record<string, unknown>;
+          const input: Record<string, unknown> = {
+            ...inputDataObj,
             ...(vaultItem?.data || {}),
           };
           resultData = {
@@ -124,6 +132,7 @@ export class ServiceDispatcher {
         where: { id: serviceRequestId },
         data: { 
           status: "COMPLETED",
+          completedAt: new Date(),
           resultData: {
             status: "COMPLETED",
             serviceCode: request.service.code,
@@ -133,16 +142,33 @@ export class ServiceDispatcher {
         },
       });
 
+      await prisma.serviceRequestEvent.create({
+        data: {
+          serviceRequestId,
+          status: "COMPLETED",
+          note: `Service completed successfully. Verified result retrieved and secured in 24-hour encrypted vault.`,
+        },
+      });
+
       logger.info(`[ServiceDispatcher] Fulfillment COMPLETED & stored in 24h vault for Request: ${serviceRequestId}`);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error(`[ServiceDispatcher] Fulfillment FAILED for Request ${serviceRequestId}:`, error);
+      const msg = error instanceof Error ? error.message : "Upstream verification failed";
       
       // Critical Error: Payment was captured, but API failed.
       // We must mark this state so admins can issue a refund or retry.
       await prisma.serviceRequest.update({
         where: { id: serviceRequestId },
         data: { status: "PROVIDER_FAILED" },
+      });
+
+      await prisma.serviceRequestEvent.create({
+        data: {
+          serviceRequestId,
+          status: "PROVIDER_FAILED",
+          note: `Provider fulfillment error: ${msg}`,
+        },
       });
     }
   }

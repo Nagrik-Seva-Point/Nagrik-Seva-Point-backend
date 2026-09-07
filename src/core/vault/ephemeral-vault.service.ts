@@ -1,6 +1,5 @@
 import { redis } from "../redis/redis.client";
 import { logger } from "../logger/logger";
-import { encryptPanToken, decryptPanToken } from "../security/crypto.util";
 import crypto from "node:crypto";
 import zlib from "node:zlib";
 import { getEnvVar } from "../config/env-helper";
@@ -30,7 +29,7 @@ export class EphemeralVaultService {
   /**
    * Encrypts any sensitive payload with AES-256-GCM
    */
-  private encryptPayload(data: Record<string, any>): string {
+  private encryptPayload(data: Record<string, unknown>): string {
     const secret =
       getEnvVar("ENCRYPTION_SECRET") ||
       getEnvVar("BETTER_AUTH_SECRET") ||
@@ -50,7 +49,7 @@ export class EphemeralVaultService {
   /**
    * Decrypts and authenticates an AES-256-GCM payload
    */
-  private decryptPayload(encryptedStr: string): Record<string, any> | null {
+  private decryptPayload(encryptedStr: string): Record<string, unknown> | null {
     try {
       const parts = encryptedStr.split(".");
       if (parts.length !== 3) return null;
@@ -71,8 +70,9 @@ export class EphemeralVaultService {
 
       const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
       return JSON.parse(decrypted.toString("utf8"));
-    } catch (err: any) {
-      logger.error(`[EphemeralVault] Failed to decrypt payload: ${err?.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[EphemeralVault] Failed to decrypt payload: ${msg}`);
       return null;
     }
   }
@@ -100,7 +100,7 @@ export class EphemeralVaultService {
    */
   async storeVaultItem(
     requestId: string,
-    data: Record<string, any>,
+    data: Record<string, unknown>,
     ttlSeconds = this.DEFAULT_VAULT_TTL,
   ): Promise<boolean> {
     const key = this.getVaultKey(requestId);
@@ -215,8 +215,9 @@ export class EphemeralVaultService {
         isExpired: false,
         remainingTtlSeconds: ttl,
       };
-    } catch (err: any) {
-      logger.error(`[EphemeralVault] Failed to decrypt/decompress PDF for request ${requestId}: ${err?.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[EphemeralVault] Failed to decrypt/decompress PDF for request ${requestId}: ${msg}`);
       return {
         buffer: null,
         isExpired: true,
@@ -229,7 +230,7 @@ export class EphemeralVaultService {
    * Retrieves and decrypts 24-hour vault item for retailer overview & history
    */
   async getVaultItem(requestId: string): Promise<{
-    data: Record<string, any> | null;
+    data: Record<string, unknown> | null;
     isExpired: boolean;
     remainingTtlSeconds: number;
     expiresAt: string | null;
