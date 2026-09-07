@@ -12187,6 +12187,14 @@ adminRouter.get("/organizations", async (c) => {
   });
   return c.json({ success: true, data: result.items, pagination: result.pagination, summary: result.summary });
 });
+adminRouter.get("/organizations/churn-radar", async (c) => {
+  const data = await adminService.getChurnRadar();
+  return c.json({ success: true, data });
+});
+adminRouter.get("/churn-radar", async (c) => {
+  const data = await adminService.getChurnRadar();
+  return c.json({ success: true, data });
+});
 adminRouter.get("/organizations/:id", async (c) => {
   const id = c.req.param("id");
   const org = await adminService.getOrganizationById(id);
@@ -12268,10 +12276,6 @@ adminRouter.post(
     return c.json(result);
   }
 );
-adminRouter.get("/organizations/churn-radar", async (c) => {
-  const data = await adminService.getChurnRadar();
-  return c.json({ success: true, data });
-});
 adminRouter.post(
   "/organizations/:id/status",
   validationMiddleware(orgStatusSchema),

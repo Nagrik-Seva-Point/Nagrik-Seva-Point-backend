@@ -86,7 +86,21 @@ adminRouter.get("/organizations", async (c) => {
 });
 
 /**
- * 5. Get Organization Details
+ * 5. Retailer Churn Radar (Must precede :id wildcard)
+ * GET /admin/organizations/churn-radar
+ */
+adminRouter.get("/organizations/churn-radar", async (c) => {
+  const data = await adminService.getChurnRadar();
+  return c.json({ success: true, data });
+});
+
+adminRouter.get("/churn-radar", async (c) => {
+  const data = await adminService.getChurnRadar();
+  return c.json({ success: true, data });
+});
+
+/**
+ * 6. Get Organization Details
  * GET /admin/organizations/:id
  */
 adminRouter.get("/organizations/:id", async (c) => {
@@ -223,14 +237,9 @@ adminRouter.post(
 );
 
 /**
- * 12. Retailer Churn Radar & Lifecycle
- * GET /admin/organizations/churn-radar
+ * 12. Retailer Status Update
  * POST /admin/organizations/:id/status
  */
-adminRouter.get("/organizations/churn-radar", async (c) => {
-  const data = await adminService.getChurnRadar();
-  return c.json({ success: true, data });
-});
 
 adminRouter.post(
   "/organizations/:id/status",
