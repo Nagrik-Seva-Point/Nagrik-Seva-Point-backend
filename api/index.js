@@ -6613,14 +6613,43 @@ var auth = betterAuth({
 });
 
 // src/core/logger/api-logger.ts
+function maskEmail(email) {
+  if (!email) return "";
+  return email.trim().replace(
+    /\b([a-zA-Z0-9_.+-]{1,2})[a-zA-Z0-9_.+-]*@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)\b/g,
+    "$1****@$2"
+  );
+}
+function maskIpAddress(ip) {
+  if (!ip) return "127.0.0.xxx";
+  const cleaned = ip.trim();
+  if (cleaned === "::1" || cleaned === "127.0.0.1") return "127.0.0.xxx";
+  if (cleaned.includes(".")) {
+    return cleaned.replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.)\d{1,3}\b/g, "$1xxx");
+  }
+  if (cleaned.includes(":")) {
+    const parts = cleaned.split(":");
+    if (parts.length > 2) {
+      return `${parts.slice(0, 2).join(":")}:*:*`;
+    }
+  }
+  return "masked-ip";
+}
 function sanitizeDpdpData(text) {
   if (!text) return null;
-  return text.replace(/\b[A-Z]{5}(\d{4}[A-Z])\b/g, "XXXXX$1").replace(/(?:for|with)\s+X{4}[-\s]?X{4}[-\s]?\d{4}/gi, "under citizen consent").replace(/(?:for|with)\s+\d{4}[-\s]?\d{4}[-\s]?\d{4}/g, "under citizen consent").replace(/^X{4}[-\s]?X{4}[-\s]?\d{4}$/i, "INQ-PAN-FIND").replace(/^\d{4}[-\s]?\d{4}[-\s]?\d{4}$/, "INQ-PAN-FIND").replace(/\b\d{4}[-\s]?\d{4}[-\s]?(\d{4})\b/g, "INQ-AADHAAR-$1").replace(/X{4}[-\s]?X{4}[-\s]?\d{4}/gi, "INQ-PAN-FIND").replace(/\s*\([A-Za-z\s]{3,50}\)/g, " (Citizen Consent Verified)");
+  return text.replace(/\b[A-Z]{5}(\d{4}[A-Z])\b/g, "XXXXX$1").replace(/(?:for|with)\s+X{4}[-\s]?X{4}[-\s]?\d{4}/gi, "under citizen consent").replace(/(?:for|with)\s+\d{4}[-\s]?\d{4}[-\s]?\d{4}/g, "under citizen consent").replace(/\b\d{4}[-\s]?\d{4}[-\s]?(\d{4})\b/g, "INQ-AADHAAR-$1").replace(/\bX{4}[-\s]?X{4}[-\s]?(\d{4})\b/gi, "INQ-AADHAAR-$1").replace(/X{4}[-\s]?X{4}[-\s]?\d{4}/gi, "INQ-AADHAAR").replace(
+    /\b([a-zA-Z0-9_.+-]{1,2})[a-zA-Z0-9_.+-]*@(okhdfcbank|okaxis|oksbi|okicici|paytm|ybl|ibl|upi|axl|apl)\b/gi,
+    "$1****@$2"
+  ).replace(/(?:\+91[\-\s]?)?\b([6-9]\d{5})(\d{4})\b/g, "XXXXXX$2").replace(
+    /\b([a-zA-Z0-9_.+-]{1,2})[a-zA-Z0-9_.+-]*@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)\b/g,
+    "$1****@$2"
+  ).replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.)\d{1,3}\b/g, "$1xxx").replace(/\s*\([A-Za-z\s]{3,50}\)/g, " (Citizen Consent Verified)");
 }
 async function logApiExecution(params) {
   try {
     const sanitizedReference = sanitizeDpdpData(params.reference);
     const sanitizedNote = sanitizeDpdpData(params.note);
+    const sanitizedIp = params.ipAddress ? maskIpAddress(params.ipAddress) : null;
     await prisma.apiLog.create({
       data: {
         organizationId: params.organizationId || null,
@@ -6632,7 +6661,7 @@ async function logApiExecution(params) {
         status: params.status || "SUCCESS",
         statusCode: params.statusCode || 200,
         durationMs: params.durationMs,
-        ipAddress: params.ipAddress || null,
+        ipAddress: sanitizedIp,
         note: sanitizedNote
       }
     });
@@ -7319,11 +7348,11 @@ customerRoutes.post(
       serviceCode: "CUSTOMER",
       action: "Customer Profile Created",
       endpoint: "/api/v1/customers",
-      reference: customer.phone || customer.name,
+      reference: `CUST-${customer.id.slice(0, 8).toUpperCase()}`,
       status: "SUCCESS",
       statusCode: 201,
       ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-      note: `Added new citizen customer: ${customer.name} (${customer.phone})`
+      note: `Registered citizen customer profile under consent (Ref: CUST-${customer.id.slice(0, 8).toUpperCase()})`
     });
     return c.json({ success: true, data: customer }, 201);
   }
@@ -7363,11 +7392,11 @@ customerRoutes.patch(
       serviceCode: "CUSTOMER",
       action: "Customer Profile Updated",
       endpoint: `/api/v1/customers/${id}`,
-      reference: customer.phone || customer.name,
+      reference: `CUST-${customer.id.slice(0, 8).toUpperCase()}`,
       status: "SUCCESS",
       statusCode: 200,
       ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-      note: `Updated citizen record for ${customer.name} (${customer.phone})`
+      note: `Updated citizen customer profile under consent (Ref: CUST-${customer.id.slice(0, 8).toUpperCase()})`
     });
     return c.json({ success: true, data: customer });
   }
@@ -7383,11 +7412,11 @@ customerRoutes.delete("/:id", async (c) => {
     serviceCode: "CUSTOMER",
     action: "Customer Record Deleted",
     endpoint: `/api/v1/customers/${id}`,
-    reference: id.slice(0, 8),
+    reference: `CUST-${id.slice(0, 8).toUpperCase()}`,
     status: "SUCCESS",
     statusCode: 200,
     ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-    note: `Deleted customer record ID: ${id}`
+    note: `Deleted citizen customer record (Ref: CUST-${id.slice(0, 8).toUpperCase()})`
   });
   return c.json({ success: true, message: "Customer deleted successfully" });
 });
@@ -9444,7 +9473,7 @@ var ServiceDispatcher = class {
         data: {
           serviceRequestId,
           status: "PROVIDER_FAILED",
-          note: `Provider fulfillment error: ${msg}`
+          note: `Provider fulfillment error: ${sanitizeDpdpData(msg) || "Upstream verification failed"}`
         }
       });
     }
@@ -9454,6 +9483,40 @@ var serviceDispatcher = new ServiceDispatcher();
 
 // src/modules/payment/payment.service.ts
 import { randomUUID } from "crypto";
+function sanitizeGatewayPayload(payload) {
+  if (!payload || typeof payload !== "object") return void 0;
+  try {
+    const cloned = JSON.parse(JSON.stringify(payload));
+    if (cloned.data && typeof cloned.data === "object") {
+      const data = cloned.data;
+      if (data.customer_details && typeof data.customer_details === "object") {
+        const cust = data.customer_details;
+        if (cust.customer_phone) cust.customer_phone = "XXXXXXXX" + String(cust.customer_phone).slice(-4);
+        if (cust.customer_email) cust.customer_email = "citizen@masked.in";
+        if (cust.customer_name) cust.customer_name = "Citizen Applicant";
+      }
+      if (data.payment && typeof data.payment === "object") {
+        const pay = data.payment;
+        if (pay.payment_method && typeof pay.payment_method === "object") {
+          const pm = pay.payment_method;
+          if (pm.upi && typeof pm.upi === "object") {
+            const upi = pm.upi;
+            if (upi.upi_id) upi.upi_id = "citizen****@upi";
+          }
+        }
+      }
+    }
+    if (cloned.customer_details && typeof cloned.customer_details === "object") {
+      const cust = cloned.customer_details;
+      if (cust.customer_phone) cust.customer_phone = "XXXXXXXX" + String(cust.customer_phone).slice(-4);
+      if (cust.customer_email) cust.customer_email = "citizen@masked.in";
+      if (cust.customer_name) cust.customer_name = "Citizen Applicant";
+    }
+    return cloned;
+  } catch {
+    return void 0;
+  }
+}
 var PaymentService = class {
   /**
    * Generates a Cashfree Order from a newly created Service Request
@@ -9639,7 +9702,7 @@ var PaymentService = class {
         paymentMode: details?.paymentMode || payment.paymentMode || "UPI",
         bankReference: details?.bankReference || payment.bankReference,
         paidAt: /* @__PURE__ */ new Date(),
-        gatewayResponse: details?.rawResponse ? details.rawResponse : void 0
+        gatewayResponse: sanitizeGatewayPayload(details?.rawResponse)
       }
     });
     await prisma.serviceRequest.update({
@@ -9670,12 +9733,13 @@ var PaymentService = class {
       }
     });
     if (!payment) return;
+    const safeError = details?.errorMessage ? sanitizeDpdpData(details.errorMessage) || details.errorMessage : void 0;
     await prisma.payment.update({
       where: { id: payment.id },
       data: {
         status: "FAILED",
-        errorMessage: details?.errorMessage,
-        gatewayResponse: details?.rawResponse || void 0
+        errorMessage: safeError,
+        gatewayResponse: sanitizeGatewayPayload(details?.rawResponse)
       }
     });
     await prisma.serviceRequest.update({
@@ -9686,7 +9750,7 @@ var PaymentService = class {
       data: {
         serviceRequestId: payment.serviceRequestId,
         status: "FAILED",
-        note: `Payment failed: ${details?.errorMessage || "Payment declined or cancelled by gateway"}`
+        note: `Payment failed: ${safeError || "Payment declined or cancelled by gateway"}`
       }
     });
   }
@@ -11898,7 +11962,7 @@ var AdminService = class {
         id: `wallet-${tx.id}`,
         category: isManual ? "SECURITY" : "WALLET",
         title: tx.type === "CREDIT" ? "Wallet Credited" : "Wallet Debited",
-        description: tx.description || `${tx.type} adjustment of \u20B9${Number(tx.amount).toFixed(2)}`,
+        description: sanitizeDpdpData(tx.description) || `${tx.type} adjustment of \u20B9${Number(tx.amount).toFixed(2)}`,
         organizationId: tx.wallet?.organization?.id,
         organizationName: tx.wallet?.organization?.name || "Cyber Caf\xE9",
         amount: Number(tx.amount),
@@ -11938,7 +12002,7 @@ var AdminService = class {
       const isRefund = ev.note?.toLowerCase().includes("refund") || ev.status === "REFUNDED";
       const serviceName = ev.serviceRequest.service.name;
       const refNum = ev.serviceRequest.referenceNumber || ev.serviceRequest.id.slice(0, 8);
-      let cleanDesc = ev.note || ev.status;
+      let cleanDesc = sanitizeDpdpData(ev.note) || ev.status;
       if (cleanDesc.includes(refNum)) {
         cleanDesc = cleanDesc.replace(new RegExp(`\\(?[REQ-]*${refNum}\\)?`, "g"), "").trim();
       }
@@ -12010,12 +12074,13 @@ var AdminService = class {
         else if (s.userAgent.includes("Safari/") && !s.userAgent.includes("Chrome")) clientDevice = "Apple Safari";
         else if (s.userAgent.includes("Mobile")) clientDevice = "Mobile Browser";
       }
-      const ip = s.ipAddress && s.ipAddress !== "::1" ? s.ipAddress : "127.0.0.1 (Localhost)";
+      const ip = maskIpAddress(s.ipAddress);
+      const emailMasked = maskEmail(s.user.email);
       auditItems.push({
         id: `login-${s.id}`,
         category: "SECURITY",
         title: "Operator Login & Session Started",
-        description: `${s.user.name} (${s.user.email}) logged into caf\xE9 workspace via ${clientDevice}. IP: ${ip}`,
+        description: `Operator (${emailMasked}) logged into caf\xE9 workspace via ${clientDevice}. IP: ${ip}`,
         referenceNumber: `AUTH-${s.id.slice(0, 8).toUpperCase()}`,
         organizationId: orgId,
         organizationName: orgName,
@@ -12556,7 +12621,7 @@ app.all("/api/auth/*", async (c) => {
         status: "SUCCESS",
         statusCode: 200,
         ipAddress: c.req.header("x-forwarded-for") || session?.ipAddress || "127.0.0.1",
-        note: `${user.name} (${user.email}) signed out of Cyber Caf\xE9 workspace. Session terminated.`
+        note: `Operator (${maskEmail(user.email)}) signed out of Cyber Caf\xE9 workspace. Session terminated.`
       });
     } catch {
     }
@@ -12612,7 +12677,7 @@ app.all("/api/auth/*", async (c) => {
           status: "SUCCESS",
           statusCode: res.status,
           ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-          note: `${loggedUser.name || "Operator"} (${loggedUser.email}) authenticated to Cyber Caf\xE9 workspace.`
+          note: `Operator (${maskEmail(loggedUser.email)}) authenticated to Cyber Caf\xE9 workspace.`
         });
       }
     } catch {
@@ -12626,11 +12691,11 @@ app.all("/api/auth/*", async (c) => {
         serviceCode: "AUTH",
         action: "Failed Operator Login Attempt",
         endpoint: c.req.path,
-        reference: reqEmail ? `AUTH-${reqEmail.slice(0, 8).toUpperCase()}` : "AUTH-FAIL",
+        reference: "AUTH-FAIL",
         status: "FAILED",
         statusCode: res.status,
         ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-        note: reqEmail ? `Failed authentication attempt for ${reqEmail}. Invalid credentials or unauthorized.` : "Failed authentication attempt. Invalid credentials."
+        note: reqEmail ? `Failed authentication attempt for ${maskEmail(reqEmail)}. Invalid credentials or unauthorized.` : "Failed authentication attempt. Invalid credentials."
       });
     } catch {
     }

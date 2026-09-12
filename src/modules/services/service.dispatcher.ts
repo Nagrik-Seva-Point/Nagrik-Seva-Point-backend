@@ -3,6 +3,7 @@ import { logger } from "../../core/logger/logger";
 import { panService } from "../pan/pan.service";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import { decryptPanToken } from "../../core/security/crypto.util";
+import { sanitizeDpdpData } from "../../core/logger/api-logger";
 
 export class ServiceDispatcher {
   
@@ -167,7 +168,7 @@ export class ServiceDispatcher {
         data: {
           serviceRequestId,
           status: "PROVIDER_FAILED",
-          note: `Provider fulfillment error: ${msg}`,
+          note: `Provider fulfillment error: ${sanitizeDpdpData(msg) || "Upstream verification failed"}`,
         },
       });
     }

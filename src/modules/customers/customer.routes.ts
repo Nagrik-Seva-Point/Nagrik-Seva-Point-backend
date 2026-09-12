@@ -35,11 +35,11 @@ customerRoutes.post(
       serviceCode: "CUSTOMER",
       action: "Customer Profile Created",
       endpoint: "/api/v1/customers",
-      reference: customer.phone || customer.name,
+      reference: `CUST-${customer.id.slice(0, 8).toUpperCase()}`,
       status: "SUCCESS",
       statusCode: 201,
       ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-      note: `Added new citizen customer: ${customer.name} (${customer.phone})`,
+      note: `Registered citizen customer profile under consent (Ref: CUST-${customer.id.slice(0, 8).toUpperCase()})`,
     });
 
     return c.json({ success: true, data: customer }, 201);
@@ -84,11 +84,11 @@ customerRoutes.patch(
       serviceCode: "CUSTOMER",
       action: "Customer Profile Updated",
       endpoint: `/api/v1/customers/${id}`,
-      reference: customer.phone || customer.name,
+      reference: `CUST-${customer.id.slice(0, 8).toUpperCase()}`,
       status: "SUCCESS",
       statusCode: 200,
       ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-      note: `Updated citizen record for ${customer.name} (${customer.phone})`,
+      note: `Updated citizen customer profile under consent (Ref: CUST-${customer.id.slice(0, 8).toUpperCase()})`,
     });
 
     return c.json({ success: true, data: customer });
@@ -107,11 +107,11 @@ customerRoutes.delete("/:id", async (c) => {
     serviceCode: "CUSTOMER",
     action: "Customer Record Deleted",
     endpoint: `/api/v1/customers/${id}`,
-    reference: id.slice(0, 8),
+    reference: `CUST-${id.slice(0, 8).toUpperCase()}`,
     status: "SUCCESS",
     statusCode: 200,
     ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-    note: `Deleted customer record ID: ${id}`,
+    note: `Deleted citizen customer record (Ref: CUST-${id.slice(0, 8).toUpperCase()})`,
   });
 
   return c.json({ success: true, message: "Customer deleted successfully" });

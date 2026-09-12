@@ -12,7 +12,7 @@ import {
 import { auth } from "../core/auth/better-auth";
 import { env } from "../core/config/env";
 import { prisma } from "../core/db/prisma";
-import { logApiExecution } from "../core/logger/api-logger";
+import { logApiExecution, maskEmail } from "../core/logger/api-logger";
 import { apiRouter } from "./routes";
 import type { ContextVariables } from "./context";
 
@@ -126,7 +126,7 @@ app.all("/api/auth/*", async (c) => {
         status: "SUCCESS",
         statusCode: 200,
         ipAddress: c.req.header("x-forwarded-for") || session?.ipAddress || "127.0.0.1",
-        note: `${user.name} (${user.email}) signed out of Cyber Café workspace. Session terminated.`,
+        note: `Operator (${maskEmail(user.email)}) signed out of Cyber Café workspace. Session terminated.`,
       });
     } catch {
       // Non-blocking
@@ -201,7 +201,7 @@ app.all("/api/auth/*", async (c) => {
           status: "SUCCESS",
           statusCode: res.status,
           ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-          note: `${loggedUser.name || "Operator"} (${loggedUser.email}) authenticated to Cyber Café workspace.`,
+          note: `Operator (${maskEmail(loggedUser.email)}) authenticated to Cyber Café workspace.`,
         });
       }
     } catch {
@@ -218,12 +218,12 @@ app.all("/api/auth/*", async (c) => {
         serviceCode: "AUTH",
         action: "Failed Operator Login Attempt",
         endpoint: c.req.path,
-        reference: reqEmail ? `AUTH-${reqEmail.slice(0, 8).toUpperCase()}` : "AUTH-FAIL",
+        reference: "AUTH-FAIL",
         status: "FAILED",
         statusCode: res.status,
         ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
         note: reqEmail
-          ? `Failed authentication attempt for ${reqEmail}. Invalid credentials or unauthorized.`
+          ? `Failed authentication attempt for ${maskEmail(reqEmail)}. Invalid credentials or unauthorized.`
           : "Failed authentication attempt. Invalid credentials.",
       });
     } catch {

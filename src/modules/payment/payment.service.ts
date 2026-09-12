@@ -3,7 +3,46 @@ import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { cashfreeGateway } from "../../core/integrations/cashfree/cashfree.gateway";
 import { serviceDispatcher } from "../services/service.dispatcher";
+import { sanitizeDpdpData } from "../../core/logger/api-logger";
 import { randomUUID } from "crypto";
+
+function sanitizeGatewayPayload(payload: unknown): Record<string, unknown> | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  try {
+    const cloned = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+    
+    // Scrub customer details if present in Cashfree webhook structure
+    if (cloned.data && typeof cloned.data === "object") {
+      const data = cloned.data as Record<string, unknown>;
+      if (data.customer_details && typeof data.customer_details === "object") {
+        const cust = data.customer_details as Record<string, unknown>;
+        if (cust.customer_phone) cust.customer_phone = "XXXXXXXX" + String(cust.customer_phone).slice(-4);
+        if (cust.customer_email) cust.customer_email = "citizen@masked.in";
+        if (cust.customer_name) cust.customer_name = "Citizen Applicant";
+      }
+      if (data.payment && typeof data.payment === "object") {
+        const pay = data.payment as Record<string, unknown>;
+        if (pay.payment_method && typeof pay.payment_method === "object") {
+          const pm = pay.payment_method as Record<string, unknown>;
+          if (pm.upi && typeof pm.upi === "object") {
+            const upi = pm.upi as Record<string, unknown>;
+            if (upi.upi_id) upi.upi_id = "citizen****@upi";
+          }
+        }
+      }
+    }
+    if (cloned.customer_details && typeof cloned.customer_details === "object") {
+      const cust = cloned.customer_details as Record<string, unknown>;
+      if (cust.customer_phone) cust.customer_phone = "XXXXXXXX" + String(cust.customer_phone).slice(-4);
+      if (cust.customer_email) cust.customer_email = "citizen@masked.in";
+      if (cust.customer_name) cust.customer_name = "Citizen Applicant";
+    }
+
+    return cloned;
+  } catch {
+    return undefined;
+  }
+}
 
 export class PaymentService {
   /**
@@ -248,7 +287,7 @@ export class PaymentService {
         paymentMode: details?.paymentMode || payment.paymentMode || "UPI",
         bankReference: details?.bankReference || payment.bankReference,
         paidAt: new Date(),
-        gatewayResponse: details?.rawResponse ? (details.rawResponse as object) : undefined,
+        gatewayResponse: sanitizeGatewayPayload(details?.rawResponse) as object | undefined,
       },
     });
 
@@ -293,12 +332,16 @@ export class PaymentService {
 
     if (!payment) return;
 
+    const safeError = details?.errorMessage
+      ? (sanitizeDpdpData(details.errorMessage) || details.errorMessage)
+      : undefined;
+
     await prisma.payment.update({
       where: { id: payment.id },
       data: {
         status: "FAILED",
-        errorMessage: details?.errorMessage,
-        gatewayResponse: details?.rawResponse || undefined,
+        errorMessage: safeError,
+        gatewayResponse: sanitizeGatewayPayload(details?.rawResponse) as object | undefined,
       },
     });
 
@@ -311,7 +354,7 @@ export class PaymentService {
       data: {
         serviceRequestId: payment.serviceRequestId,
         status: "FAILED",
-        note: `Payment failed: ${details?.errorMessage || "Payment declined or cancelled by gateway"}`,
+        note: `Payment failed: ${safeError || "Payment declined or cancelled by gateway"}`,
       },
     });
   }

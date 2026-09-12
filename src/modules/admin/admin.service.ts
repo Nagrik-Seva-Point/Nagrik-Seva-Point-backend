@@ -4,7 +4,7 @@ import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { serviceDispatcher } from "../services/service.dispatcher";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
-import { sanitizeDpdpData } from "../../core/logger/api-logger";
+import { sanitizeDpdpData, maskEmail, maskIpAddress } from "../../core/logger/api-logger";
 import type { PaymentStatus, PaymentMethod, AccessMode, PricingTier } from "@prisma/client";
 import type {
   WalletAdjustmentInput,
@@ -1678,7 +1678,7 @@ export class AdminService {
         id: `wallet-${tx.id}`,
         category: isManual ? "SECURITY" : "WALLET",
         title: tx.type === "CREDIT" ? "Wallet Credited" : "Wallet Debited",
-        description: tx.description || `${tx.type} adjustment of ₹${Number(tx.amount).toFixed(2)}`,
+        description: sanitizeDpdpData(tx.description) || `${tx.type} adjustment of ₹${Number(tx.amount).toFixed(2)}`,
         organizationId: tx.wallet?.organization?.id,
         organizationName: tx.wallet?.organization?.name || "Cyber Café",
         amount: Number(tx.amount),
@@ -1733,7 +1733,7 @@ export class AdminService {
       const refNum =
         ev.serviceRequest.referenceNumber || ev.serviceRequest.id.slice(0, 8);
 
-      let cleanDesc = ev.note || ev.status;
+      let cleanDesc = sanitizeDpdpData(ev.note) || ev.status;
       if (cleanDesc.includes(refNum)) {
         cleanDesc = cleanDesc.replace(new RegExp(`\\(?[REQ-]*${refNum}\\)?`, "g"), "").trim();
       }
@@ -1821,13 +1821,14 @@ export class AdminService {
         else if (s.userAgent.includes("Mobile")) clientDevice = "Mobile Browser";
       }
 
-      const ip = s.ipAddress && s.ipAddress !== "::1" ? s.ipAddress : "127.0.0.1 (Localhost)";
+      const ip = maskIpAddress(s.ipAddress);
+      const emailMasked = maskEmail(s.user.email);
 
       auditItems.push({
         id: `login-${s.id}`,
         category: "SECURITY",
         title: "Operator Login & Session Started",
-        description: `${s.user.name} (${s.user.email}) logged into café workspace via ${clientDevice}. IP: ${ip}`,
+        description: `Operator (${emailMasked}) logged into café workspace via ${clientDevice}. IP: ${ip}`,
         referenceNumber: `AUTH-${s.id.slice(0, 8).toUpperCase()}`,
         organizationId: orgId,
         organizationName: orgName,
