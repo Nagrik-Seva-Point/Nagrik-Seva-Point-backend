@@ -1,5 +1,5 @@
-import { prisma } from "../db/prisma.ts";
-import { logger } from "./logger.ts";
+import { prisma } from "../db/prisma";
+import { logger } from "./logger";
 
 export interface LogApiParams {
   organizationId?: string | null;

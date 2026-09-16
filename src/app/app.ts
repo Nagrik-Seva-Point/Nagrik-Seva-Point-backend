@@ -91,7 +91,7 @@ app.all("/api/auth/*", async (c) => {
   if (isSignIn || isSignUp) {
     try {
       const clonedReq = c.req.raw.clone();
-      const body = await clonedReq.json().catch(() => ({}));
+      const body = (await clonedReq.json().catch(() => ({}))) as Record<string, unknown>;
       if (body?.email) reqEmail = String(body.email).trim().toLowerCase();
     } catch {
       // non-blocking

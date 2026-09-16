@@ -318,12 +318,20 @@ export class AdminService {
               createdAt: true,
             },
           },
+          apiLogs: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              createdAt: true,
+            },
+          },
           _count: {
             select: {
               members: true,
               customers: true,
               requests: true,
               payments: true,
+              apiLogs: true,
             },
           },
         },
@@ -336,14 +344,25 @@ export class AdminService {
     const enhancedItems = items.map((org) => {
       const ownerUser = org.members[0]?.user;
       const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
-      const lastLogin = lastSessionDate || ownerUser?.updatedAt || org.createdAt;
+      const lastRequestDate = org.requests?.[0]?.createdAt;
+      const lastApiLogDate = org.apiLogs?.[0]?.createdAt;
+      const allTimestamps = [lastSessionDate, ownerUser?.updatedAt, lastRequestDate, lastApiLogDate, org.createdAt]
+        .filter(Boolean)
+        .map((d) => new Date(d!).getTime())
+        .filter((t) => !isNaN(t));
+      const lastLogin = allTimestamps.length > 0 ? new Date(Math.max(...allTimestamps)).toISOString() : org.createdAt;
 
       const completedPayments = org.payments || [];
       const completedPaymentsCount = completedPayments.length;
       const completedPaymentsAmount = completedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const totalRequests = Math.max(org._count?.requests || 0, org._count?.apiLogs || 0);
 
       return {
         ...org,
+        _count: {
+          ...org._count,
+          requests: totalRequests,
+        },
         lastLogin,
         completedPaymentsCount,
         completedPaymentsAmount,
@@ -397,12 +416,17 @@ export class AdminService {
           take: 20,
           orderBy: { createdAt: "desc" },
         },
+        apiLogs: {
+          take: 20,
+          orderBy: { createdAt: "desc" },
+        },
         _count: {
           select: {
             members: true,
             customers: true,
             requests: true,
             payments: true,
+            apiLogs: true,
           },
         },
       },
@@ -412,7 +436,14 @@ export class AdminService {
       throw AppError.notFound("Organization not found", "ORG_NOT_FOUND");
     }
 
-    return org;
+    const totalRequests = Math.max(org._count?.requests || 0, org._count?.apiLogs || 0);
+    return {
+      ...org,
+      _count: {
+        ...org._count,
+        requests: totalRequests,
+      },
+    };
   }
 
   /**
@@ -1071,8 +1102,13 @@ export class AdminService {
             orderBy: { createdAt: "desc" },
             take: 1,
           },
+          apiLogs: {
+            select: { createdAt: true },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
           _count: {
-            select: { requests: true, payments: true },
+            select: { requests: true, payments: true, apiLogs: true },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -1098,8 +1134,12 @@ export class AdminService {
 
       orgs.forEach((org) => {
         const owner = org.members[0]?.user;
-        const totalRequests = org._count.requests;
+        const totalRequests = Math.max(org._count.requests || 0, org._count.apiLogs || 0);
         const lastRequestDate = org.requests[0]?.createdAt ? new Date(org.requests[0].createdAt) : null;
+        const lastApiLogDate = org.apiLogs?.[0]?.createdAt ? new Date(org.apiLogs[0].createdAt) : null;
+        const lastActiveAt = [lastRequestDate, lastApiLogDate]
+          .filter((d): d is Date => d !== null)
+          .sort((a, b) => b.getTime() - a.getTime())[0] || null;
         const cleanPhone = owner?.phone?.replace(/[^0-9]/g, "") || "";
         const whatsappUrl = cleanPhone.length === 10
           ? `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Namaste ${owner?.name || "Partner"} ji, Nagrik Seva Point support team here. Aapke Cyber Café par services chalu karne me koi dikkat aa rahi hai?`)}`
@@ -1115,12 +1155,12 @@ export class AdminService {
           whatsappUrl,
           totalRequests,
           createdAt: org.createdAt,
-          lastActiveAt: lastRequestDate,
+          lastActiveAt,
         };
 
         if (org.createdAt <= twoDaysAgo && totalRequests === 0) {
           day0Dropoffs.push(record);
-        } else if (lastRequestDate && lastRequestDate >= sevenDaysAgo) {
+        } else if (lastActiveAt && lastActiveAt >= sevenDaysAgo) {
           activeOrgs.push(record);
           if (totalRequests >= 20) {
             powerOrgs.push(record);
@@ -1222,7 +1262,7 @@ export class AdminService {
         KISAN_REGISTRATION_CARD: 0.0,
       };
 
-      const [services, allRequests] = await Promise.all([
+      const [services, allRequests, upstreamApiLogs] = await Promise.all([
         prisma.service.findMany({
           select: { id: true, code: true, name: true },
         }),
@@ -1238,6 +1278,25 @@ export class AdminService {
             payments: {
               select: { id: true, amount: true, status: true, paidAt: true },
             },
+          },
+        }),
+        prisma.apiLog.findMany({
+          where: {
+            ...whereDate,
+            serviceCode: { in: ["PAN_FIND", "PAN_DETAILS"] },
+            endpoint: {
+              in: [
+                "/api/v1/pan/find",
+                "/api/v1/pan/details/verify",
+                "/api/v1/pan/details",
+              ],
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 500,
+          include: {
+            organization: { select: { id: true, name: true, slug: true } },
+            user: { select: { id: true, name: true, phone: true, email: true } },
           },
         }),
       ]);
@@ -1278,6 +1337,30 @@ export class AdminService {
           wastedCost: 0,
         };
       });
+
+      // Track which ApiLogs were subsequently converted into a ServiceRequest
+      const claimedLogIds = new Set<string>();
+
+      for (const req of allRequests) {
+        const code = req.service.code;
+        if (code === "PAN_FIND" || code === "PAN_DETAILS") {
+          const reqTime = new Date(req.createdAt).getTime();
+          const matchedLog = upstreamApiLogs.find((log) => {
+            if (claimedLogIds.has(log.id)) return false;
+            if (log.serviceCode !== code) return false;
+            const logTime = new Date(log.createdAt).getTime();
+            const timeDiff = reqTime - logTime;
+            // Match if inquiry happened up to 2 hours before or 30s after request creation
+            if (timeDiff < -30000 || timeDiff > 2 * 60 * 60 * 1000) return false;
+            if (req.organizationId && log.organizationId && req.organizationId === log.organizationId) return true;
+            if (req.userId && log.userId && req.userId === log.userId) return true;
+            return false;
+          });
+          if (matchedLog) {
+            claimedLogIds.add(matchedLog.id);
+          }
+        }
+      }
 
       const detailedLedger = allRequests.map((req) => {
         const code = req.service.code;
@@ -1338,7 +1421,7 @@ export class AdminService {
           serviceCode: code,
           serviceName: req.service.name,
           createdAt: req.createdAt,
-          status: req.status,
+          status: req.status as string,
           isPaid: isCompleted,
           revenue,
           incurredVendorCost: unitCost,
@@ -1350,7 +1433,69 @@ export class AdminService {
         };
       });
 
-      const totalRequests = allRequests.length;
+      // Include all pre-checkout dropoffs (upstream inquiries that never initiated payment)
+      for (const log of upstreamApiLogs) {
+        if (claimedLogIds.has(log.id)) continue;
+
+        const code = log.serviceCode;
+        const unitCost = serviceCostMap[code] ?? (code === "PAN_FIND" ? 2.5 : 2.0);
+
+        if (code === "PAN_FIND") panFindCalls++;
+        else if (code === "PAN_DETAILS") panDetailsCalls++;
+        else otherCalls++;
+
+        const sName = code === "PAN_FIND" ? "Instant PAN Find by Aadhaar" : "PAN Details Verification";
+
+        if (!serviceMap[code]) {
+          serviceMap[code] = {
+            code,
+            name: sName,
+            unitCost,
+            totalInvocations: 0,
+            completedCount: 0,
+            completedRevenue: 0,
+            fulfilledCost: 0,
+            abandonedCount: 0,
+            wastedCost: 0,
+          };
+        }
+        serviceMap[code].totalInvocations++;
+        serviceMap[code].abandonedCount++;
+        serviceMap[code].wastedCost += unitCost;
+
+        abandonedCount++;
+        wastedVendorCost += unitCost;
+
+        const netProfit = -unitCost;
+        const targetPhone = log.user?.phone || "";
+        const cleanPhone = targetPhone.replace(/[^0-9]/g, "");
+        const targetName = log.organization?.name || log.user?.name || "Cyber Café Partner";
+        const whatsappUrl = cleanPhone.length === 10
+          ? `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Namaste ${targetName} ji, Nagrik Seva Point support team here. Aapka ${sName} lookup inquiry kiya gaya tha (${log.reference || "Record"}). Kya isko complete / unlock karne me koi dikkat aa rahi hai?`)}`
+          : null;
+
+        detailedLedger.push({
+          id: `INQ-${log.id.slice(0, 8).toUpperCase()}`,
+          referenceNumber: log.reference || `INQ-${code}`,
+          serviceCode: code,
+          serviceName: sName,
+          createdAt: log.createdAt,
+          status: "UNPAID_DROP_OFF",
+          isPaid: false,
+          revenue: 0,
+          incurredVendorCost: unitCost,
+          netProfit,
+          organization: log.organization ? { id: log.organization.id, name: log.organization.name } : null,
+          user: log.user ? { name: log.user.name, phone: log.user.phone } : null,
+          customer: null,
+          whatsappUrl,
+        });
+      }
+
+      // Sort detailed ledger chronologically descending
+      detailedLedger.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      const totalRequests = completedCount + abandonedCount;
       const totalVendorBurn = completedVendorCost + wastedVendorCost;
       const netPlatformProfit = totalGrossRevenue - totalVendorBurn;
       const profitMargin = totalGrossRevenue > 0 ? Math.round((netPlatformProfit / totalGrossRevenue) * 100) : 0;

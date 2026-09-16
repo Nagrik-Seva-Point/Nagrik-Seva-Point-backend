@@ -10842,12 +10842,20 @@ var AdminService = class {
               createdAt: true
             }
           },
+          apiLogs: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              createdAt: true
+            }
+          },
           _count: {
             select: {
               members: true,
               customers: true,
               requests: true,
-              payments: true
+              payments: true,
+              apiLogs: true
             }
           }
         }
@@ -10859,12 +10867,20 @@ var AdminService = class {
     const enhancedItems = items.map((org) => {
       const ownerUser = org.members[0]?.user;
       const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
-      const lastLogin = lastSessionDate || ownerUser?.updatedAt || org.createdAt;
+      const lastRequestDate = org.requests?.[0]?.createdAt;
+      const lastApiLogDate = org.apiLogs?.[0]?.createdAt;
+      const allTimestamps = [lastSessionDate, ownerUser?.updatedAt, lastRequestDate, lastApiLogDate, org.createdAt].filter(Boolean).map((d) => new Date(d).getTime()).filter((t) => !isNaN(t));
+      const lastLogin = allTimestamps.length > 0 ? new Date(Math.max(...allTimestamps)).toISOString() : org.createdAt;
       const completedPayments = org.payments || [];
       const completedPaymentsCount = completedPayments.length;
       const completedPaymentsAmount = completedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const totalRequests = Math.max(org._count?.requests || 0, org._count?.apiLogs || 0);
       return {
         ...org,
+        _count: {
+          ...org._count,
+          requests: totalRequests
+        },
         lastLogin,
         completedPaymentsCount,
         completedPaymentsAmount
@@ -10916,12 +10932,17 @@ var AdminService = class {
           take: 20,
           orderBy: { createdAt: "desc" }
         },
+        apiLogs: {
+          take: 20,
+          orderBy: { createdAt: "desc" }
+        },
         _count: {
           select: {
             members: true,
             customers: true,
             requests: true,
-            payments: true
+            payments: true,
+            apiLogs: true
           }
         }
       }
@@ -10929,7 +10950,14 @@ var AdminService = class {
     if (!org) {
       throw AppError.notFound("Organization not found", "ORG_NOT_FOUND");
     }
-    return org;
+    const totalRequests = Math.max(org._count?.requests || 0, org._count?.apiLogs || 0);
+    return {
+      ...org,
+      _count: {
+        ...org._count,
+        requests: totalRequests
+      }
+    };
   }
   /**
    * 5. Master Admin KPI Overview Stats (Cached in Redis 60s TTL)
@@ -11496,8 +11524,13 @@ var AdminService = class {
             orderBy: { createdAt: "desc" },
             take: 1
           },
+          apiLogs: {
+            select: { createdAt: true },
+            orderBy: { createdAt: "desc" },
+            take: 1
+          },
           _count: {
-            select: { requests: true, payments: true }
+            select: { requests: true, payments: true, apiLogs: true }
           }
         },
         orderBy: { createdAt: "desc" }
@@ -11508,8 +11541,10 @@ var AdminService = class {
       const powerOrgs = [];
       orgs.forEach((org) => {
         const owner = org.members[0]?.user;
-        const totalRequests = org._count.requests;
+        const totalRequests = Math.max(org._count.requests || 0, org._count.apiLogs || 0);
         const lastRequestDate = org.requests[0]?.createdAt ? new Date(org.requests[0].createdAt) : null;
+        const lastApiLogDate = org.apiLogs?.[0]?.createdAt ? new Date(org.apiLogs[0].createdAt) : null;
+        const lastActiveAt = [lastRequestDate, lastApiLogDate].filter((d) => d !== null).sort((a, b) => b.getTime() - a.getTime())[0] || null;
         const cleanPhone = owner?.phone?.replace(/[^0-9]/g, "") || "";
         const whatsappUrl = cleanPhone.length === 10 ? `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Namaste ${owner?.name || "Partner"} ji, Nagrik Seva Point support team here. Aapke Cyber Caf\xE9 par services chalu karne me koi dikkat aa rahi hai?`)}` : null;
         const record = {
@@ -11522,11 +11557,11 @@ var AdminService = class {
           whatsappUrl,
           totalRequests,
           createdAt: org.createdAt,
-          lastActiveAt: lastRequestDate
+          lastActiveAt
         };
         if (org.createdAt <= twoDaysAgo && totalRequests === 0) {
           day0Dropoffs.push(record);
-        } else if (lastRequestDate && lastRequestDate >= sevenDaysAgo) {
+        } else if (lastActiveAt && lastActiveAt >= sevenDaysAgo) {
           activeOrgs.push(record);
           if (totalRequests >= 20) {
             powerOrgs.push(record);
@@ -11613,7 +11648,7 @@ var AdminService = class {
         KISAN_CARD: 0,
         KISAN_REGISTRATION_CARD: 0
       };
-      const [services, allRequests] = await Promise.all([
+      const [services, allRequests, upstreamApiLogs] = await Promise.all([
         prisma.service.findMany({
           select: { id: true, code: true, name: true }
         }),
@@ -11629,6 +11664,25 @@ var AdminService = class {
             payments: {
               select: { id: true, amount: true, status: true, paidAt: true }
             }
+          }
+        }),
+        prisma.apiLog.findMany({
+          where: {
+            ...whereDate,
+            serviceCode: { in: ["PAN_FIND", "PAN_DETAILS"] },
+            endpoint: {
+              in: [
+                "/api/v1/pan/find",
+                "/api/v1/pan/details/verify",
+                "/api/v1/pan/details"
+              ]
+            }
+          },
+          orderBy: { createdAt: "desc" },
+          take: 500,
+          include: {
+            organization: { select: { id: true, name: true, slug: true } },
+            user: { select: { id: true, name: true, phone: true, email: true } }
           }
         })
       ]);
@@ -11654,6 +11708,26 @@ var AdminService = class {
           wastedCost: 0
         };
       });
+      const claimedLogIds = /* @__PURE__ */ new Set();
+      for (const req of allRequests) {
+        const code = req.service.code;
+        if (code === "PAN_FIND" || code === "PAN_DETAILS") {
+          const reqTime = new Date(req.createdAt).getTime();
+          const matchedLog = upstreamApiLogs.find((log2) => {
+            if (claimedLogIds.has(log2.id)) return false;
+            if (log2.serviceCode !== code) return false;
+            const logTime = new Date(log2.createdAt).getTime();
+            const timeDiff = reqTime - logTime;
+            if (timeDiff < -3e4 || timeDiff > 2 * 60 * 60 * 1e3) return false;
+            if (req.organizationId && log2.organizationId && req.organizationId === log2.organizationId) return true;
+            if (req.userId && log2.userId && req.userId === log2.userId) return true;
+            return false;
+          });
+          if (matchedLog) {
+            claimedLogIds.add(matchedLog.id);
+          }
+        }
+      }
       const detailedLedger = allRequests.map((req) => {
         const code = req.service.code;
         const unitCost = serviceCostMap[code] ?? 0;
@@ -11714,7 +11788,56 @@ var AdminService = class {
           whatsappUrl
         };
       });
-      const totalRequests = allRequests.length;
+      for (const log2 of upstreamApiLogs) {
+        if (claimedLogIds.has(log2.id)) continue;
+        const code = log2.serviceCode;
+        const unitCost = serviceCostMap[code] ?? (code === "PAN_FIND" ? 2.5 : 2);
+        if (code === "PAN_FIND") panFindCalls++;
+        else if (code === "PAN_DETAILS") panDetailsCalls++;
+        else otherCalls++;
+        const sName = code === "PAN_FIND" ? "Instant PAN Find by Aadhaar" : "PAN Details Verification";
+        if (!serviceMap[code]) {
+          serviceMap[code] = {
+            code,
+            name: sName,
+            unitCost,
+            totalInvocations: 0,
+            completedCount: 0,
+            completedRevenue: 0,
+            fulfilledCost: 0,
+            abandonedCount: 0,
+            wastedCost: 0
+          };
+        }
+        serviceMap[code].totalInvocations++;
+        serviceMap[code].abandonedCount++;
+        serviceMap[code].wastedCost += unitCost;
+        abandonedCount++;
+        wastedVendorCost += unitCost;
+        const netProfit = -unitCost;
+        const targetPhone = log2.user?.phone || "";
+        const cleanPhone = targetPhone.replace(/[^0-9]/g, "");
+        const targetName = log2.organization?.name || log2.user?.name || "Cyber Caf\xE9 Partner";
+        const whatsappUrl = cleanPhone.length === 10 ? `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Namaste ${targetName} ji, Nagrik Seva Point support team here. Aapka ${sName} lookup inquiry kiya gaya tha (${log2.reference || "Record"}). Kya isko complete / unlock karne me koi dikkat aa rahi hai?`)}` : null;
+        detailedLedger.push({
+          id: `INQ-${log2.id.slice(0, 8).toUpperCase()}`,
+          referenceNumber: log2.reference || `INQ-${code}`,
+          serviceCode: code,
+          serviceName: sName,
+          createdAt: log2.createdAt,
+          status: "UNPAID_DROP_OFF",
+          isPaid: false,
+          revenue: 0,
+          incurredVendorCost: unitCost,
+          netProfit,
+          organization: log2.organization ? { id: log2.organization.id, name: log2.organization.name } : null,
+          user: log2.user ? { name: log2.user.name, phone: log2.user.phone } : null,
+          customer: null,
+          whatsappUrl
+        });
+      }
+      detailedLedger.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const totalRequests = completedCount + abandonedCount;
       const totalVendorBurn = completedVendorCost + wastedVendorCost;
       const netPlatformProfit = totalGrossRevenue - totalVendorBurn;
       const profitMargin = totalGrossRevenue > 0 ? Math.round(netPlatformProfit / totalGrossRevenue * 100) : 0;
