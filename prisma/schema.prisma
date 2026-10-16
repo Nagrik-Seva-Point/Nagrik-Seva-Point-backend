@@ -162,6 +162,7 @@ model Invitation {
   status         String       // pending, accepted, rejected
   expiresAt      DateTime
   inviterId      String
+  createdAt      DateTime     @default(now())
 }
 
 // --- BUSINESS MODELS ---
