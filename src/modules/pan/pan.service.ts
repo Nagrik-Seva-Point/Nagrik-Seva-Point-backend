@@ -7,6 +7,8 @@ import type {
   PanDetailsInput,
   PanDetailsOutput,
   PanFindOutput,
+  PanToAadhaarDetailsOutput,
+  PanToAadhaarVerifyOutput,
   VerifyPanDetailsOutput,
 } from "./pan.schema";
 
@@ -272,6 +274,150 @@ export class PanService {
         "INVALID_TOKEN",
       );
     }
+  }
+
+  /**
+   * 6. Advance PAN to Aadhaar Inquiry & Tokenization
+   * Pre-payment: ONLY returns masked Aadhaar, PAN, and encrypted searchToken.
+   * Remaining data (fullName, dob, gender) is encrypted in searchToken.
+   */
+  async verifyPanToAadhaar(pan: string): Promise<PanToAadhaarVerifyOutput> {
+    const formattedPan = pan.trim().toUpperCase();
+    logger.info(`[PanService] Verifying Advance PAN to Aadhaar for: ${formattedPan}`);
+
+    // TEST CONDITION: If Pan_number === ABCDE1234F return test details (only masked aadhaar, remaining data encrypted)
+    if (formattedPan === "ABCDE1234F") {
+      logger.info(`[PanService] Test PAN ABCDE1234F detected. Returning masked Aadhaar with encrypted details.`);
+      const searchToken = encryptPanToken({
+        pan: "ABCDE1234F",
+        aadharNumber: "321098765432",
+        fullName: "VIKASH KUMAR",
+        dob: "1995-08-15",
+        gender: "Male",
+      });
+
+      return {
+        pan: "ABCDE1234F",
+        maskedAadhaar: "32XXXXXXXXXX",
+        searchToken,
+      };
+    }
+
+    const response = await ezytmPanGateway.getAdvancePanToAadhaar(formattedPan);
+    console.log(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
+    logger.info(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
+
+    if (response.Errorcode === 100 && response.Data) {
+      const d = response.Data;
+      const cleanPanNumber = (d.PanNumber || formattedPan).trim().toUpperCase();
+      const rawAadhaar = String(
+        (d as any).AadharNumber ||
+        (d as any).AadhaarNumber ||
+        (d as any).Aadhaar ||
+        (d as any).Aadhar ||
+        ""
+      ).trim();
+
+      const vendorMaskedAadhaar = String(
+        d.MaskedAadhaar || (d as any).maskedAadhaar || ""
+      ).trim();
+
+      const maskedAadhaar = vendorMaskedAadhaar && vendorMaskedAadhaar.toLowerCase() !== "null"
+        ? vendorMaskedAadhaar
+        : rawAadhaar && rawAadhaar.length === 12
+        ? `${rawAadhaar.substring(0, 2)}XXXXXXXX${rawAadhaar.substring(10)}`
+        : "";
+
+      const fullName =
+        d.FullName ||
+        [d.FirstName, d.MiddleName, d.LastName].filter(Boolean).join(" ").trim() ||
+        "";
+
+      const dob = d.Dob || "";
+      const gender = d.Gender === "M"
+        ? "Male"
+        : d.Gender === "F"
+        ? "Female"
+        : (d.Gender || "");
+
+      // STRICT VALIDATION: If no valid Aadhaar number/masked Aadhaar was returned,
+      // or if AadhaarLinked is explicitly false, or if all fields are null/empty,
+      // it means this PAN card has NO linked Aadhaar in the government database.
+      // NEVER return dummy data in production!
+      const hasAadhaarData = Boolean(
+        (maskedAadhaar && maskedAadhaar !== "" && maskedAadhaar.toLowerCase() !== "null") ||
+        (rawAadhaar && rawAadhaar !== "" && rawAadhaar.toLowerCase() !== "null")
+      );
+
+      if (!hasAadhaarData || d.AadhaarLinked === false) {
+        logger.warn(`[PanService] Advance PAN to Aadhaar returned no linked Aadhaar for PAN ${formattedPan}. AadhaarLinked: ${d.AadhaarLinked}, MaskedAadhaar: ${d.MaskedAadhaar}`);
+        throw AppError.badRequest(
+          "No Aadhaar record found linked with this PAN card in the Income Tax database.",
+          "PAN_NOT_FOUND",
+        );
+      }
+
+      // Encrypt full demographic data into token
+      const searchToken = encryptPanToken({
+        pan: cleanPanNumber,
+        aadharNumber: rawAadhaar || maskedAadhaar,
+        fullName: fullName || "N/A",
+        dob: dob || "N/A",
+        gender: gender || "N/A",
+      });
+
+      // ONLY return masked Aadhaar, PAN, and encrypted searchToken
+      return {
+        pan: cleanPanNumber,
+        maskedAadhaar,
+        searchToken,
+      };
+    }
+
+    if (response.Errorcode === 101 || response.Errorcode === 104) {
+      throw AppError.badRequest(
+        response.Message || "No record found linked with this PAN in the registry.",
+        "PAN_NOT_FOUND",
+      );
+    }
+
+    const fallbackMsg = response.Message || "Failed to retrieve Aadhaar details linked with this PAN. Please check the PAN number.";
+    throw AppError.badRequest(fallbackMsg, "PAN_TO_AADHAAR_FAILED");
+  }
+
+  /**
+   * 7. Decrypt Advance PAN to Aadhaar token once payment is done
+   * Returns ONLY: aadhar number, Full name, Dob and gender
+   */
+  decryptPanToAadhaarToken(token: string): PanToAadhaarDetailsOutput {
+    try {
+      const d = decryptPanToken(token);
+      if (!d?.pan) {
+        throw new Error("Missing PAN in token");
+      }
+      return {
+        pan: d.pan.trim().toUpperCase(),
+        aadharNumber: (d.aadharNumber as string) || (d.aadhaarMasked as string) || "",
+        fullName: (d.fullName as string) || "N/A",
+        dob: (d.dob as string) || "N/A",
+        gender: (d.gender as string) || "N/A",
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[PanService] Advance PAN to Aadhaar token decryption failed: ${msg}`);
+      throw AppError.badRequest(
+        "Invalid or expired verification session token. Please search again.",
+        "INVALID_TOKEN",
+      );
+    }
+  }
+
+  /**
+   * 8. Direct retrieval for ServiceDispatcher fulfillment
+   */
+  async getAdvancePanToAadhaar(pan: string): Promise<PanToAadhaarDetailsOutput> {
+    const verified = await this.verifyPanToAadhaar(pan);
+    return this.decryptPanToAadhaarToken(verified.searchToken);
   }
 }
 

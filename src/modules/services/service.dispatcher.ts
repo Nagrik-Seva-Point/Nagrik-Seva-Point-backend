@@ -88,6 +88,21 @@ export class ServiceDispatcher {
           break;
         }
 
+        case "PAN_TO_AADHAAR": {
+          const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
+          const input = (request.inputData || {}) as Record<string, unknown>;
+          const searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : undefined);
+
+          if (searchToken && typeof searchToken === "string" && searchToken.includes(".")) {
+            resultData = panService.decryptPanToAadhaarToken(searchToken) as unknown as Record<string, unknown>;
+          } else if (typeof input?.pan === "string" && input.pan) {
+            resultData = (await panService.getAdvancePanToAadhaar(input.pan)) as unknown as Record<string, unknown>;
+          } else {
+            throw new Error("Missing PAN/searchToken for PAN_TO_AADHAAR service");
+          }
+          break;
+        }
+
         case "KISAN_CARD":
         case "KISAN_REGISTRATION_CARD": {
           const vaultItem = await ephemeralVault.getVaultItem(serviceRequestId);

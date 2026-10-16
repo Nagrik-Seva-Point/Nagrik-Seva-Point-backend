@@ -38,3 +38,47 @@ export interface PanDetailsResponse {
     less_info?: boolean;
   } | null;
 }
+
+// 3. Advance PAN to Aadhaar Details Vendor Response
+// Upstream endpoint: /api/Ekyc/AdvancePanToAadhardetails
+export interface AdvancePanToAadhaarAddress {
+  Zip?: string | null;
+  City?: string | null;
+  Full?: string | null;
+  State?: string | null;
+  Line1?: string | null;
+  Line2?: string | null;
+  Country?: string | null;
+  StreetName?: string | null;
+}
+
+export interface AdvancePanToAadhaarData {
+  Dob?: string | null;
+  Doi?: string | null;
+  Tax?: boolean | null;
+  Email?: string | null;
+  Gender?: string | null;
+  Status?: string | null;
+  Address?: AdvancePanToAadhaarAddress | null;
+  Category?: string | null;
+  DobCheck?: boolean | null;
+  FullName?: string | null;
+  LastName?: string | null;
+  LessInfo?: boolean | null;
+  FirstName?: string | null;
+  PanNumber?: string | null;
+  FatherName?: string | null;
+  MiddleName?: string | null;
+  DobVerified?: boolean | null;
+  PhoneNumber?: string | null;
+  AadhaarLinked?: boolean | null;
+  MaskedAadhaar?: string | null;
+  FullNameSplit?: [string, string, string] | null;
+}
+
+export interface AdvancePanToAadhaarResponse {
+  Errorcode: number;
+  Status: string;
+  Message?: string;
+  Data: AdvancePanToAadhaarData | null;
+}

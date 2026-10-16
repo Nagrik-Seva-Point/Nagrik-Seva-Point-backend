@@ -16,13 +16,34 @@ function getEncryptionKey(): Buffer {
 
 export interface PanTokenPayload {
   pan: string;
+  aadharNumber?: string;
   aadhaarMasked?: string;
   fullName?: string;
+  firstName?: string;
+  lastName?: string;
+  fatherName?: string;
   dob?: string;
   gender?: string;
   category?: string;
   aadhaarLinked?: boolean;
+  email?: string;
+  phoneNumber?: string;
+  status?: string;
+  tax?: boolean;
+  doi?: string;
+  address?: {
+    zip?: string | null;
+    city?: string | null;
+    full?: string | null;
+    state?: string | null;
+    line1?: string | null;
+    line2?: string | null;
+    country?: string | null;
+    streetName?: string | null;
+    [k: string]: unknown;
+  } | null;
   exp?: number;
+  [key: string]: unknown;
 }
 
 /**
@@ -35,13 +56,8 @@ export function encryptPanToken(payload: PanTokenPayload): string {
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
   const tokenData: PanTokenPayload = {
+    ...payload,
     pan: payload.pan.trim().toUpperCase(),
-    aadhaarMasked: payload.aadhaarMasked,
-    fullName: payload.fullName,
-    dob: payload.dob,
-    gender: payload.gender,
-    category: payload.category,
-    aadhaarLinked: payload.aadhaarLinked,
     exp: payload.exp || Date.now() + 30 * 60 * 1000, // 30 mins expiry
   };
 

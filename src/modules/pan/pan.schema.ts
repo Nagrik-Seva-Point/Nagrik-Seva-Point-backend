@@ -39,6 +39,22 @@ export const verifyPanDetailsSchema = z.object({
 
 export type VerifyPanDetailsInput = z.infer<typeof verifyPanDetailsSchema>;
 
+export const panToAadhaarVerifySchema = z.object({
+  pan: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, "Please enter a valid 10-character PAN number (e.g. ABCDE1234F)"),
+});
+
+export type PanToAadhaarVerifyInput = z.infer<typeof panToAadhaarVerifySchema>;
+
+export const panToAadhaarDecryptSchema = z.object({
+  searchToken: z.string().min(10, "Search token is required"),
+});
+
+export type PanToAadhaarDecryptInput = z.infer<typeof panToAadhaarDecryptSchema>;
+
 // ==========================================
 // 2. CLEAN OUTPUT DTO TYPES
 // ==========================================
@@ -67,4 +83,18 @@ export interface PanDetailsOutput {
   gender: string;
   aadhaarLinked: boolean;
   category: string;
+}
+
+export interface PanToAadhaarVerifyOutput {
+  pan: string;
+  maskedAadhaar: string;
+  searchToken: string;
+}
+
+export interface PanToAadhaarDetailsOutput {
+  pan: string;
+  aadharNumber: string;
+  fullName: string;
+  dob: string;
+  gender: string;
 }

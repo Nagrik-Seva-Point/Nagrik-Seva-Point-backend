@@ -9,6 +9,10 @@ import {
   findPanSchema,
   type PanDetailsInput,
   panDetailsSchema,
+  type PanToAadhaarDecryptInput,
+  panToAadhaarDecryptSchema,
+  type PanToAadhaarVerifyInput,
+  panToAadhaarVerifySchema,
   type VerifyPanDetailsInput,
   verifyPanDetailsSchema,
 } from "./pan.schema";
@@ -251,6 +255,151 @@ panRoutes.post(
         action: "PAN Details Report Unlock Failed",
         endpoint: "/api/v1/pan/details/decrypt",
         reference: "PAN_REPORT",
+        status: "FAILED",
+        statusCode: 400,
+        durationMs: Date.now() - start,
+        note: `Token unlock error: ${msg}`,
+      });
+      throw err;
+    }
+  },
+);
+
+/**
+ * 6. Advance PAN to Aadhaar Verification (Pre-Payment Availability & Linkage Check)
+ * POST /pan/to-aadhaar/verify
+ */
+panRoutes.post(
+  "/to-aadhaar/verify",
+  validationMiddleware(panToAadhaarVerifySchema),
+  async (c) => {
+    const { pan } = c.get("validData") as PanToAadhaarVerifyInput;
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+
+    try {
+      const result = await panService.verifyPanToAadhaar(pan);
+      const maskedPan = pan.length === 10 ? `XXXXX${pan.slice(5)}` : "PAN_RECORD";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_TO_AADHAAR",
+        action: "Advance PAN to Aadhaar Inquiry",
+        endpoint: "/api/v1/pan/to-aadhaar/verify",
+        reference: maskedPan,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Advance PAN lookup executed. Masked Aadhaar: ${result.maskedAadhaar}`,
+      });
+      return c.json({ success: true, data: result });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Inquiry failed";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof (err as { statusCode?: number }).statusCode === "number" ? (err as { statusCode: number }).statusCode : 400;
+      const safePan = pan.length === 10 ? `XXXXX${pan.slice(5)}` : "PAN_RECORD";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_TO_AADHAAR",
+        action: "Advance PAN to Aadhaar Inquiry",
+        endpoint: "/api/v1/pan/to-aadhaar/verify",
+        reference: safePan,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `Advance PAN lookup failed for masked PAN ${safePan}: ${msg}`,
+      });
+      throw err;
+    }
+  },
+);
+
+// Alias for convenience: POST /pan/to-aadhaar
+panRoutes.post(
+  "/to-aadhaar",
+  validationMiddleware(panToAadhaarVerifySchema),
+  async (c) => {
+    const { pan } = c.get("validData") as PanToAadhaarVerifyInput;
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+
+    try {
+      const result = await panService.verifyPanToAadhaar(pan);
+      const maskedPan = pan.length === 10 ? `XXXXX${pan.slice(5)}` : "PAN_RECORD";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_TO_AADHAAR",
+        action: "Advance PAN to Aadhaar Inquiry",
+        endpoint: "/api/v1/pan/to-aadhaar",
+        reference: maskedPan,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Advance PAN lookup executed. Masked Aadhaar: ${result.maskedAadhaar}`,
+      });
+      return c.json({ success: true, data: result });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Inquiry failed";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof (err as { statusCode?: number }).statusCode === "number" ? (err as { statusCode: number }).statusCode : 400;
+      const safePan = pan.length === 10 ? `XXXXX${pan.slice(5)}` : "PAN_RECORD";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_TO_AADHAAR",
+        action: "Advance PAN to Aadhaar Inquiry",
+        endpoint: "/api/v1/pan/to-aadhaar",
+        reference: safePan,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `Advance PAN lookup failed: ${msg}`,
+      });
+      throw err;
+    }
+  },
+);
+
+/**
+ * 7. Decrypt Advance PAN to Aadhaar Token to Reveal Full Demographic Records
+ * POST /pan/to-aadhaar/decrypt
+ */
+panRoutes.post(
+  "/to-aadhaar/decrypt",
+  validationMiddleware(panToAadhaarDecryptSchema),
+  (c) => {
+    const { searchToken } = c.get("validData") as PanToAadhaarDecryptInput;
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+
+    try {
+      const result = panService.decryptPanToAadhaarToken(searchToken);
+      const maskedPan = result.pan ? `XXXXX${result.pan.slice(5)}` : "PAN_TO_AADHAAR";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_TO_AADHAAR",
+        action: "Advance PAN to Aadhaar Dossier Unlocked",
+        endpoint: "/api/v1/pan/to-aadhaar/decrypt",
+        reference: maskedPan,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Unlocked complete Aadhaar & demographic record for masked PAN ${maskedPan}. Citizen consent verified under DPDP Act.`,
+      });
+      return c.json({ success: true, data: result });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Invalid or expired token";
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "PAN_TO_AADHAAR",
+        action: "Advance PAN to Aadhaar Unlock Failed",
+        endpoint: "/api/v1/pan/to-aadhaar/decrypt",
+        reference: "PAN_TO_AADHAAR",
         status: "FAILED",
         statusCode: 400,
         durationMs: Date.now() - start,

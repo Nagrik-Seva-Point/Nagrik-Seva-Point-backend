@@ -116,6 +116,22 @@ export class EzytmGateway {
             },
           } as T;
         }
+        if (endpoint.includes("AdvancePanToAadhardetails") && params.Panid === "ABCDE1234F") {
+          return {
+            Errorcode: 100,
+            Status: "Success",
+            Message: "Data Fetch Successfully",
+            Data: {
+              Dob: "1995-08-15",
+              Gender: "Male",
+              FullName: "VIKASH KUMAR",
+              PanNumber: "ABCDE1234F",
+              AadhaarNumber: "321098765432",
+              AadharNumber: "321098765432",
+              MaskedAadhaar: "32XXXXXXXXXX",
+            },
+          } as T;
+        }
       }
 
       logger.error(
@@ -140,8 +156,9 @@ export class EzytmGateway {
     const body = new URLSearchParams({ ...params, ApiMode: this.apiMode });
     logger.info(`[EzyTM Gateway] Dispatching POST to ${url}`);
 
+    const timeoutMs = Number(process.env.EZYTM_TIMEOUT_MS) || 45000;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     const activeProxyUrl = this.getProxyUrl() || this.proxyUrl;
     let dispatcher: ProxyAgent | undefined = undefined;
@@ -189,10 +206,10 @@ export class EzytmGateway {
       const errName = err && typeof err === "object" && "name" in err ? (err as { name: string }).name : "";
       if (errName === "AbortError") {
         logger.error(
-          `[EzyTM Gateway] Timeout after 15s communicating with ${url}`,
+          `[EzyTM Gateway] Timeout after ${timeoutMs / 1000}s communicating with ${url}`,
         );
         throw AppError.badGateway(
-          "EzyTM gateway connection timed out",
+          `EzyTM gateway connection timed out after ${timeoutMs / 1000}s`,
           "GATEWAY_TIMEOUT",
         );
       }

@@ -1,6 +1,7 @@
 import { ezytmGateway } from "./ezytm.gateway";
 import type {
   AadharToPanFindResponse,
+  AdvancePanToAadhaarResponse,
   PanDetailsResponse,
 } from "./ezytm.types";
 
@@ -24,6 +25,20 @@ export class EzytmPanGateway {
     return await ezytmGateway.postForm<PanDetailsResponse>(
       "/api/Ekyc/PanDetails",
       { Panid: pan.trim().toUpperCase() },
+    );
+  }
+
+  /**
+   * 3. Advance PAN to Aadhaar Details API
+   * POST /api/Ekyc/AdvancePanToAadhardetails
+   */
+  async getAdvancePanToAadhaar(pan: string): Promise<AdvancePanToAadhaarResponse> {
+    return await ezytmGateway.postForm<AdvancePanToAadhaarResponse>(
+      "/api/Ekyc/AdvancePanToAadhardetails",
+      {
+        Panid: pan.trim().toUpperCase(),
+        ApiMode: "1",
+      },
     );
   }
 }
