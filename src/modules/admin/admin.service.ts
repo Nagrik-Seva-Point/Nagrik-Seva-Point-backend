@@ -1665,14 +1665,17 @@ export class AdminService {
 
   async getAuditLogs(query: AuditLogQueryInput) {
     const { organizationId, category = "ALL", page = 1, limit = 30 } = query;
-    const skip = (page - 1) * limit;
+    const cacheKey = `cache:audit-logs:${organizationId || "ALL"}:${category}:${page}:${limit}`;
 
-    const isDirectWalkin = organizationId === "DIRECT_WALKIN";
+    return await redis.remember(cacheKey, 15, async () => {
+      const skip = (page - 1) * limit;
 
-    const whereWallet: Record<string, unknown> = isDirectWalkin
-      ? { id: "impossible_direct_walkin_none" }
-      : organizationId
-      ? { wallet: { organizationId } }
+      const isDirectWalkin = organizationId === "DIRECT_WALKIN";
+
+      const whereWallet: Record<string, unknown> = isDirectWalkin
+        ? { id: "impossible_direct_walkin_none" }
+        : organizationId
+        ? { wallet: { organizationId } }
       : {};
 
     const wherePayment: Record<string, unknown> = isDirectWalkin
@@ -2047,6 +2050,7 @@ export class AdminService {
       totalPages: Math.ceil(filtered.length / limit) || 1,
       summary,
     };
+    });
   }
 
   // ==========================================

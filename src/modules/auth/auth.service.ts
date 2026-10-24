@@ -1,5 +1,7 @@
 import { prisma } from "../../core/db/prisma";
 import { auth } from "../../core/auth/better-auth";
+import { redis } from "../../core/redis/redis.client";
+import { invalidateAuthContext } from "../../middleware/request-context.middleware";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { logApiExecution } from "../../core/logger/api-logger";
@@ -281,86 +283,90 @@ export class AuthService {
    * Fetches full profile details including user information and associated Cyber Café organization metrics.
    */
   async getProfile(userId: string, requestedOrgId?: string | null) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        role: true,
-        emailVerified: true,
-        image: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const cacheKey = `cache:profile:${userId}:${requestedOrgId || "DEFAULT"}`;
 
-    if (!user) {
-      throw AppError.notFound("User account not found");
-    }
-
-    // Resolve user's organization: either requestedOrgId if member, or primary membership
-    let membership = null;
-    if (requestedOrgId) {
-      membership = await prisma.member.findFirst({
-        where: { userId, organizationId: requestedOrgId },
-        include: {
-          organization: {
-            include: {
-              wallet: true,
-            },
-          },
+    return await redis.remember(cacheKey, 30, async () => {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          role: true,
+          emailVerified: true,
+          image: true,
+          createdAt: true,
+          updatedAt: true,
         },
       });
-    }
 
-    if (!membership) {
-      membership = await prisma.member.findFirst({
-        where: { userId },
-        include: {
-          organization: {
-            include: {
-              wallet: true,
+      if (!user) {
+        throw AppError.notFound("User account not found");
+      }
+
+      // Resolve user's organization: either requestedOrgId if member, or primary membership
+      let membership = null;
+      if (requestedOrgId) {
+        membership = await prisma.member.findFirst({
+          where: { userId, organizationId: requestedOrgId },
+          include: {
+            organization: {
+              include: {
+                wallet: true,
+              },
             },
           },
-        },
-        orderBy: { createdAt: "asc" },
-      });
-    }
+        });
+      }
 
-    let organizationData = null;
-    if (membership?.organization) {
-      const orgId = membership.organization.id;
-      const [memberCount, customerCount, requestCount] = await Promise.all([
-        prisma.member.count({ where: { organizationId: orgId } }),
-        prisma.customer.count({ where: { organizationId: orgId } }),
-        prisma.serviceRequest.count({ where: { organizationId: orgId } }),
-      ]);
+      if (!membership) {
+        membership = await prisma.member.findFirst({
+          where: { userId },
+          include: {
+            organization: {
+              include: {
+                wallet: true,
+              },
+            },
+          },
+          orderBy: { createdAt: "asc" },
+        });
+      }
 
-      organizationData = {
-        id: membership.organization.id,
-        name: membership.organization.name,
-        slug: membership.organization.slug,
-        logo: membership.organization.logo,
-        metadata: membership.organization.metadata,
-        createdAt: membership.organization.createdAt,
-        role: membership.role,
-        walletBalance: membership.organization.wallet
-          ? Number(membership.organization.wallet.balance)
-          : 0.0,
-        stats: {
-          memberCount,
-          customerCount,
-          requestCount,
-        },
+      let organizationData = null;
+      if (membership?.organization) {
+        const orgId = membership.organization.id;
+        const [memberCount, customerCount, requestCount] = await Promise.all([
+          prisma.member.count({ where: { organizationId: orgId } }),
+          prisma.customer.count({ where: { organizationId: orgId } }),
+          prisma.serviceRequest.count({ where: { organizationId: orgId } }),
+        ]);
+
+        organizationData = {
+          id: membership.organization.id,
+          name: membership.organization.name,
+          slug: membership.organization.slug,
+          logo: membership.organization.logo,
+          metadata: membership.organization.metadata,
+          createdAt: membership.organization.createdAt,
+          role: membership.role,
+          walletBalance: membership.organization.wallet
+            ? Number(membership.organization.wallet.balance)
+            : 0.0,
+          stats: {
+            memberCount,
+            customerCount,
+            requestCount,
+          },
+        };
+      }
+
+      return {
+        user,
+        organization: organizationData,
       };
-    }
-
-    return {
-      user,
-      organization: organizationData,
-    };
+    });
   }
 
   /**
@@ -437,6 +443,10 @@ export class AuthService {
         });
       }
     }
+
+    // Invalidate cached profile & auth context so changes are immediately visible
+    await redis.delPattern(`cache:profile:${userId}:*`);
+    invalidateAuthContext();
 
     return this.getProfile(userId, requestedOrgId);
   }

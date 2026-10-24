@@ -80,6 +80,8 @@ model User {
   requests      ServiceRequest[]
   payments      Payment[]
   apiLogs       ApiLog[]
+
+  @@index([role])
 }
 
 model Session {
@@ -93,6 +95,10 @@ model Session {
   ipAddress            String?
   userAgent            String?
   activeOrganizationId String?
+
+  @@index([userId])
+  @@index([activeOrganizationId])
+  @@index([createdAt(sort: Desc)])
 }
 
 model Account {
@@ -151,6 +157,9 @@ model Member {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   userId         String
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, organizationId])
+  @@index([organizationId])
 }
 
 model Invitation {
@@ -163,6 +172,9 @@ model Invitation {
   expiresAt      DateTime
   inviterId      String
   createdAt      DateTime     @default(now())
+
+  @@index([organizationId, status])
+  @@index([email])
 }
 
 // --- BUSINESS MODELS ---
@@ -281,6 +293,7 @@ model ServiceRequest {
   payments          Payment[]
 
   @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, status, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([guestSessionId, createdAt(sort: Desc)])
   @@index([status, createdAt])
@@ -297,6 +310,7 @@ model ServiceRequestEvent {
   createdAt        DateTime        @default(now())
 
   @@index([serviceRequestId, createdAt])
+  @@index([createdAt(sort: Desc)])
 }
 
 // --- PAYMENTS ---
@@ -333,9 +347,11 @@ model Payment {
   @@index([orderId])
   @@index([transactionId])
   @@index([serviceRequestId])
+  @@index([organizationId, createdAt(sort: Desc)])
   @@index([organizationId, status, createdAt])
   @@index([userId, status])
   @@index([guestSessionId])
+  @@index([createdAt(sort: Desc)])
 }
 
 // --- WALLET & LEDGER (Prepared for future activation) ---
@@ -385,4 +401,6 @@ model ApiLog {
 
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([serviceCode, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
 }

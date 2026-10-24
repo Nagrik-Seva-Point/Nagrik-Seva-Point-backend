@@ -27,6 +27,10 @@ serviceRoutes.get(
     const context = c.get("requestContext");
 
     const services = await serviceService.getServices(context, query);
+    c.header(
+      "Cache-Control",
+      "private, max-age=60, stale-while-revalidate=120",
+    );
     return c.json({ success: true, data: services });
   },
 );
@@ -36,12 +40,20 @@ serviceRoutes.get("/:code", async (c) => {
   const context = c.get("requestContext");
 
   const service = await serviceService.getServiceByCode(code, context);
+  c.header(
+    "Cache-Control",
+    "private, max-age=60, stale-while-revalidate=120",
+  );
   return c.json({ success: true, data: service });
 });
 
 serviceRoutes.get("/:code/pricing", async (c) => {
   const code = c.req.param("code");
   const pricingMatrix = await pricingService.getPricingMatrix(code);
+  c.header(
+    "Cache-Control",
+    "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+  );
   return c.json({ success: true, data: pricingMatrix });
 });
 

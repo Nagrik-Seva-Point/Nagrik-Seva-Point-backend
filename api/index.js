@@ -6356,6 +6356,161 @@ async function logApiExecution(params) {
   }
 }
 
+// src/middleware/request-context.middleware.ts
+var authContextCache = /* @__PURE__ */ new Map();
+function invalidateAuthContext(token) {
+  if (token) {
+    authContextCache.delete(token);
+  } else {
+    authContextCache.clear();
+  }
+}
+function extractAuthToken(c) {
+  const authHeader = c.req.header("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+  const customToken = c.req.header("x-session-token");
+  if (customToken) return customToken.trim();
+  const cookieHeader = c.req.header("cookie");
+  if (cookieHeader) {
+    const match2 = cookieHeader.match(/(?:better-auth\.session_token|__Secure-better-auth\.session_token)=([^;]+)/);
+    if (match2?.[1]) return match2[1].trim();
+  }
+  return null;
+}
+var requestContextMiddleware = () => {
+  return async (c, next) => {
+    try {
+      const token = extractAuthToken(c);
+      const requestedOrgId = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
+      const cacheKey = token ? `${token}:${requestedOrgId || "DEFAULT"}` : null;
+      if (cacheKey) {
+        const cached = authContextCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+          c.set("user", cached.user);
+          c.set("session", cached.session);
+          if (cached.organizationId) {
+            c.set("organizationId", cached.organizationId);
+          }
+          if (cached.organization) {
+            c.set("organization", cached.organization);
+          }
+          c.set("requestContext", cached.requestContext);
+          return await next();
+        }
+      }
+      let session = await auth.api.getSession({
+        headers: c.req.raw.headers
+      }).catch(() => null);
+      if (!session || !session.user) {
+        const authHeader = c.req.header("Authorization");
+        const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+        const customToken = c.req.header("x-session-token");
+        const token2 = bearerToken || customToken;
+        if (token2) {
+          const sessionRecord = await prisma.session.findUnique({
+            where: { token: token2 },
+            include: { user: true }
+          });
+          if (sessionRecord && sessionRecord.expiresAt > /* @__PURE__ */ new Date()) {
+            session = {
+              session: sessionRecord,
+              user: sessionRecord.user
+            };
+          }
+        }
+      }
+      if (session && session.user) {
+        const userId = session.user.id;
+        const requestedOrgId2 = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
+        let organizationId = requestedOrgId2 || session.session.activeOrganizationId;
+        if (!organizationId) {
+          const membership = await prisma.member.findFirst({
+            where: { userId },
+            include: { organization: true },
+            orderBy: { createdAt: "asc" }
+          });
+          if (membership) {
+            organizationId = membership.organizationId;
+            c.set("organization", membership.organization);
+          }
+        } else {
+          const membership = await prisma.member.findFirst({
+            where: { userId, organizationId },
+            include: { organization: true }
+          });
+          if (membership) {
+            c.set("organization", membership.organization);
+          } else {
+            logger2.warn(
+              `User ${userId} attempted to access unauthorized org ${organizationId}`
+            );
+            organizationId = null;
+          }
+        }
+        const requestContext = {
+          accessMode: "RETAILER",
+          userId,
+          organizationId: organizationId || null,
+          customerId: null,
+          // Populated per-request payload if present
+          pricingTier: "PARTNER",
+          guestSessionId: null
+        };
+        c.set("user", session.user);
+        c.set("session", session.session);
+        c.set("organizationId", organizationId || void 0);
+        c.set("requestContext", requestContext);
+        if (cacheKey) {
+          if (authContextCache.size > 2e3) {
+            const firstKey = authContextCache.keys().next().value;
+            if (firstKey) authContextCache.delete(firstKey);
+          }
+          authContextCache.set(cacheKey, {
+            session: session.session,
+            user: session.user,
+            organizationId: organizationId || null,
+            organization: c.get("organization") || null,
+            requestContext,
+            expiresAt: Date.now() + 30 * 1e3
+          });
+        }
+      } else {
+        let guestSessionId = c.req.header("x-guest-session-id");
+        if (!guestSessionId) {
+          guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
+        }
+        const requestContext = {
+          accessMode: "GUEST",
+          userId: null,
+          organizationId: null,
+          customerId: null,
+          pricingTier: "PUBLIC",
+          guestSessionId
+        };
+        c.set("user", null);
+        c.set("session", null);
+        c.set("organizationId", void 0);
+        c.set("organization", null);
+        c.set("requestContext", requestContext);
+      }
+    } catch (error) {
+      logger2.error("Error resolving request context:", error);
+      const guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
+      c.set("requestContext", {
+        accessMode: "GUEST",
+        userId: null,
+        organizationId: null,
+        customerId: null,
+        pricingTier: "PUBLIC",
+        guestSessionId
+      });
+    }
+    await next();
+  };
+};
+
 // src/middleware/validation.middleware.ts
 var validationMiddleware = (schema, target = "json") => {
   return async (c, next) => {
@@ -6381,6 +6536,229 @@ var validationMiddleware = (schema, target = "json") => {
     await next();
   };
 };
+
+// src/core/redis/redis.client.ts
+import { Redis } from "ioredis";
+var RedisClient = class {
+  client = null;
+  isConnected = false;
+  memoryCache = /* @__PURE__ */ new Map();
+  constructor() {
+    this.initClient();
+  }
+  initClient() {
+    let redisUrl = getEnvVar("REDIS_URL");
+    if (redisUrl) {
+      redisUrl = redisUrl.trim().replace(/^["']|["';]+$/g, "").trim();
+    }
+    const isServerless = process.env.VERCEL === "1" || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+    const isLocalhost = redisUrl?.includes("127.0.0.1") || redisUrl?.includes("localhost");
+    if (isServerless && isLocalhost) {
+      logger2.info("[Redis] Localhost Redis URL in Serverless environment. Using fast in-memory L1 cache fallback.");
+      this.client = null;
+      this.isConnected = false;
+      return;
+    }
+    if (!redisUrl) {
+      logger2.warn("[Redis] REDIS_URL environment variable is not defined. Redis operations will gracefully fallback to in-memory L1 cache.");
+      this.client = null;
+      this.isConnected = false;
+      return;
+    }
+    const isTls = redisUrl.startsWith("rediss://") || getEnvVar("REDIS_TLS") === "true";
+    const options = {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 2e3,
+      enableReadyCheck: true,
+      lazyConnect: true,
+      retryStrategy(times) {
+        if (times > 2) return null;
+        return 200;
+      }
+    };
+    if (isTls) {
+      options.tls = {
+        rejectUnauthorized: false
+        // Required for managed cloud providers like Aiven
+      };
+    }
+    try {
+      this.client = new Redis(redisUrl, options);
+      this.client.on("connect", () => {
+        this.isConnected = true;
+        logger2.info(`[Redis] Successfully connected to Redis instance.`);
+      });
+      this.client.on("ready", () => {
+        this.isConnected = true;
+        logger2.info(`[Redis] Redis connection ready for operations.`);
+      });
+      this.client.on("error", (err) => {
+        this.isConnected = false;
+        logger2.error(`[Redis] Connection error: ${err instanceof Error ? err.message : String(err)}`);
+      });
+      this.client.on("close", () => {
+        this.isConnected = false;
+        logger2.warn(`[Redis] Connection closed.`);
+      });
+    } catch (err) {
+      logger2.error(`[Redis] Failed to initialize Redis client: ${err instanceof Error ? err.message : String(err)}`);
+      this.client = null;
+    }
+  }
+  getRawClient() {
+    if (!this.client && getEnvVar("REDIS_URL")) {
+      this.initClient();
+    }
+    return this.client;
+  }
+  async get(key) {
+    try {
+      const client = this.getRawClient();
+      if (!client) return null;
+      return await client.get(key);
+    } catch (err) {
+      logger2.error(`[Redis] Error getting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+  async set(key, value, ttlSeconds) {
+    try {
+      const client = this.getRawClient();
+      if (!client) return false;
+      if (ttlSeconds && ttlSeconds > 0) {
+        await client.set(key, value, "EX", ttlSeconds);
+      } else {
+        await client.set(key, value);
+      }
+      return true;
+    } catch (err) {
+      logger2.error(`[Redis] Error setting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+  async setJson(key, data, ttlSeconds) {
+    try {
+      const jsonStr = JSON.stringify(data);
+      return await this.set(key, jsonStr, ttlSeconds);
+    } catch (err) {
+      logger2.error(`[Redis] Error serializing JSON for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+  async getJson(key) {
+    try {
+      const val = await this.get(key);
+      if (!val) return null;
+      return JSON.parse(val);
+    } catch (err) {
+      logger2.error(`[Redis] Error parsing JSON for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+  async del(key) {
+    this.memoryCache.delete(key);
+    try {
+      const client = this.getRawClient();
+      if (!client) return false;
+      await client.del(key);
+      return true;
+    } catch (err) {
+      logger2.error(`[Redis] Error deleting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+  async ttl(key) {
+    const mem = this.memoryCache.get(key);
+    if (mem && mem.expiresAt > Date.now()) {
+      return Math.round((mem.expiresAt - Date.now()) / 1e3);
+    }
+    try {
+      const client = this.getRawClient();
+      if (!client) return -2;
+      return await client.ttl(key);
+    } catch (err) {
+      logger2.error(`[Redis] Error checking TTL for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
+      return -2;
+    }
+  }
+  /**
+   * High-Performance Multi-Layer Cache Helper (L1 In-Memory + L2 Redis)
+   * 1. Checks in-memory L1 cache (< 0.1ms latency, 0 DB roundtrips).
+   * 2. Checks Redis L2 if available.
+   * 3. Falls back to fetcher(), then populates L1 & L2 caches.
+   */
+  async remember(key, ttlSeconds, fetcher) {
+    const memEntry = this.memoryCache.get(key);
+    if (memEntry && memEntry.expiresAt > Date.now()) {
+      return memEntry.value;
+    }
+    try {
+      const cached = await this.getJson(key);
+      if (cached !== null && cached !== void 0) {
+        this.memoryCache.set(key, {
+          value: cached,
+          expiresAt: Date.now() + Math.min(ttlSeconds, 300) * 1e3
+        });
+        return cached;
+      }
+    } catch (err) {
+      logger2.warn(`[Redis] Cache lookup failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const freshData = await fetcher();
+    if (freshData !== null && freshData !== void 0) {
+      if (this.memoryCache.size > 2e3) {
+        const firstKey = this.memoryCache.keys().next().value;
+        if (firstKey) this.memoryCache.delete(firstKey);
+      }
+      this.memoryCache.set(key, {
+        value: freshData,
+        expiresAt: Date.now() + Math.min(ttlSeconds, 300) * 1e3
+      });
+      this.setJson(key, freshData, ttlSeconds).catch((err) => {
+        logger2.warn(`[Redis] Cache set failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+    return freshData;
+  }
+  /**
+   * Delete all keys matching a wildcard pattern (e.g. "cache:services:*")
+   */
+  async delPattern(pattern) {
+    try {
+      const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
+      for (const k of this.memoryCache.keys()) {
+        if (regex.test(k)) {
+          this.memoryCache.delete(k);
+        }
+      }
+    } catch {
+    }
+    try {
+      const client = this.getRawClient();
+      if (!client) return 0;
+      const stream = client.scanStream({
+        match: pattern,
+        count: 100
+      });
+      let deletedCount = 0;
+      for await (const keys of stream) {
+        if (keys && keys.length > 0) {
+          const pipeline = client.pipeline();
+          for (const k of keys) {
+            pipeline.del(k);
+          }
+          await pipeline.exec();
+          deletedCount += keys.length;
+        }
+      }
+      return deletedCount;
+    } catch (err) {
+      logger2.error(`[Redis] Error deleting pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`);
+      return 0;
+    }
+  }
+};
+var redis = new RedisClient();
 
 // src/modules/auth/auth.service.ts
 var AuthService = class {
@@ -6612,77 +6990,80 @@ var AuthService = class {
    * Fetches full profile details including user information and associated Cyber Café organization metrics.
    */
   async getProfile(userId, requestedOrgId) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        role: true,
-        emailVerified: true,
-        image: true,
-        createdAt: true,
-        updatedAt: true
+    const cacheKey = `cache:profile:${userId}:${requestedOrgId || "DEFAULT"}`;
+    return await redis.remember(cacheKey, 30, async () => {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          role: true,
+          emailVerified: true,
+          image: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      });
+      if (!user) {
+        throw AppError.notFound("User account not found");
       }
-    });
-    if (!user) {
-      throw AppError.notFound("User account not found");
-    }
-    let membership = null;
-    if (requestedOrgId) {
-      membership = await prisma.member.findFirst({
-        where: { userId, organizationId: requestedOrgId },
-        include: {
-          organization: {
-            include: {
-              wallet: true
+      let membership = null;
+      if (requestedOrgId) {
+        membership = await prisma.member.findFirst({
+          where: { userId, organizationId: requestedOrgId },
+          include: {
+            organization: {
+              include: {
+                wallet: true
+              }
             }
           }
-        }
-      });
-    }
-    if (!membership) {
-      membership = await prisma.member.findFirst({
-        where: { userId },
-        include: {
-          organization: {
-            include: {
-              wallet: true
+        });
+      }
+      if (!membership) {
+        membership = await prisma.member.findFirst({
+          where: { userId },
+          include: {
+            organization: {
+              include: {
+                wallet: true
+              }
             }
+          },
+          orderBy: { createdAt: "asc" }
+        });
+      }
+      let organizationData = null;
+      if (membership?.organization) {
+        const orgId = membership.organization.id;
+        const [memberCount, customerCount, requestCount] = await Promise.all([
+          prisma.member.count({ where: { organizationId: orgId } }),
+          prisma.customer.count({ where: { organizationId: orgId } }),
+          prisma.serviceRequest.count({ where: { organizationId: orgId } })
+        ]);
+        organizationData = {
+          id: membership.organization.id,
+          name: membership.organization.name,
+          slug: membership.organization.slug,
+          logo: membership.organization.logo,
+          metadata: membership.organization.metadata,
+          createdAt: membership.organization.createdAt,
+          role: membership.role,
+          walletBalance: membership.organization.wallet ? Number(membership.organization.wallet.balance) : 0,
+          stats: {
+            memberCount,
+            customerCount,
+            requestCount
           }
-        },
-        orderBy: { createdAt: "asc" }
-      });
-    }
-    let organizationData = null;
-    if (membership?.organization) {
-      const orgId = membership.organization.id;
-      const [memberCount, customerCount, requestCount] = await Promise.all([
-        prisma.member.count({ where: { organizationId: orgId } }),
-        prisma.customer.count({ where: { organizationId: orgId } }),
-        prisma.serviceRequest.count({ where: { organizationId: orgId } })
-      ]);
-      organizationData = {
-        id: membership.organization.id,
-        name: membership.organization.name,
-        slug: membership.organization.slug,
-        logo: membership.organization.logo,
-        metadata: membership.organization.metadata,
-        createdAt: membership.organization.createdAt,
-        role: membership.role,
-        walletBalance: membership.organization.wallet ? Number(membership.organization.wallet.balance) : 0,
-        stats: {
-          memberCount,
-          customerCount,
-          requestCount
-        }
+        };
+      }
+      return {
+        user,
+        organization: organizationData
       };
-    }
-    return {
-      user,
-      organization: organizationData
-    };
+    });
   }
   /**
    * Updates owner profile details and/or Cyber Café organisation name.
@@ -6740,6 +7121,8 @@ var AuthService = class {
         });
       }
     }
+    await redis.delPattern(`cache:profile:${userId}:*`);
+    invalidateAuthContext();
     return this.getProfile(userId, requestedOrgId);
   }
 };
@@ -6978,11 +7361,17 @@ var customerRepository = new CustomerRepository();
 // src/modules/customers/customer.service.ts
 var CustomerService = class {
   async createCustomer(organizationId, data) {
-    return await customerRepository.create(organizationId, data);
+    const customer = await customerRepository.create(organizationId, data);
+    redis.delPattern(`cache:customers:${organizationId}:*`).catch(() => {
+    });
+    return customer;
   }
   async updateCustomer(id, organizationId, data) {
     await this.getCustomerById(id, organizationId);
-    return await customerRepository.update(id, organizationId, data);
+    const updated = await customerRepository.update(id, organizationId, data);
+    redis.delPattern(`cache:customers:${organizationId}:*`).catch(() => {
+    });
+    return updated;
   }
   async getCustomerById(id, organizationId) {
     const customer = await customerRepository.findById(id, organizationId);
@@ -6992,11 +7381,17 @@ var CustomerService = class {
     return customer;
   }
   async queryCustomers(organizationId, query) {
-    return await customerRepository.findMany(organizationId, query);
+    const cacheKey = `cache:customers:${organizationId}:${query.page || 1}:${query.limit || 20}:${query.search || "ALL"}`;
+    return await redis.remember(cacheKey, 15, async () => {
+      return await customerRepository.findMany(organizationId, query);
+    });
   }
   async deleteCustomer(id, organizationId) {
     await this.getCustomerById(id, organizationId);
-    return await customerRepository.delete(id, organizationId);
+    const deleted = await customerRepository.delete(id, organizationId);
+    redis.delPattern(`cache:customers:${organizationId}:*`).catch(() => {
+    });
+    return deleted;
   }
 };
 var customerService = new CustomerService();
@@ -7174,189 +7569,6 @@ var ServiceRepository = class {
   }
 };
 var serviceRepository = new ServiceRepository();
-
-// src/core/redis/redis.client.ts
-import { Redis } from "ioredis";
-var RedisClient = class {
-  client = null;
-  isConnected = false;
-  constructor() {
-    this.initClient();
-  }
-  initClient() {
-    let redisUrl = getEnvVar("REDIS_URL");
-    if (redisUrl) {
-      redisUrl = redisUrl.trim().replace(/^["']|["';]+$/g, "").trim();
-    }
-    if (!redisUrl) {
-      logger2.warn("[Redis] REDIS_URL environment variable is not defined. Redis operations will gracefully fallback.");
-      this.client = null;
-      this.isConnected = false;
-      return;
-    }
-    const isTls = redisUrl.startsWith("rediss://") || getEnvVar("REDIS_TLS") === "true";
-    const options = {
-      maxRetriesPerRequest: 3,
-      enableReadyCheck: true,
-      lazyConnect: false,
-      retryStrategy(times) {
-        const delay = Math.min(times * 200, 3e3);
-        logger2.warn(`[Redis] Connection retry attempt #${times} in ${delay}ms`);
-        return delay;
-      }
-    };
-    if (isTls) {
-      options.tls = {
-        rejectUnauthorized: false
-        // Required for managed cloud providers like Aiven
-      };
-    }
-    try {
-      this.client = new Redis(redisUrl, options);
-      this.client.on("connect", () => {
-        this.isConnected = true;
-        logger2.info(`[Redis] Successfully connected to Redis instance.`);
-      });
-      this.client.on("ready", () => {
-        this.isConnected = true;
-        logger2.info(`[Redis] Redis connection ready for operations.`);
-      });
-      this.client.on("error", (err) => {
-        this.isConnected = false;
-        logger2.error(`[Redis] Connection error: ${err instanceof Error ? err.message : String(err)}`);
-      });
-      this.client.on("close", () => {
-        this.isConnected = false;
-        logger2.warn(`[Redis] Connection closed.`);
-      });
-    } catch (err) {
-      logger2.error(`[Redis] Failed to initialize Redis client: ${err instanceof Error ? err.message : String(err)}`);
-      this.client = null;
-    }
-  }
-  getRawClient() {
-    if (!this.client && getEnvVar("REDIS_URL")) {
-      this.initClient();
-    }
-    return this.client;
-  }
-  async get(key) {
-    try {
-      const client = this.getRawClient();
-      if (!client) return null;
-      return await client.get(key);
-    } catch (err) {
-      logger2.error(`[Redis] Error getting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
-  }
-  async set(key, value, ttlSeconds) {
-    try {
-      const client = this.getRawClient();
-      if (!client) return false;
-      if (ttlSeconds && ttlSeconds > 0) {
-        await client.set(key, value, "EX", ttlSeconds);
-      } else {
-        await client.set(key, value);
-      }
-      return true;
-    } catch (err) {
-      logger2.error(`[Redis] Error setting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
-      return false;
-    }
-  }
-  async setJson(key, data, ttlSeconds) {
-    try {
-      const jsonStr = JSON.stringify(data);
-      return await this.set(key, jsonStr, ttlSeconds);
-    } catch (err) {
-      logger2.error(`[Redis] Error serializing JSON for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
-      return false;
-    }
-  }
-  async getJson(key) {
-    try {
-      const val = await this.get(key);
-      if (!val) return null;
-      return JSON.parse(val);
-    } catch (err) {
-      logger2.error(`[Redis] Error parsing JSON for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
-  }
-  async del(key) {
-    try {
-      const client = this.getRawClient();
-      if (!client) return false;
-      await client.del(key);
-      return true;
-    } catch (err) {
-      logger2.error(`[Redis] Error deleting key "${key}": ${err instanceof Error ? err.message : String(err)}`);
-      return false;
-    }
-  }
-  async ttl(key) {
-    try {
-      const client = this.getRawClient();
-      if (!client) return -2;
-      return await client.ttl(key);
-    } catch (err) {
-      logger2.error(`[Redis] Error checking TTL for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
-      return -2;
-    }
-  }
-  /**
-   * Universal Redis Cache Helper
-   * Checks Redis for cached data. If found, returns immediately (0ms DB query).
-   * Otherwise executes fetcher(), caches the result in Redis with TTL, and returns it.
-   */
-  async remember(key, ttlSeconds, fetcher) {
-    try {
-      const cached = await this.getJson(key);
-      if (cached !== null && cached !== void 0) {
-        return cached;
-      }
-    } catch (err) {
-      logger2.warn(`[Redis] Cache lookup failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
-    }
-    const freshData = await fetcher();
-    if (freshData !== null && freshData !== void 0) {
-      this.setJson(key, freshData, ttlSeconds).catch((err) => {
-        logger2.warn(`[Redis] Cache set failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
-    return freshData;
-  }
-  /**
-   * Delete all keys matching a wildcard pattern (e.g. "cache:services:*")
-   */
-  async delPattern(pattern) {
-    try {
-      const client = this.getRawClient();
-      if (!client) return 0;
-      const stream = client.scanStream({
-        match: pattern,
-        count: 100
-      });
-      let deletedCount = 0;
-      for await (const keys of stream) {
-        if (keys && keys.length > 0) {
-          const pipeline = client.pipeline();
-          for (const k of keys) {
-            pipeline.del(k);
-          }
-          await pipeline.exec();
-          deletedCount += keys.length;
-        }
-      }
-      return deletedCount;
-    } catch (err) {
-      logger2.error(`[Redis] Error deleting pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`);
-      return 0;
-    }
-  }
-};
-var redis = new RedisClient();
 
 // src/modules/services/service.service.ts
 var ServiceService = class {
@@ -7960,6 +8172,10 @@ serviceRoutes.get(
     const query = c.get("validData");
     const context = c.get("requestContext");
     const services = await serviceService.getServices(context, query);
+    c.header(
+      "Cache-Control",
+      "private, max-age=60, stale-while-revalidate=120"
+    );
     return c.json({ success: true, data: services });
   }
 );
@@ -7967,11 +8183,19 @@ serviceRoutes.get("/:code", async (c) => {
   const code = c.req.param("code");
   const context = c.get("requestContext");
   const service = await serviceService.getServiceByCode(code, context);
+  c.header(
+    "Cache-Control",
+    "private, max-age=60, stale-while-revalidate=120"
+  );
   return c.json({ success: true, data: service });
 });
 serviceRoutes.get("/:code/pricing", async (c) => {
   const code = c.req.param("code");
   const pricingMatrix = await pricingService.getPricingMatrix(code);
+  c.header(
+    "Cache-Control",
+    "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
+  );
   return c.json({ success: true, data: pricingMatrix });
 });
 var adminServiceRoutes = new Hono3();
@@ -8210,6 +8434,10 @@ var categoryRouter = new Hono3();
 var adminCategoryRouter = new Hono3();
 categoryRouter.get("/", async (c) => {
   const categories = await categoryService.getCategories(true);
+  c.header(
+    "Cache-Control",
+    "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
+  );
   return c.json({
     success: true,
     data: categories
@@ -9544,6 +9772,12 @@ var PaymentService = class {
         note: `Payment of \u20B9${Number(payment.amount).toFixed(2)} captured via Cashfree (${details?.paymentMode || payment.paymentMode || "UPI"}). Gateway Txn: ${txId}`
       }
     });
+    if (payment.organizationId) {
+      redis.delPattern(`cache:requests:query:${payment.organizationId}:*`).catch(() => {
+      });
+    }
+    redis.delPattern("cache:audit-logs:*").catch(() => {
+    });
     try {
       await serviceDispatcher.fulfillAsync(payment.serviceRequestId);
     } catch (err) {
@@ -9824,7 +10058,10 @@ var RequestService = class {
         "Request history is only available for authenticated retailers"
       );
     }
-    return await requestRepository.findMany(context.organizationId, query);
+    const cacheKey = `cache:requests:query:${context.organizationId}:${query.page || 1}:${query.limit || 20}:${query.status || "ALL"}:${query.serviceCode || "ALL"}:${query.customerId || "ALL"}`;
+    return await redis.remember(cacheKey, 15, async () => {
+      return await requestRepository.findMany(context.organizationId, query);
+    });
   }
   /**
    * Initiates a Service Request, locks authoritative price, and generates a payment order.
@@ -9958,6 +10195,10 @@ var RequestService = class {
       "PAYMENT_PENDING",
       `Price locked at \u20B9${priceSnapshot.amount} (${priceSnapshot.pricingTier}). Awaiting Cashfree payment confirmation.`
     );
+    if (context.organizationId) {
+      redis.delPattern(`cache:requests:query:${context.organizationId}:*`).catch(() => {
+      });
+    }
     return {
       ...lockedRequest,
       payment: {
@@ -11942,287 +12183,290 @@ var AdminService = class {
   // ==========================================
   async getAuditLogs(query) {
     const { organizationId, category = "ALL", page = 1, limit = 30 } = query;
-    const skip = (page - 1) * limit;
-    const isDirectWalkin = organizationId === "DIRECT_WALKIN";
-    const whereWallet = isDirectWalkin ? { id: "impossible_direct_walkin_none" } : organizationId ? { wallet: { organizationId } } : {};
-    const wherePayment = isDirectWalkin ? { organizationId: null } : organizationId ? { organizationId } : {};
-    const whereEvents = isDirectWalkin ? { serviceRequest: { organizationId: null } } : organizationId ? { serviceRequest: { organizationId } } : {};
-    const whereSession = isDirectWalkin ? { id: "impossible_direct_walkin_none" } : organizationId ? {
-      OR: [
-        { activeOrganizationId: organizationId },
-        { user: { members: { some: { organizationId } } } }
-      ]
-    } : {};
-    const whereApiLog = isDirectWalkin ? { organizationId: null } : organizationId ? {
-      OR: [
-        { organizationId },
-        { user: { members: { some: { organizationId } } } }
-      ]
-    } : {};
-    const orgQuery = isDirectWalkin ? Promise.resolve([]) : prisma.organization.findMany({
-      where: organizationId ? { id: organizationId } : void 0,
-      orderBy: { createdAt: "desc" },
-      take: organizationId ? 1 : 20,
-      select: { id: true, name: true, createdAt: true }
-    });
-    const [walletTx, payments, requestEvents, sessions, apiLogs, totalOrgs] = await Promise.all([
-      prisma.walletTransaction.findMany({
-        where: whereWallet,
+    const cacheKey = `cache:audit-logs:${organizationId || "ALL"}:${category}:${page}:${limit}`;
+    return await redis.remember(cacheKey, 15, async () => {
+      const skip = (page - 1) * limit;
+      const isDirectWalkin = organizationId === "DIRECT_WALKIN";
+      const whereWallet = isDirectWalkin ? { id: "impossible_direct_walkin_none" } : organizationId ? { wallet: { organizationId } } : {};
+      const wherePayment = isDirectWalkin ? { organizationId: null } : organizationId ? { organizationId } : {};
+      const whereEvents = isDirectWalkin ? { serviceRequest: { organizationId: null } } : organizationId ? { serviceRequest: { organizationId } } : {};
+      const whereSession = isDirectWalkin ? { id: "impossible_direct_walkin_none" } : organizationId ? {
+        OR: [
+          { activeOrganizationId: organizationId },
+          { user: { members: { some: { organizationId } } } }
+        ]
+      } : {};
+      const whereApiLog = isDirectWalkin ? { organizationId: null } : organizationId ? {
+        OR: [
+          { organizationId },
+          { user: { members: { some: { organizationId } } } }
+        ]
+      } : {};
+      const orgQuery = isDirectWalkin ? Promise.resolve([]) : prisma.organization.findMany({
+        where: organizationId ? { id: organizationId } : void 0,
         orderBy: { createdAt: "desc" },
-        take: 100,
-        include: {
-          wallet: {
-            include: {
-              organization: { select: { id: true, name: true } }
+        take: organizationId ? 1 : 20,
+        select: { id: true, name: true, createdAt: true }
+      });
+      const [walletTx, payments, requestEvents, sessions, apiLogs, totalOrgs] = await Promise.all([
+        prisma.walletTransaction.findMany({
+          where: whereWallet,
+          orderBy: { createdAt: "desc" },
+          take: 100,
+          include: {
+            wallet: {
+              include: {
+                organization: { select: { id: true, name: true } }
+              }
             }
           }
-        }
-      }),
-      prisma.payment.findMany({
-        where: wherePayment,
-        orderBy: { createdAt: "desc" },
-        take: 100,
-        include: {
-          organization: { select: { id: true, name: true } },
-          serviceRequest: {
-            select: {
-              id: true,
-              referenceNumber: true,
-              amount: true,
-              organization: { select: { id: true, name: true } },
-              service: { select: { name: true, code: true } }
+        }),
+        prisma.payment.findMany({
+          where: wherePayment,
+          orderBy: { createdAt: "desc" },
+          take: 100,
+          include: {
+            organization: { select: { id: true, name: true } },
+            serviceRequest: {
+              select: {
+                id: true,
+                referenceNumber: true,
+                amount: true,
+                organization: { select: { id: true, name: true } },
+                service: { select: { name: true, code: true } }
+              }
             }
           }
-        }
-      }),
-      prisma.serviceRequestEvent.findMany({
-        where: whereEvents,
-        orderBy: { createdAt: "desc" },
-        take: 150,
-        include: {
-          serviceRequest: {
-            select: {
-              id: true,
-              referenceNumber: true,
-              amount: true,
-              organization: { select: { id: true, name: true } },
-              service: { select: { name: true, code: true } }
+        }),
+        prisma.serviceRequestEvent.findMany({
+          where: whereEvents,
+          orderBy: { createdAt: "desc" },
+          take: 150,
+          include: {
+            serviceRequest: {
+              select: {
+                id: true,
+                referenceNumber: true,
+                amount: true,
+                organization: { select: { id: true, name: true } },
+                service: { select: { name: true, code: true } }
+              }
             }
           }
-        }
-      }),
-      prisma.session.findMany({
-        where: whereSession,
-        orderBy: { createdAt: "desc" },
-        take: 50,
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              role: true,
-              members: {
-                include: {
-                  organization: { select: { id: true, name: true } }
+        }),
+        prisma.session.findMany({
+          where: whereSession,
+          orderBy: { createdAt: "desc" },
+          take: 50,
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                members: {
+                  include: {
+                    organization: { select: { id: true, name: true } }
+                  }
                 }
               }
             }
           }
-        }
-      }),
-      prisma.apiLog.findMany({
-        where: whereApiLog,
-        orderBy: { createdAt: "desc" },
-        take: 150,
-        include: {
-          organization: { select: { id: true, name: true } },
-          user: { select: { id: true, name: true, email: true } }
-        }
-      }),
-      orgQuery
-    ]);
-    const auditItems = [];
-    walletTx.forEach((tx) => {
-      const isManual = tx.description?.toLowerCase().includes("manual") || tx.description?.toLowerCase().includes("admin") || tx.description?.toLowerCase().includes("override");
-      auditItems.push({
-        id: `wallet-${tx.id}`,
-        category: isManual ? "SECURITY" : "WALLET",
-        title: tx.type === "CREDIT" ? "Wallet Credited" : "Wallet Debited",
-        description: sanitizeDpdpData(tx.description) || `${tx.type} adjustment of \u20B9${Number(tx.amount).toFixed(2)}`,
-        organizationId: tx.wallet?.organization?.id,
-        organizationName: tx.wallet?.organization?.name || "Cyber Caf\xE9",
-        amount: Number(tx.amount),
-        type: tx.type,
-        timestamp: tx.createdAt,
-        badgeVariant: tx.type === "CREDIT" ? "success" : "warning"
-      });
-    });
-    payments.forEach((pay) => {
-      const isCaptured = pay.status === "CAPTURED";
-      const isFailed = pay.status === "FAILED";
-      const isRefunded = pay.status === "REFUNDED";
-      const serviceName = pay.serviceRequest?.service?.name || "Service Gateway Payment";
-      const refNum = pay.serviceRequest?.referenceNumber || pay.orderId;
-      const mode = pay.paymentMode || "Cashfree Gateway";
-      let desc = `Payment of \u20B9${Number(pay.amount).toFixed(2)} ${isCaptured ? "captured" : pay.status.toLowerCase()} via ${mode}.`;
-      if (pay.orderId) desc += ` Order: ${pay.orderId}`;
-      if (pay.transactionId) desc += `, Txn: ${pay.transactionId}`;
-      auditItems.push({
-        id: `pay-${pay.id}`,
-        category: "WALLET",
-        title: isCaptured ? "Payment Captured (Cashfree)" : isRefunded ? "Payment Refunded" : isFailed ? "Payment Failed" : `Payment ${pay.status}`,
-        description: `${serviceName} - ${desc}`,
-        referenceNumber: refNum,
-        organizationId: pay.organizationId || pay.organization?.id,
-        organizationName: pay.organization?.name || "Direct Walk-in",
-        amount: Number(pay.amount),
-        type: isRefunded ? "CREDIT" : "DEBIT",
-        status: pay.status,
-        timestamp: pay.paidAt || pay.updatedAt || pay.createdAt,
-        badgeVariant: isCaptured ? "success" : isFailed ? "destructive" : "outline"
-      });
-    });
-    requestEvents.forEach((ev) => {
-      const isMilestone = ev.status === "COMPLETED";
-      const isFailed = ev.status === "PROVIDER_FAILED";
-      const isRefund = ev.note?.toLowerCase().includes("refund") || ev.status === "REFUNDED";
-      const serviceName = ev.serviceRequest.service.name;
-      const refNum = ev.serviceRequest.referenceNumber || ev.serviceRequest.id.slice(0, 8);
-      let cleanDesc = sanitizeDpdpData(ev.note) || ev.status;
-      if (cleanDesc.includes(refNum)) {
-        cleanDesc = cleanDesc.replace(new RegExp(`\\(?[REQ-]*${refNum}\\)?`, "g"), "").trim();
-      }
-      if (cleanDesc.startsWith("-")) {
-        cleanDesc = cleanDesc.substring(1).trim();
-      }
-      let title = `Service ${ev.status}`;
-      if (isRefund) {
-        title = "Service Refunded";
-      } else if (ev.status === "COMPLETED") {
-        title = "Service Fulfilled & Vaulted";
-      } else if (ev.status === "PROCESSING") {
-        title = "Dispatched for Processing";
-      } else if (ev.status === "PAYMENT_CAPTURED") {
-        title = "Payment Confirmed & Verified";
-      } else if (ev.status === "PAYMENT_PENDING") {
-        title = "Awaiting Citizen Payment";
-      } else if (ev.status === "REQUEST_CREATED") {
-        title = "Service Request Initiated";
-      }
-      let badgeVariant = "outline";
-      if (isFailed) {
-        badgeVariant = "destructive";
-      } else if (isMilestone || ev.status === "PAYMENT_CAPTURED") {
-        badgeVariant = "success";
-      } else if (ev.status === "PROCESSING") {
-        badgeVariant = "secondary";
-      }
-      auditItems.push({
-        id: `req-${ev.id}`,
-        category: isFailed ? "SECURITY" : isMilestone ? "MILESTONE" : "SERVICE",
-        title,
-        description: cleanDesc ? `${serviceName} - ${cleanDesc}` : `${serviceName} (${refNum})`,
-        referenceNumber: refNum,
-        organizationId: ev.serviceRequest.organization?.id,
-        organizationName: ev.serviceRequest.organization?.name || "Direct Walk-in",
-        amount: Number(ev.serviceRequest.amount),
-        status: ev.status,
-        timestamp: ev.createdAt,
-        badgeVariant
-      });
-    });
-    totalOrgs.forEach((org) => {
-      if (!organizationId || organizationId === org.id) {
+        }),
+        prisma.apiLog.findMany({
+          where: whereApiLog,
+          orderBy: { createdAt: "desc" },
+          take: 150,
+          include: {
+            organization: { select: { id: true, name: true } },
+            user: { select: { id: true, name: true, email: true } }
+          }
+        }),
+        orgQuery
+      ]);
+      const auditItems = [];
+      walletTx.forEach((tx) => {
+        const isManual = tx.description?.toLowerCase().includes("manual") || tx.description?.toLowerCase().includes("admin") || tx.description?.toLowerCase().includes("override");
         auditItems.push({
-          id: `org-${org.id}`,
-          category: "MILESTONE",
-          title: "New Organization Registered",
-          description: `${org.name} joined Nagrik Seva Point platform`,
-          organizationId: org.id,
-          organizationName: org.name,
-          timestamp: org.createdAt,
-          badgeVariant: "default"
+          id: `wallet-${tx.id}`,
+          category: isManual ? "SECURITY" : "WALLET",
+          title: tx.type === "CREDIT" ? "Wallet Credited" : "Wallet Debited",
+          description: sanitizeDpdpData(tx.description) || `${tx.type} adjustment of \u20B9${Number(tx.amount).toFixed(2)}`,
+          organizationId: tx.wallet?.organization?.id,
+          organizationName: tx.wallet?.organization?.name || "Cyber Caf\xE9",
+          amount: Number(tx.amount),
+          type: tx.type,
+          timestamp: tx.createdAt,
+          badgeVariant: tx.type === "CREDIT" ? "success" : "warning"
         });
-      }
-    });
-    sessions.forEach((s) => {
-      const alreadyHasLoginLog = apiLogs.some(
-        (l) => l.serviceCode === "AUTH" && l.action.toLowerCase().includes("login") && (l.reference?.includes(s.id.slice(0, 8).toUpperCase()) || l.userId === s.userId && Math.abs(new Date(l.createdAt).getTime() - new Date(s.createdAt).getTime()) < 6e4)
-      );
-      if (alreadyHasLoginLog) return;
-      const orgName = s.user.members?.[0]?.organization?.name || "Cyber Caf\xE9";
-      const orgId = s.activeOrganizationId || s.user.members?.[0]?.organization?.id;
-      let clientDevice = "Web Browser";
-      if (s.userAgent) {
-        if (s.userAgent.includes("Edg/")) clientDevice = "Edge Browser";
-        else if (s.userAgent.includes("Chrome/") && !s.userAgent.includes("Edg/")) clientDevice = "Google Chrome";
-        else if (s.userAgent.includes("Firefox/")) clientDevice = "Mozilla Firefox";
-        else if (s.userAgent.includes("Safari/") && !s.userAgent.includes("Chrome")) clientDevice = "Apple Safari";
-        else if (s.userAgent.includes("Mobile")) clientDevice = "Mobile Browser";
-      }
-      const ip = maskIpAddress(s.ipAddress);
-      const emailMasked = maskEmail(s.user.email);
-      auditItems.push({
-        id: `login-${s.id}`,
-        category: "SECURITY",
-        title: "Operator Login & Session Started",
-        description: `Operator (${emailMasked}) logged into caf\xE9 workspace via ${clientDevice}. IP: ${ip}`,
-        referenceNumber: `AUTH-${s.id.slice(0, 8).toUpperCase()}`,
-        organizationId: orgId,
-        organizationName: orgName,
-        timestamp: s.createdAt,
-        badgeVariant: "outline"
       });
-    });
-    apiLogs.forEach((log2) => {
-      const isSuccess = log2.status === "SUCCESS";
-      const orgName = log2.organization?.name || "Cyber Caf\xE9";
-      const actLower = log2.action.toLowerCase();
-      const isAuth = log2.serviceCode === "AUTH" || actLower.includes("logout") || actLower.includes("login") || actLower.includes("register");
-      const isCustomer = log2.serviceCode === "CUSTOMER";
-      const isDocVault = actLower.includes("download") || log2.serviceCode === "DOCUMENT_VAULT";
-      let category2 = "SERVICE";
-      if (isAuth || isCustomer || isDocVault) {
-        category2 = "SECURITY";
-      }
-      const safeRef = sanitizeDpdpData(log2.reference) || "API-INQ";
-      const safeDesc = sanitizeDpdpData(log2.note) || `API inquiry executed for ${safeRef} (${log2.endpoint})`;
-      auditItems.push({
-        id: `api-${log2.id}`,
-        category: category2,
-        title: log2.action,
-        description: safeDesc,
-        referenceNumber: safeRef,
-        organizationId: log2.organizationId,
-        organizationName: orgName,
-        status: log2.status,
-        timestamp: log2.createdAt,
-        badgeVariant: isSuccess ? category2 === "SECURITY" ? "outline" : "secondary" : "destructive"
+      payments.forEach((pay) => {
+        const isCaptured = pay.status === "CAPTURED";
+        const isFailed = pay.status === "FAILED";
+        const isRefunded = pay.status === "REFUNDED";
+        const serviceName = pay.serviceRequest?.service?.name || "Service Gateway Payment";
+        const refNum = pay.serviceRequest?.referenceNumber || pay.orderId;
+        const mode = pay.paymentMode || "Cashfree Gateway";
+        let desc = `Payment of \u20B9${Number(pay.amount).toFixed(2)} ${isCaptured ? "captured" : pay.status.toLowerCase()} via ${mode}.`;
+        if (pay.orderId) desc += ` Order: ${pay.orderId}`;
+        if (pay.transactionId) desc += `, Txn: ${pay.transactionId}`;
+        auditItems.push({
+          id: `pay-${pay.id}`,
+          category: "WALLET",
+          title: isCaptured ? "Payment Captured (Cashfree)" : isRefunded ? "Payment Refunded" : isFailed ? "Payment Failed" : `Payment ${pay.status}`,
+          description: `${serviceName} - ${desc}`,
+          referenceNumber: refNum,
+          organizationId: pay.organizationId || pay.organization?.id,
+          organizationName: pay.organization?.name || "Direct Walk-in",
+          amount: Number(pay.amount),
+          type: isRefunded ? "CREDIT" : "DEBIT",
+          status: pay.status,
+          timestamp: pay.paidAt || pay.updatedAt || pay.createdAt,
+          badgeVariant: isCaptured ? "success" : isFailed ? "destructive" : "outline"
+        });
       });
+      requestEvents.forEach((ev) => {
+        const isMilestone = ev.status === "COMPLETED";
+        const isFailed = ev.status === "PROVIDER_FAILED";
+        const isRefund = ev.note?.toLowerCase().includes("refund") || ev.status === "REFUNDED";
+        const serviceName = ev.serviceRequest.service.name;
+        const refNum = ev.serviceRequest.referenceNumber || ev.serviceRequest.id.slice(0, 8);
+        let cleanDesc = sanitizeDpdpData(ev.note) || ev.status;
+        if (cleanDesc.includes(refNum)) {
+          cleanDesc = cleanDesc.replace(new RegExp(`\\(?[REQ-]*${refNum}\\)?`, "g"), "").trim();
+        }
+        if (cleanDesc.startsWith("-")) {
+          cleanDesc = cleanDesc.substring(1).trim();
+        }
+        let title = `Service ${ev.status}`;
+        if (isRefund) {
+          title = "Service Refunded";
+        } else if (ev.status === "COMPLETED") {
+          title = "Service Fulfilled & Vaulted";
+        } else if (ev.status === "PROCESSING") {
+          title = "Dispatched for Processing";
+        } else if (ev.status === "PAYMENT_CAPTURED") {
+          title = "Payment Confirmed & Verified";
+        } else if (ev.status === "PAYMENT_PENDING") {
+          title = "Awaiting Citizen Payment";
+        } else if (ev.status === "REQUEST_CREATED") {
+          title = "Service Request Initiated";
+        }
+        let badgeVariant = "outline";
+        if (isFailed) {
+          badgeVariant = "destructive";
+        } else if (isMilestone || ev.status === "PAYMENT_CAPTURED") {
+          badgeVariant = "success";
+        } else if (ev.status === "PROCESSING") {
+          badgeVariant = "secondary";
+        }
+        auditItems.push({
+          id: `req-${ev.id}`,
+          category: isFailed ? "SECURITY" : isMilestone ? "MILESTONE" : "SERVICE",
+          title,
+          description: cleanDesc ? `${serviceName} - ${cleanDesc}` : `${serviceName} (${refNum})`,
+          referenceNumber: refNum,
+          organizationId: ev.serviceRequest.organization?.id,
+          organizationName: ev.serviceRequest.organization?.name || "Direct Walk-in",
+          amount: Number(ev.serviceRequest.amount),
+          status: ev.status,
+          timestamp: ev.createdAt,
+          badgeVariant
+        });
+      });
+      totalOrgs.forEach((org) => {
+        if (!organizationId || organizationId === org.id) {
+          auditItems.push({
+            id: `org-${org.id}`,
+            category: "MILESTONE",
+            title: "New Organization Registered",
+            description: `${org.name} joined Nagrik Seva Point platform`,
+            organizationId: org.id,
+            organizationName: org.name,
+            timestamp: org.createdAt,
+            badgeVariant: "default"
+          });
+        }
+      });
+      sessions.forEach((s) => {
+        const alreadyHasLoginLog = apiLogs.some(
+          (l) => l.serviceCode === "AUTH" && l.action.toLowerCase().includes("login") && (l.reference?.includes(s.id.slice(0, 8).toUpperCase()) || l.userId === s.userId && Math.abs(new Date(l.createdAt).getTime() - new Date(s.createdAt).getTime()) < 6e4)
+        );
+        if (alreadyHasLoginLog) return;
+        const orgName = s.user.members?.[0]?.organization?.name || "Cyber Caf\xE9";
+        const orgId = s.activeOrganizationId || s.user.members?.[0]?.organization?.id;
+        let clientDevice = "Web Browser";
+        if (s.userAgent) {
+          if (s.userAgent.includes("Edg/")) clientDevice = "Edge Browser";
+          else if (s.userAgent.includes("Chrome/") && !s.userAgent.includes("Edg/")) clientDevice = "Google Chrome";
+          else if (s.userAgent.includes("Firefox/")) clientDevice = "Mozilla Firefox";
+          else if (s.userAgent.includes("Safari/") && !s.userAgent.includes("Chrome")) clientDevice = "Apple Safari";
+          else if (s.userAgent.includes("Mobile")) clientDevice = "Mobile Browser";
+        }
+        const ip = maskIpAddress(s.ipAddress);
+        const emailMasked = maskEmail(s.user.email);
+        auditItems.push({
+          id: `login-${s.id}`,
+          category: "SECURITY",
+          title: "Operator Login & Session Started",
+          description: `Operator (${emailMasked}) logged into caf\xE9 workspace via ${clientDevice}. IP: ${ip}`,
+          referenceNumber: `AUTH-${s.id.slice(0, 8).toUpperCase()}`,
+          organizationId: orgId,
+          organizationName: orgName,
+          timestamp: s.createdAt,
+          badgeVariant: "outline"
+        });
+      });
+      apiLogs.forEach((log2) => {
+        const isSuccess = log2.status === "SUCCESS";
+        const orgName = log2.organization?.name || "Cyber Caf\xE9";
+        const actLower = log2.action.toLowerCase();
+        const isAuth = log2.serviceCode === "AUTH" || actLower.includes("logout") || actLower.includes("login") || actLower.includes("register");
+        const isCustomer = log2.serviceCode === "CUSTOMER";
+        const isDocVault = actLower.includes("download") || log2.serviceCode === "DOCUMENT_VAULT";
+        let category2 = "SERVICE";
+        if (isAuth || isCustomer || isDocVault) {
+          category2 = "SECURITY";
+        }
+        const safeRef = sanitizeDpdpData(log2.reference) || "API-INQ";
+        const safeDesc = sanitizeDpdpData(log2.note) || `API inquiry executed for ${safeRef} (${log2.endpoint})`;
+        auditItems.push({
+          id: `api-${log2.id}`,
+          category: category2,
+          title: log2.action,
+          description: safeDesc,
+          referenceNumber: safeRef,
+          organizationId: log2.organizationId,
+          organizationName: orgName,
+          status: log2.status,
+          timestamp: log2.createdAt,
+          badgeVariant: isSuccess ? category2 === "SECURITY" ? "outline" : "secondary" : "destructive"
+        });
+      });
+      const summary = {
+        totalEvents: auditItems.length,
+        walletEvents: auditItems.filter((i) => i.category === "WALLET").length,
+        serviceEvents: auditItems.filter((i) => i.category === "SERVICE").length,
+        milestoneEvents: auditItems.filter((i) => i.category === "MILESTONE").length,
+        securityEvents: auditItems.filter((i) => i.category === "SECURITY").length,
+        totalAdjustedVolume: auditItems.filter((i) => i.category === "WALLET" || i.category === "SECURITY").reduce((acc, i) => acc + (i.amount || 0), 0)
+      };
+      let filtered = auditItems;
+      if (category !== "ALL") {
+        filtered = auditItems.filter((i) => i.category === category);
+      }
+      filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const paginated = filtered.slice(skip, skip + limit);
+      return {
+        items: paginated,
+        total: filtered.length,
+        page,
+        limit,
+        totalPages: Math.ceil(filtered.length / limit) || 1,
+        summary
+      };
     });
-    const summary = {
-      totalEvents: auditItems.length,
-      walletEvents: auditItems.filter((i) => i.category === "WALLET").length,
-      serviceEvents: auditItems.filter((i) => i.category === "SERVICE").length,
-      milestoneEvents: auditItems.filter((i) => i.category === "MILESTONE").length,
-      securityEvents: auditItems.filter((i) => i.category === "SECURITY").length,
-      totalAdjustedVolume: auditItems.filter((i) => i.category === "WALLET" || i.category === "SECURITY").reduce((acc, i) => acc + (i.amount || 0), 0)
-    };
-    let filtered = auditItems;
-    if (category !== "ALL") {
-      filtered = auditItems.filter((i) => i.category === category);
-    }
-    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    const paginated = filtered.slice(skip, skip + limit);
-    return {
-      items: paginated,
-      total: filtered.length,
-      page,
-      limit,
-      totalPages: Math.ceil(filtered.length / limit) || 1,
-      summary
-    };
   }
   // ==========================================
   // 15. DPDP COMPLIANCE & EPHEMERAL VAULT AUDIT
@@ -12302,6 +12546,10 @@ var auditLogQuerySchema = external_exports.object({
 var adminRouter = new Hono3();
 adminRouter.get("/public/announcement", async (c) => {
   const data = await adminService.getAnnouncement();
+  c.header(
+    "Cache-Control",
+    "public, max-age=60, s-maxage=300, stale-while-revalidate=600"
+  );
   return c.json({ success: true, data });
 });
 adminRouter.use("*", requireAdmin());
@@ -12463,107 +12711,6 @@ adminRouter.get("/audit-logs", async (c) => {
   return c.json({ success: true, data });
 });
 
-// src/middleware/request-context.middleware.ts
-var requestContextMiddleware = () => {
-  return async (c, next) => {
-    try {
-      let session = await auth.api.getSession({
-        headers: c.req.raw.headers
-      }).catch(() => null);
-      if (!session || !session.user) {
-        const authHeader = c.req.header("Authorization");
-        const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
-        const customToken = c.req.header("x-session-token");
-        const token = bearerToken || customToken;
-        if (token) {
-          const sessionRecord = await prisma.session.findUnique({
-            where: { token },
-            include: { user: true }
-          });
-          if (sessionRecord && sessionRecord.expiresAt > /* @__PURE__ */ new Date()) {
-            session = {
-              session: sessionRecord,
-              user: sessionRecord.user
-            };
-          }
-        }
-      }
-      if (session && session.user) {
-        const userId = session.user.id;
-        const requestedOrgId = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
-        let organizationId = requestedOrgId || session.session.activeOrganizationId;
-        if (!organizationId) {
-          const membership = await prisma.member.findFirst({
-            where: { userId },
-            include: { organization: true },
-            orderBy: { createdAt: "asc" }
-          });
-          if (membership) {
-            organizationId = membership.organizationId;
-            c.set("organization", membership.organization);
-          }
-        } else {
-          const membership = await prisma.member.findFirst({
-            where: { userId, organizationId },
-            include: { organization: true }
-          });
-          if (membership) {
-            c.set("organization", membership.organization);
-          } else {
-            logger2.warn(
-              `User ${userId} attempted to access unauthorized org ${organizationId}`
-            );
-            organizationId = null;
-          }
-        }
-        const requestContext = {
-          accessMode: "RETAILER",
-          userId,
-          organizationId: organizationId || null,
-          customerId: null,
-          // Populated per-request payload if present
-          pricingTier: "PARTNER",
-          guestSessionId: null
-        };
-        c.set("user", session.user);
-        c.set("session", session.session);
-        c.set("organizationId", organizationId || void 0);
-        c.set("requestContext", requestContext);
-      } else {
-        let guestSessionId = c.req.header("x-guest-session-id");
-        if (!guestSessionId) {
-          guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
-        }
-        const requestContext = {
-          accessMode: "GUEST",
-          userId: null,
-          organizationId: null,
-          customerId: null,
-          pricingTier: "PUBLIC",
-          guestSessionId
-        };
-        c.set("user", null);
-        c.set("session", null);
-        c.set("organizationId", void 0);
-        c.set("organization", null);
-        c.set("requestContext", requestContext);
-      }
-    } catch (error) {
-      logger2.error("Error resolving request context:", error);
-      const guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
-      c.set("requestContext", {
-        accessMode: "GUEST",
-        userId: null,
-        organizationId: null,
-        customerId: null,
-        pricingTier: "PUBLIC",
-        guestSessionId
-      });
-    }
-    await next();
-  };
-};
-
 // src/app/routes.ts
 var apiRouter = new Hono3();
 apiRouter.use("*", requestContextMiddleware());
@@ -12627,7 +12774,8 @@ app.use(
     credentials: true,
     allowMethods: CORS_ALLOW_METHODS,
     allowHeaders: CORS_ALLOW_HEADERS,
-    maxAge: 600
+    maxAge: 86400
+    // 24 hours - eliminates repeated OPTIONS preflights
   })
 );
 app.use("*", logger());
@@ -12644,6 +12792,7 @@ app.all("/api/auth/*", async (c) => {
   let signingOutSession = null;
   let reqEmail = "";
   if (isSignOut) {
+    invalidateAuthContext();
     try {
       signingOutSession = await auth.api.getSession({
         headers: c.req.raw.headers
@@ -12802,6 +12951,7 @@ app.all("/api/auth/*", async (c) => {
     "Access-Control-Allow-Headers",
     CORS_ALLOW_HEADERS.join(", ")
   );
+  corsHeaders.set("Access-Control-Max-Age", "86400");
   return new Response(res.body, {
     status: res.status,
     statusText: res.statusText,

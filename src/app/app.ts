@@ -13,6 +13,7 @@ import { auth } from "../core/auth/better-auth";
 import { env } from "../core/config/env";
 import { prisma } from "../core/db/prisma";
 import { logApiExecution, maskEmail } from "../core/logger/api-logger";
+import { invalidateAuthContext } from "../middleware/request-context.middleware";
 import { apiRouter } from "./routes";
 import type { ContextVariables } from "./context";
 
@@ -26,7 +27,7 @@ app.use(
     credentials: true,
     allowMethods: CORS_ALLOW_METHODS,
     allowHeaders: CORS_ALLOW_HEADERS,
-    maxAge: 600,
+    maxAge: 86400, // 24 hours - eliminates repeated OPTIONS preflights
   }),
 );
 app.use("*", logger());
@@ -50,6 +51,7 @@ app.all("/api/auth/*", async (c) => {
 
   // 1. Capture signing-out user before session is purged from DB
   if (isSignOut) {
+    invalidateAuthContext();
     try {
       signingOutSession = await auth.api.getSession({
         headers: c.req.raw.headers,
@@ -248,6 +250,7 @@ app.all("/api/auth/*", async (c) => {
     "Access-Control-Allow-Headers",
     CORS_ALLOW_HEADERS.join(", "),
   );
+  corsHeaders.set("Access-Control-Max-Age", "86400");
 
   return new Response(res.body, {
     status: res.status,

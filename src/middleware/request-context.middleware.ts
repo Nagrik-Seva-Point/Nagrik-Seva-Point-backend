@@ -5,12 +5,68 @@ import type { ContextVariables } from "../app/context";
 import type { RequestContext } from "../core/types/context.types";
 import { logger } from "../core/logger/logger";
 
+interface CachedAuthContext {
+  session: any;
+  user: any;
+  organizationId: string | null;
+  organization: any;
+  requestContext: RequestContext;
+  expiresAt: number;
+}
+
+const authContextCache = new Map<string, CachedAuthContext>();
+
+export function invalidateAuthContext(token?: string) {
+  if (token) {
+    authContextCache.delete(token);
+  } else {
+    authContextCache.clear();
+  }
+}
+
+function extractAuthToken(c: Context<ContextVariables>): string | null {
+  const authHeader = c.req.header("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+  const customToken = c.req.header("x-session-token");
+  if (customToken) return customToken.trim();
+
+  const cookieHeader = c.req.header("cookie");
+  if (cookieHeader) {
+    const match = cookieHeader.match(/(?:better-auth\.session_token|__Secure-better-auth\.session_token)=([^;]+)/);
+    if (match?.[1]) return match[1].trim();
+  }
+  return null;
+}
+
 export const requestContextMiddleware = (): MiddlewareHandler<
   ContextVariables
 > => {
   return async (c: Context<ContextVariables>, next) => {
     try {
-      // 1. Check for authenticated session via Better Auth
+      const token = extractAuthToken(c);
+      const requestedOrgId = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
+      const cacheKey = token ? `${token}:${requestedOrgId || "DEFAULT"}` : null;
+
+      // 1. Check ultra-fast L1 Auth Context Cache (< 0.1ms)
+      if (cacheKey) {
+        const cached = authContextCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+          c.set("user", cached.user);
+          c.set("session", cached.session);
+          if (cached.organizationId) {
+            c.set("organizationId", cached.organizationId);
+          }
+          if (cached.organization) {
+            c.set("organization", cached.organization);
+          }
+          c.set("requestContext", cached.requestContext);
+          return await next();
+        }
+      }
+
+      // 2. Check for authenticated session via Better Auth
       let session = await auth.api.getSession({
         headers: c.req.raw.headers,
       }).catch(() => null);
@@ -87,6 +143,22 @@ export const requestContextMiddleware = (): MiddlewareHandler<
         c.set("session", session.session);
         c.set("organizationId", organizationId || undefined);
         c.set("requestContext", requestContext);
+
+        // Cache resolved context for 30s to eliminate redundant DB calls
+        if (cacheKey) {
+          if (authContextCache.size > 2000) {
+            const firstKey = authContextCache.keys().next().value;
+            if (firstKey) authContextCache.delete(firstKey);
+          }
+          authContextCache.set(cacheKey, {
+            session: session.session,
+            user: session.user,
+            organizationId: organizationId || null,
+            organization: c.get("organization") || null,
+            requestContext,
+            expiresAt: Date.now() + 30 * 1000,
+          });
+        }
       } else {
         // 3. Resolve Guest Context
         let guestSessionId = c.req.header("x-guest-session-id");

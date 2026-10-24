@@ -1,4 +1,5 @@
 import { customerRepository } from "./customer.repository";
+import { redis } from "../../core/redis/redis.client";
 import { AppError } from "../../core/errors/AppError";
 import type {
   CreateCustomerInput,
@@ -8,7 +9,9 @@ import type {
 
 export class CustomerService {
   async createCustomer(organizationId: string, data: CreateCustomerInput) {
-    return await customerRepository.create(organizationId, data);
+    const customer = await customerRepository.create(organizationId, data);
+    redis.delPattern(`cache:customers:${organizationId}:*`).catch(() => {});
+    return customer;
   }
 
   async updateCustomer(
@@ -18,7 +21,9 @@ export class CustomerService {
   ) {
     // Confirm customer exists and belongs to the org first
     await this.getCustomerById(id, organizationId);
-    return await customerRepository.update(id, organizationId, data);
+    const updated = await customerRepository.update(id, organizationId, data);
+    redis.delPattern(`cache:customers:${organizationId}:*`).catch(() => {});
+    return updated;
   }
 
   async getCustomerById(id: string, organizationId: string) {
@@ -30,13 +35,18 @@ export class CustomerService {
   }
 
   async queryCustomers(organizationId: string, query: QueryCustomerInput) {
-    return await customerRepository.findMany(organizationId, query);
+    const cacheKey = `cache:customers:${organizationId}:${query.page || 1}:${query.limit || 20}:${query.search || "ALL"}`;
+    return await redis.remember(cacheKey, 15, async () => {
+      return await customerRepository.findMany(organizationId, query);
+    });
   }
 
   async deleteCustomer(id: string, organizationId: string) {
     // Confirm customer exists and belongs to the org first
     await this.getCustomerById(id, organizationId);
-    return await customerRepository.delete(id, organizationId);
+    const deleted = await customerRepository.delete(id, organizationId);
+    redis.delPattern(`cache:customers:${organizationId}:*`).catch(() => {});
+    return deleted;
   }
 }
 

@@ -4,6 +4,7 @@ import { serviceService } from "../services/service.service";
 import { pricingService } from "../pricing/pricing.service";
 import { paymentService } from "../payment/payment.service";
 import { prisma } from "../../core/db/prisma";
+import { redis } from "../../core/redis/redis.client";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
@@ -62,7 +63,11 @@ export class RequestService {
         "Request history is only available for authenticated retailers",
       );
     }
-    return await requestRepository.findMany(context.organizationId, query);
+    const cacheKey = `cache:requests:query:${context.organizationId}:${query.page || 1}:${query.limit || 20}:${query.status || "ALL"}:${query.serviceCode || "ALL"}:${query.customerId || "ALL"}`;
+
+    return await redis.remember(cacheKey, 15, async () => {
+      return await requestRepository.findMany(context.organizationId!, query);
+    });
   }
 
   /**
@@ -236,6 +241,10 @@ export class RequestService {
       "PAYMENT_PENDING",
       `Price locked at ₹${priceSnapshot.amount} (${priceSnapshot.pricingTier}). Awaiting Cashfree payment confirmation.`,
     );
+
+    if (context.organizationId) {
+      redis.delPattern(`cache:requests:query:${context.organizationId}:*`).catch(() => {});
+    }
 
     return {
       ...lockedRequest,

@@ -1,4 +1,5 @@
 import { prisma } from "../../core/db/prisma";
+import { redis } from "../../core/redis/redis.client";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { cashfreeGateway } from "../../core/integrations/cashfree/cashfree.gateway";
@@ -304,6 +305,12 @@ export class PaymentService {
         note: `Payment of ₹${Number(payment.amount).toFixed(2)} captured via Cashfree (${details?.paymentMode || payment.paymentMode || "UPI"}). Gateway Txn: ${txId}`,
       },
     });
+
+    // Invalidate request and audit caches
+    if (payment.organizationId) {
+      redis.delPattern(`cache:requests:query:${payment.organizationId}:*`).catch(() => {});
+    }
+    redis.delPattern("cache:audit-logs:*").catch(() => {});
 
     // 3. Trigger Fulfillment
     try {

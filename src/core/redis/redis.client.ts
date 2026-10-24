@@ -10,6 +10,7 @@ import { getEnvVar } from "../config/env-helper";
 class RedisClient {
   private client: Redis | null = null;
   private isConnected = false;
+  private memoryCache = new Map<string, { value: any; expiresAt: number }>();
 
   constructor() {
     this.initClient();
@@ -20,8 +21,20 @@ class RedisClient {
     if (redisUrl) {
       redisUrl = redisUrl.trim().replace(/^["']|["';]+$/g, "").trim();
     }
+    
+    // Serverless Protection: Don't attempt localhost connections on Vercel
+    const isServerless = process.env.VERCEL === "1" || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+    const isLocalhost = redisUrl?.includes("127.0.0.1") || redisUrl?.includes("localhost");
+
+    if (isServerless && isLocalhost) {
+      logger.info("[Redis] Localhost Redis URL in Serverless environment. Using fast in-memory L1 cache fallback.");
+      this.client = null;
+      this.isConnected = false;
+      return;
+    }
+
     if (!redisUrl) {
-      logger.warn("[Redis] REDIS_URL environment variable is not defined. Redis operations will gracefully fallback.");
+      logger.warn("[Redis] REDIS_URL environment variable is not defined. Redis operations will gracefully fallback to in-memory L1 cache.");
       this.client = null;
       this.isConnected = false;
       return;
@@ -32,13 +45,13 @@ class RedisClient {
       getEnvVar("REDIS_TLS") === "true";
 
     const options: RedisOptions = {
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 2000,
       enableReadyCheck: true,
-      lazyConnect: false,
+      lazyConnect: true,
       retryStrategy(times) {
-        const delay = Math.min(times * 200, 3000);
-        logger.warn(`[Redis] Connection retry attempt #${times} in ${delay}ms`);
-        return delay;
+        if (times > 2) return null;
+        return 200;
       },
     };
 
@@ -141,6 +154,7 @@ class RedisClient {
   }
 
   public async del(key: string): Promise<boolean> {
+    this.memoryCache.delete(key);
     try {
       const client = this.getRawClient();
       if (!client) return false;
@@ -153,6 +167,10 @@ class RedisClient {
   }
 
   public async ttl(key: string): Promise<number> {
+    const mem = this.memoryCache.get(key);
+    if (mem && mem.expiresAt > Date.now()) {
+      return Math.round((mem.expiresAt - Date.now()) / 1000);
+    }
     try {
       const client = this.getRawClient();
       if (!client) return -2;
@@ -164,27 +182,51 @@ class RedisClient {
   }
 
   /**
-   * Universal Redis Cache Helper
-   * Checks Redis for cached data. If found, returns immediately (0ms DB query).
-   * Otherwise executes fetcher(), caches the result in Redis with TTL, and returns it.
+   * High-Performance Multi-Layer Cache Helper (L1 In-Memory + L2 Redis)
+   * 1. Checks in-memory L1 cache (< 0.1ms latency, 0 DB roundtrips).
+   * 2. Checks Redis L2 if available.
+   * 3. Falls back to fetcher(), then populates L1 & L2 caches.
    */
   public async remember<T>(
     key: string,
     ttlSeconds: number,
     fetcher: () => Promise<T>,
   ): Promise<T> {
+    // 1. Ultra-fast L1 In-Memory Cache (< 0.1ms)
+    const memEntry = this.memoryCache.get(key);
+    if (memEntry && memEntry.expiresAt > Date.now()) {
+      return memEntry.value as T;
+    }
+
+    // 2. Redis L2 Cache lookup
     try {
       const cached = await this.getJson<T>(key);
       if (cached !== null && cached !== undefined) {
+        this.memoryCache.set(key, {
+          value: cached,
+          expiresAt: Date.now() + Math.min(ttlSeconds, 300) * 1000,
+        });
         return cached;
       }
     } catch (err: unknown) {
       logger.warn(`[Redis] Cache lookup failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
     }
 
+    // 3. Fresh data fetch from database/gateway
     const freshData = await fetcher();
 
     if (freshData !== null && freshData !== undefined) {
+      // Memory protection: cap at 2000 entries
+      if (this.memoryCache.size > 2000) {
+        const firstKey = this.memoryCache.keys().next().value;
+        if (firstKey) this.memoryCache.delete(firstKey);
+      }
+
+      this.memoryCache.set(key, {
+        value: freshData,
+        expiresAt: Date.now() + Math.min(ttlSeconds, 300) * 1000,
+      });
+
       this.setJson(key, freshData, ttlSeconds).catch((err: unknown) => {
         logger.warn(`[Redis] Cache set failed for key "${key}": ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -197,6 +239,18 @@ class RedisClient {
    * Delete all keys matching a wildcard pattern (e.g. "cache:services:*")
    */
   public async delPattern(pattern: string): Promise<number> {
+    // Invalidate from In-Memory L1 Cache
+    try {
+      const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
+      for (const k of this.memoryCache.keys()) {
+        if (regex.test(k)) {
+          this.memoryCache.delete(k);
+        }
+      }
+    } catch {
+      // Ignore regex parsing error
+    }
+
     try {
       const client = this.getRawClient();
       if (!client) return 0;

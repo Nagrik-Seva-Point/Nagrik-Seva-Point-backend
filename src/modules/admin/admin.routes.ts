@@ -23,6 +23,10 @@ export const adminRouter = new Hono<ContextVariables>();
 // Public/Retailer non-admin read endpoint for active platform announcements
 adminRouter.get("/public/announcement", async (c) => {
   const data = await adminService.getAnnouncement();
+  c.header(
+    "Cache-Control",
+    "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+  );
   return c.json({ success: true, data });
 });
 
