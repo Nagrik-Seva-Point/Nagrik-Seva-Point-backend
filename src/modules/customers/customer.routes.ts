@@ -53,6 +53,7 @@ customerRoutes.get(
     const organizationId = c.get("organizationId")!;
     const query = c.get("validData") as QueryCustomerInput;
     const result = await customerService.queryCustomers(organizationId, query);
+    c.header("Cache-Control", "private, max-age=15, stale-while-revalidate=30");
     return c.json({ success: true, ...result });
   },
 );

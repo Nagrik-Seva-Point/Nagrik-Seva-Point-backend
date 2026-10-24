@@ -141,6 +141,7 @@ requestRoutes.get(
     const query = c.get("validData") as QueryRequestInput;
 
     const result = await requestService.queryRequests(context, query);
+    c.header("Cache-Control", "private, max-age=15, stale-while-revalidate=30");
     return c.json({ success: true, ...result });
   },
 );

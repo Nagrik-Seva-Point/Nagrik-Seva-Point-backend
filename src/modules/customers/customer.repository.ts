@@ -57,6 +57,14 @@ export class CustomerRepository {
     const [items, total] = await Promise.all([
       prisma.customer.findMany({
         where,
+        select: {
+          id: true,
+          organizationId: true,
+          name: true,
+          phone: true,
+          createdAt: true,
+          updatedAt: true,
+        },
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },

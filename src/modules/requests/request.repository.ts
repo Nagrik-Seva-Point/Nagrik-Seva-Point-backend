@@ -200,17 +200,11 @@ export class RequestRepository {
     const hydratedItems = await Promise.all(
       items.map(async (item) => {
         if (item.status === "COMPLETED") {
-          const vault = await ephemeralVault.getVaultItem(item.id);
-          const pdfVault = await ephemeralVault.getPdfVaultItem(item.id);
+          const vaultSummary = await ephemeralVault.getVaultSummary(item.id);
           return {
             ...item,
-            vaultData: vault.data,
-            vaultInfo: {
-              isExpired: vault.isExpired && pdfVault.isExpired,
-              hasPdf: !pdfVault.isExpired,
-              remainingTtlSeconds: Math.max(vault.remainingTtlSeconds, pdfVault.remainingTtlSeconds),
-              expiresAt: vault.expiresAt,
-            },
+            vaultData: null,
+            vaultInfo: vaultSummary,
           };
         }
         return {

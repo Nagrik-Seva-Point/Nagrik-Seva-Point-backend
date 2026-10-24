@@ -74,6 +74,7 @@ apiRouter.get("/audit-logs", async (c) => {
     limit: query.limit ? parseInt(query.limit, 10) : 30,
   });
 
+  c.header("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
   return c.json({ success: true, data });
 });
 

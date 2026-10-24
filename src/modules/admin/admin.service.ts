@@ -245,9 +245,12 @@ export class AdminService {
   async getOrganizations(query: OrganizationFilterQuery) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
-    const skip = (page - 1) * limit;
+    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}`;
 
-    const where: Record<string, unknown> = {};
+    return await redis.remember(cacheKey, 60, async () => {
+      const skip = (page - 1) * limit;
+
+      const where: Record<string, unknown> = {};
     if (query.search && query.search.trim()) {
       const s = query.search.trim();
       where.OR = [
@@ -382,6 +385,7 @@ export class AdminService {
         totalWalletBalance: Number(totalWalletSum._sum.balance || 0),
       },
     };
+    });
   }
 
   /**
@@ -450,7 +454,7 @@ export class AdminService {
    * 5. Master Admin KPI Overview Stats (Cached in Redis 60s TTL)
    */
   async getOverviewStats() {
-    return await redis.remember("cache:admin:overview_stats", 60, async () => {
+    return await redis.remember("cache:admin:overview_stats", 120, async () => {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
@@ -663,7 +667,8 @@ export class AdminService {
   // ==========================================
 
   async getVendorHealth() {
-    // 1. Database latency
+    return await redis.remember("cache:admin:vendor_health", 30, async () => {
+      // 1. Database latency
     const dbStart = Date.now();
     let dbStatus = "HEALTHY";
     let dbLatency = 0;
@@ -801,6 +806,7 @@ export class AdminService {
       },
       bandwidth,
     };
+    });
   }
 
   // ==========================================
@@ -808,33 +814,35 @@ export class AdminService {
   // ==========================================
 
   async getMaintenanceStatus() {
-    const globalMaint = await redis.getJson<{ enabled?: boolean; message?: string }>("system:maintenance:global");
-    const services = await prisma.service.findMany({
-      select: { id: true, code: true, name: true, isActive: true },
-      orderBy: { code: "asc" },
+    return await redis.remember("cache:admin:maintenance_status", 60, async () => {
+      const globalMaint = await redis.getJson<{ enabled?: boolean; message?: string }>("system:maintenance:global");
+      const services = await prisma.service.findMany({
+        select: { id: true, code: true, name: true, isActive: true },
+        orderBy: { code: "asc" },
+      });
+
+      const serviceStatuses = await Promise.all(
+        services.map(async (srv) => {
+          const maint = await redis.getJson<{ enabled?: boolean; message?: string }>(`service:maintenance:${srv.code}`);
+          return {
+            id: srv.id,
+            code: srv.code,
+            name: srv.name,
+            isActive: srv.isActive,
+            underMaintenance: maint ? Boolean(maint.enabled) : false,
+            maintenanceMessage: maint?.message || null,
+          };
+        })
+      );
+
+      return {
+        globalMaintenance: {
+          enabled: globalMaint ? Boolean(globalMaint.enabled) : false,
+          message: globalMaint?.message || null,
+        },
+        services: serviceStatuses,
+      };
     });
-
-    const serviceStatuses = await Promise.all(
-      services.map(async (srv) => {
-        const maint = await redis.getJson<{ enabled?: boolean; message?: string }>(`service:maintenance:${srv.code}`);
-        return {
-          id: srv.id,
-          code: srv.code,
-          name: srv.name,
-          isActive: srv.isActive,
-          underMaintenance: maint ? Boolean(maint.enabled) : false,
-          maintenanceMessage: maint?.message || null,
-        };
-      })
-    );
-
-    return {
-      globalMaintenance: {
-        enabled: globalMaint ? Boolean(globalMaint.enabled) : false,
-        message: globalMaint?.message || null,
-      },
-      services: serviceStatuses,
-    };
   }
 
   async setMaintenanceStatus(input: MaintenanceToggleInput) {
@@ -853,8 +861,11 @@ export class AdminService {
       });
     }
 
-    // Invalidate cached services catalogue
-    await redis.delPattern("cache:services:*");
+    // Invalidate cached services catalogue and maintenance status
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.del("cache:admin:maintenance_status"),
+    ]).catch(() => {});
 
     return {
       success: true,
@@ -867,8 +878,10 @@ export class AdminService {
   // ==========================================
 
   async getAnnouncement() {
-    const announcement = await redis.getJson<Record<string, unknown>>("system:announcement");
-    return announcement || { active: false, message: "" };
+    return await redis.remember("cache:admin:announcement", 120, async () => {
+      const announcement = await redis.getJson<Record<string, unknown>>("system:announcement");
+      return announcement || { active: false, message: "" };
+    });
   }
 
   async setAnnouncement(input: AnnouncementInput) {
@@ -878,6 +891,7 @@ export class AdminService {
     };
 
     await redis.setJson("system:announcement", data);
+    await redis.del("cache:admin:announcement").catch(() => {});
     return {
       success: true,
       data,
@@ -995,46 +1009,48 @@ export class AdminService {
   // ==========================================
 
   async getPricingMatrix() {
-    const services = await prisma.service.findMany({
-      include: {
-        category: true,
-        prices: true,
-      },
-      orderBy: { code: "asc" },
-    });
-
-    const defaultEstimatedCost: Record<string, number> = {
-      PAN_FIND: 2.5,
-      PAN_DETAILS: 2.0,
-      KISAN_CARD: 0.0,
-      KISAN_REGISTRATION_CARD: 0.0,
-    };
-
-    return services.map((srv) => {
-      const getPrice = (tier: PricingTier) => {
-        const found = srv.prices.find((p) => p.pricingTier === tier);
-        return found ? Number(found.amount) : 0;
-      };
-
-      const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 25);
-      const estCost = defaultEstimatedCost[srv.code] ?? 0.0;
-      const margin = partnerPrice - estCost;
-
-      return {
-        id: srv.id,
-        code: srv.code,
-        name: srv.name,
-        category: srv.category?.name || "General",
-        isActive: srv.isActive,
-        prices: {
-          public: getPrice("PUBLIC") || 40,
-          partner: partnerPrice,
-          partnerGold: getPrice("PARTNER_GOLD") || partnerPrice * 0.85,
-          enterprise: getPrice("ENTERPRISE") || partnerPrice * 0.70,
+    return await redis.remember("cache:admin:pricing_matrix", 300, async () => {
+      const services = await prisma.service.findMany({
+        include: {
+          category: true,
+          prices: true,
         },
-        estimatedVendorCost: estCost,
-        estimatedProfitMargin: margin,
+        orderBy: { code: "asc" },
+      });
+
+      const defaultEstimatedCost: Record<string, number> = {
+        PAN_FIND: 2.5,
+        PAN_DETAILS: 2.0,
+        KISAN_CARD: 0.0,
+        KISAN_REGISTRATION_CARD: 0.0,
       };
+
+      return services.map((srv) => {
+        const getPrice = (tier: PricingTier) => {
+          const found = srv.prices.find((p) => p.pricingTier === tier);
+          return found ? Number(found.amount) : 0;
+        };
+
+        const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 25);
+        const estCost = defaultEstimatedCost[srv.code] ?? 0.0;
+        const margin = partnerPrice - estCost;
+
+        return {
+          id: srv.id,
+          code: srv.code,
+          name: srv.name,
+          category: srv.category?.name || "General",
+          isActive: srv.isActive,
+          prices: {
+            public: getPrice("PUBLIC") || 40,
+            partner: partnerPrice,
+            partnerGold: getPrice("PARTNER_GOLD") || partnerPrice * 0.85,
+            enterprise: getPrice("ENTERPRISE") || partnerPrice * 0.70,
+          },
+          estimatedVendorCost: estCost,
+          estimatedProfitMargin: margin,
+        };
+      });
     });
   }
 
@@ -1065,8 +1081,11 @@ export class AdminService {
       },
     });
 
-    // Invalidate service catalog caches
-    await redis.delPattern("cache:services:*");
+    // Invalidate service catalog and pricing matrix caches
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.del("cache:admin:pricing_matrix"),
+    ]).catch(() => {});
 
     return {
       success: true,
@@ -1229,7 +1248,7 @@ export class AdminService {
 
   async getFinancialLeakage(timeRange: "TODAY" | "YESTERDAY" | "7DAYS" | "30DAYS" | "ALL" = "30DAYS") {
     const cacheKey = `cache:admin:financial_leakage:${timeRange}`;
-    return await redis.remember(cacheKey, 15, async () => {
+    return await redis.remember(cacheKey, 300, async () => {
       const now = new Date();
       let startDate: Date | undefined;
       let endDate: Date | undefined;
@@ -1667,8 +1686,9 @@ export class AdminService {
     const { organizationId, category = "ALL", page = 1, limit = 30 } = query;
     const cacheKey = `cache:audit-logs:${organizationId || "ALL"}:${category}:${page}:${limit}`;
 
-    return await redis.remember(cacheKey, 15, async () => {
+    return await redis.remember(cacheKey, 60, async () => {
       const skip = (page - 1) * limit;
+      const maxTake = Math.min(Math.max((skip + limit) * 2, 35), 75);
 
       const isDirectWalkin = organizationId === "DIRECT_WALKIN";
 
@@ -1725,7 +1745,7 @@ export class AdminService {
       prisma.walletTransaction.findMany({
         where: whereWallet,
         orderBy: { createdAt: "desc" },
-        take: 100,
+        take: maxTake,
         include: {
           wallet: {
             include: {
@@ -1737,7 +1757,7 @@ export class AdminService {
       prisma.payment.findMany({
         where: wherePayment,
         orderBy: { createdAt: "desc" },
-        take: 100,
+        take: maxTake,
         include: {
           organization: { select: { id: true, name: true } },
           serviceRequest: {
@@ -1754,7 +1774,7 @@ export class AdminService {
       prisma.serviceRequestEvent.findMany({
         where: whereEvents,
         orderBy: { createdAt: "desc" },
-        take: 150,
+        take: maxTake,
         include: {
           serviceRequest: {
             select: {
@@ -1770,7 +1790,7 @@ export class AdminService {
       prisma.session.findMany({
         where: whereSession,
         orderBy: { createdAt: "desc" },
-        take: 50,
+        take: Math.min(maxTake, 30),
         include: {
           user: {
             select: {
@@ -1790,7 +1810,7 @@ export class AdminService {
       prisma.apiLog.findMany({
         where: whereApiLog,
         orderBy: { createdAt: "desc" },
-        take: 150,
+        take: maxTake,
         include: {
           organization: { select: { id: true, name: true } },
           user: { select: { id: true, name: true, email: true } },
@@ -2058,25 +2078,27 @@ export class AdminService {
   // ==========================================
 
   async getVaultAudit() {
-    let activeKeys: string[] = [];
-    try {
-      const client = redis.getRawClient();
-      if (client) {
-        activeKeys = await client.keys("vault:*");
+    return await redis.remember("cache:admin:vault_audit", 60, async () => {
+      let activeKeys: string[] = [];
+      try {
+        const client = redis.getRawClient();
+        if (client) {
+          activeKeys = await client.keys("vault:*");
+        }
+      } catch {
+        activeKeys = [];
       }
-    } catch {
-      activeKeys = [];
-    }
 
-    return {
-      complianceStandard: "DPDP Act (India) 2023 Compliant",
-      vaultStrategy: "24-Hour Ephemeral In-Memory TTL Auto-Purge",
-      activeCitizenEncryptedKeysCount: activeKeys.length,
-      sampleActiveKeys: activeKeys.slice(0, 10),
-      autoPurgeVerified: true,
-      dataRetentionWindowHours: 24,
-      auditTimestamp: new Date().toISOString(),
-    };
+      return {
+        complianceStandard: "DPDP Act (India) 2023 Compliant",
+        vaultStrategy: "24-Hour Ephemeral In-Memory TTL Auto-Purge",
+        activeCitizenEncryptedKeysCount: activeKeys.length,
+        sampleActiveKeys: activeKeys.slice(0, 10),
+        autoPurgeVerified: true,
+        dataRetentionWindowHours: 24,
+        auditTimestamp: new Date().toISOString(),
+      };
+    });
   }
 }
 

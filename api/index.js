@@ -7338,6 +7338,14 @@ var CustomerRepository = class {
     const [items, total] = await Promise.all([
       prisma.customer.findMany({
         where,
+        select: {
+          id: true,
+          organizationId: true,
+          name: true,
+          phone: true,
+          createdAt: true,
+          updatedAt: true
+        },
         skip,
         take: limit,
         orderBy: { createdAt: "desc" }
@@ -7445,6 +7453,7 @@ customerRoutes.get(
     const organizationId = c.get("organizationId");
     const query = c.get("validData");
     const result = await customerService.queryCustomers(organizationId, query);
+    c.header("Cache-Control", "private, max-age=15, stale-while-revalidate=30");
     return c.json({ success: true, ...result });
   }
 );
@@ -9367,6 +9376,25 @@ var EphemeralVaultService = class {
     };
   }
   /**
+   * Fast metadata-only check without AES decryption or gunzip decompression (used for fast list hydration)
+   */
+  async getVaultSummary(requestId) {
+    const vaultKey = this.getVaultKey(requestId);
+    const pdfKey = this.getPdfVaultKey(requestId);
+    const [vaultTtl, pdfTtl] = await Promise.all([
+      redis.ttl(vaultKey),
+      redis.ttl(pdfKey)
+    ]);
+    const maxTtl = Math.max(vaultTtl > 0 ? vaultTtl : 0, pdfTtl > 0 ? pdfTtl : 0);
+    const isExpired = maxTtl <= 0;
+    return {
+      hasPdf: pdfTtl > 0,
+      isExpired,
+      remainingTtlSeconds: maxTtl,
+      expiresAt: maxTtl > 0 ? new Date(Date.now() + maxTtl * 1e3).toISOString() : null
+    };
+  }
+  /**
    * Deletes vault item explicitly if needed
    */
   async deleteVaultItem(requestId) {
@@ -9979,17 +10007,11 @@ var RequestRepository = class {
     const hydratedItems = await Promise.all(
       items.map(async (item) => {
         if (item.status === "COMPLETED") {
-          const vault = await ephemeralVault.getVaultItem(item.id);
-          const pdfVault = await ephemeralVault.getPdfVaultItem(item.id);
+          const vaultSummary = await ephemeralVault.getVaultSummary(item.id);
           return {
             ...item,
-            vaultData: vault.data,
-            vaultInfo: {
-              isExpired: vault.isExpired && pdfVault.isExpired,
-              hasPdf: !pdfVault.isExpired,
-              remainingTtlSeconds: Math.max(vault.remainingTtlSeconds, pdfVault.remainingTtlSeconds),
-              expiresAt: vault.expiresAt
-            }
+            vaultData: null,
+            vaultInfo: vaultSummary
           };
         }
         return {
@@ -10351,6 +10373,7 @@ requestRoutes.get(
     const context = c.get("requestContext");
     const query = c.get("validData");
     const result = await requestService.queryRequests(context, query);
+    c.header("Cache-Control", "private, max-age=15, stale-while-revalidate=30");
     return c.json({ success: true, ...result });
   }
 );
@@ -10976,134 +10999,137 @@ var AdminService = class {
   async getOrganizations(query) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
-    const skip = (page - 1) * limit;
-    const where = {};
-    if (query.search && query.search.trim()) {
-      const s = query.search.trim();
-      where.OR = [
-        { name: { contains: s, mode: "insensitive" } },
-        { slug: { contains: s, mode: "insensitive" } },
-        {
-          members: {
-            some: {
-              user: {
-                OR: [
-                  { name: { contains: s, mode: "insensitive" } },
-                  { email: { contains: s, mode: "insensitive" } },
-                  { phone: { contains: s, mode: "insensitive" } }
-                ]
+    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}`;
+    return await redis.remember(cacheKey, 60, async () => {
+      const skip = (page - 1) * limit;
+      const where = {};
+      if (query.search && query.search.trim()) {
+        const s = query.search.trim();
+        where.OR = [
+          { name: { contains: s, mode: "insensitive" } },
+          { slug: { contains: s, mode: "insensitive" } },
+          {
+            members: {
+              some: {
+                user: {
+                  OR: [
+                    { name: { contains: s, mode: "insensitive" } },
+                    { email: { contains: s, mode: "insensitive" } },
+                    { phone: { contains: s, mode: "insensitive" } }
+                  ]
+                }
               }
             }
           }
-        }
-      ];
-    }
-    const [total, items, totalWalletSum] = await Promise.all([
-      prisma.organization.count({ where }),
-      prisma.organization.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        include: {
-          wallet: true,
-          members: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  phone: true,
-                  role: true,
-                  updatedAt: true,
-                  sessions: {
-                    orderBy: { updatedAt: "desc" },
-                    take: 1,
-                    select: {
-                      updatedAt: true,
-                      createdAt: true
+        ];
+      }
+      const [total, items, totalWalletSum] = await Promise.all([
+        prisma.organization.count({ where }),
+        prisma.organization.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { createdAt: "desc" },
+          include: {
+            wallet: true,
+            members: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    phone: true,
+                    role: true,
+                    updatedAt: true,
+                    sessions: {
+                      orderBy: { updatedAt: "desc" },
+                      take: 1,
+                      select: {
+                        updatedAt: true,
+                        createdAt: true
+                      }
                     }
                   }
                 }
               }
-            }
-          },
-          payments: {
-            where: {
-              status: "CAPTURED"
             },
-            select: {
-              id: true,
-              amount: true,
-              paidAt: true,
-              createdAt: true
-            }
-          },
-          requests: {
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: {
-              createdAt: true
-            }
-          },
-          apiLogs: {
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: {
-              createdAt: true
-            }
-          },
-          _count: {
-            select: {
-              members: true,
-              customers: true,
-              requests: true,
-              payments: true,
-              apiLogs: true
+            payments: {
+              where: {
+                status: "CAPTURED"
+              },
+              select: {
+                id: true,
+                amount: true,
+                paidAt: true,
+                createdAt: true
+              }
+            },
+            requests: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                createdAt: true
+              }
+            },
+            apiLogs: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                createdAt: true
+              }
+            },
+            _count: {
+              select: {
+                members: true,
+                customers: true,
+                requests: true,
+                payments: true,
+                apiLogs: true
+              }
             }
           }
-        }
-      }),
-      prisma.wallet.aggregate({
-        _sum: { balance: true }
-      })
-    ]);
-    const enhancedItems = items.map((org) => {
-      const ownerUser = org.members[0]?.user;
-      const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
-      const lastRequestDate = org.requests?.[0]?.createdAt;
-      const lastApiLogDate = org.apiLogs?.[0]?.createdAt;
-      const allTimestamps = [lastSessionDate, ownerUser?.updatedAt, lastRequestDate, lastApiLogDate, org.createdAt].filter(Boolean).map((d) => new Date(d).getTime()).filter((t) => !isNaN(t));
-      const lastLogin = allTimestamps.length > 0 ? new Date(Math.max(...allTimestamps)).toISOString() : org.createdAt;
-      const completedPayments = org.payments || [];
-      const completedPaymentsCount = completedPayments.length;
-      const completedPaymentsAmount = completedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-      const totalRequests = Math.max(org._count?.requests || 0, org._count?.apiLogs || 0);
+        }),
+        prisma.wallet.aggregate({
+          _sum: { balance: true }
+        })
+      ]);
+      const enhancedItems = items.map((org) => {
+        const ownerUser = org.members[0]?.user;
+        const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
+        const lastRequestDate = org.requests?.[0]?.createdAt;
+        const lastApiLogDate = org.apiLogs?.[0]?.createdAt;
+        const allTimestamps = [lastSessionDate, ownerUser?.updatedAt, lastRequestDate, lastApiLogDate, org.createdAt].filter(Boolean).map((d) => new Date(d).getTime()).filter((t) => !isNaN(t));
+        const lastLogin = allTimestamps.length > 0 ? new Date(Math.max(...allTimestamps)).toISOString() : org.createdAt;
+        const completedPayments = org.payments || [];
+        const completedPaymentsCount = completedPayments.length;
+        const completedPaymentsAmount = completedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        const totalRequests = Math.max(org._count?.requests || 0, org._count?.apiLogs || 0);
+        return {
+          ...org,
+          _count: {
+            ...org._count,
+            requests: totalRequests
+          },
+          lastLogin,
+          completedPaymentsCount,
+          completedPaymentsAmount
+        };
+      });
       return {
-        ...org,
-        _count: {
-          ...org._count,
-          requests: totalRequests
+        items: enhancedItems,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit) || 1
         },
-        lastLogin,
-        completedPaymentsCount,
-        completedPaymentsAmount
+        summary: {
+          totalOrganizations: total,
+          totalWalletBalance: Number(totalWalletSum._sum.balance || 0)
+        }
       };
     });
-    return {
-      items: enhancedItems,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit) || 1
-      },
-      summary: {
-        totalOrganizations: total,
-        totalWalletBalance: Number(totalWalletSum._sum.balance || 0)
-      }
-    };
   }
   /**
    * 4. Get Organization Details by ID
@@ -11168,7 +11194,7 @@ var AdminService = class {
    * 5. Master Admin KPI Overview Stats (Cached in Redis 60s TTL)
    */
   async getOverviewStats() {
-    return await redis.remember("cache:admin:overview_stats", 60, async () => {
+    return await redis.remember("cache:admin:overview_stats", 120, async () => {
       const todayStart = /* @__PURE__ */ new Date();
       todayStart.setHours(0, 0, 0, 0);
       const [
@@ -11353,149 +11379,153 @@ var AdminService = class {
   // 7. UPSTREAM VENDOR HEALTH & CREDITS
   // ==========================================
   async getVendorHealth() {
-    const dbStart = Date.now();
-    let dbStatus = "HEALTHY";
-    let dbLatency = 0;
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-      dbLatency = Date.now() - dbStart;
-    } catch {
-      dbStatus = "DOWN";
-    }
-    const redisStart = Date.now();
-    let redisStatus = "HEALTHY";
-    let redisLatency = 0;
-    try {
-      const pong = await redis.getRawClient()?.ping();
-      redisLatency = Date.now() - redisStart;
-      if (!pong) redisStatus = "DEGRADED";
-    } catch {
-      redisStatus = "DOWN";
-    }
-    const cfEnv = process.env.CASHFREE_ENVIRONMENT || "sandbox";
-    const cfUrl = process.env.CASHFREE_API_URL || (cfEnv === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg");
-    const hasCfCredentials = Boolean(process.env.CASHFREE_CLIENT_ID && process.env.CASHFREE_CLIENT_SECRET);
-    let activeVaultKeys = 0;
-    try {
-      const client = redis.getRawClient();
-      if (client) {
-        const keys = await client.keys("vault:*");
-        activeVaultKeys = keys.length;
+    return await redis.remember("cache:admin:vendor_health", 30, async () => {
+      const dbStart = Date.now();
+      let dbStatus = "HEALTHY";
+      let dbLatency = 0;
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+        dbLatency = Date.now() - dbStart;
+      } catch {
+        dbStatus = "DOWN";
       }
-    } catch {
-      activeVaultKeys = 0;
-    }
-    let hostNetworkStats = null;
-    try {
-      const fs = await import("node:fs/promises");
-      const netDev = await fs.readFile("/proc/net/dev", "utf-8");
-      const lines = netDev.split("\n");
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("wlan0:") || trimmed.startsWith("eth0:") || trimmed.startsWith("ens")) {
-          const parts = trimmed.split(":")[1].trim().split(/\s+/);
-          const rx = parseInt(parts[0], 10);
-          const tx = parseInt(parts[8], 10);
-          if (!isNaN(rx) && !isNaN(tx)) {
-            hostNetworkStats = { rxBytes: rx, txBytes: tx, interfaceName: trimmed.split(":")[0] };
-            break;
+      const redisStart = Date.now();
+      let redisStatus = "HEALTHY";
+      let redisLatency = 0;
+      try {
+        const pong = await redis.getRawClient()?.ping();
+        redisLatency = Date.now() - redisStart;
+        if (!pong) redisStatus = "DEGRADED";
+      } catch {
+        redisStatus = "DOWN";
+      }
+      const cfEnv = process.env.CASHFREE_ENVIRONMENT || "sandbox";
+      const cfUrl = process.env.CASHFREE_API_URL || (cfEnv === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg");
+      const hasCfCredentials = Boolean(process.env.CASHFREE_CLIENT_ID && process.env.CASHFREE_CLIENT_SECRET);
+      let activeVaultKeys = 0;
+      try {
+        const client = redis.getRawClient();
+        if (client) {
+          const keys = await client.keys("vault:*");
+          activeVaultKeys = keys.length;
+        }
+      } catch {
+        activeVaultKeys = 0;
+      }
+      let hostNetworkStats = null;
+      try {
+        const fs = await import("node:fs/promises");
+        const netDev = await fs.readFile("/proc/net/dev", "utf-8");
+        const lines = netDev.split("\n");
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("wlan0:") || trimmed.startsWith("eth0:") || trimmed.startsWith("ens")) {
+            const parts = trimmed.split(":")[1].trim().split(/\s+/);
+            const rx = parseInt(parts[0], 10);
+            const tx = parseInt(parts[8], 10);
+            if (!isNaN(rx) && !isNaN(tx)) {
+              hostNetworkStats = { rxBytes: rx, txBytes: tx, interfaceName: trimmed.split(":")[0] };
+              break;
+            }
           }
         }
+      } catch {
+        hostNetworkStats = null;
       }
-    } catch {
-      hostNetworkStats = null;
-    }
-    const appPayloads = {
-      totalRequests: 0,
-      inboundPayloadBytes: 0,
-      outboundPayloadBytes: 0,
-      totalPayments: 0,
-      paymentWebhookBytes: 0
-    };
-    try {
-      const reqStats = await prisma.$queryRaw`
+      const appPayloads = {
+        totalRequests: 0,
+        inboundPayloadBytes: 0,
+        outboundPayloadBytes: 0,
+        totalPayments: 0,
+        paymentWebhookBytes: 0
+      };
+      try {
+        const reqStats = await prisma.$queryRaw`
         SELECT 
           COUNT(*)::int as total_requests,
           COALESCE(SUM(octet_length(CAST("inputData" AS text))), 0)::bigint as inbound_bytes,
           COALESCE(SUM(octet_length(CAST("resultData" AS text))), 0)::bigint as outbound_bytes
         FROM "ServiceRequest"
       `;
-      const payStats = await prisma.$queryRaw`
+        const payStats = await prisma.$queryRaw`
         SELECT 
           COUNT(*)::int as total_payments,
           COALESCE(SUM(octet_length(CAST("gatewayResponse" AS text))), 0)::bigint as webhook_bytes
         FROM "Payment"
       `;
-      if (reqStats && reqStats[0]) {
-        appPayloads.totalRequests = Number(reqStats[0].total_requests) || 0;
-        appPayloads.inboundPayloadBytes = Number(reqStats[0].inbound_bytes) || 0;
-        appPayloads.outboundPayloadBytes = Number(reqStats[0].outbound_bytes) || 0;
+        if (reqStats && reqStats[0]) {
+          appPayloads.totalRequests = Number(reqStats[0].total_requests) || 0;
+          appPayloads.inboundPayloadBytes = Number(reqStats[0].inbound_bytes) || 0;
+          appPayloads.outboundPayloadBytes = Number(reqStats[0].outbound_bytes) || 0;
+        }
+        if (payStats && payStats[0]) {
+          appPayloads.totalPayments = Number(payStats[0].total_payments) || 0;
+          appPayloads.paymentWebhookBytes = Number(payStats[0].webhook_bytes) || 0;
+        }
+      } catch {
       }
-      if (payStats && payStats[0]) {
-        appPayloads.totalPayments = Number(payStats[0].total_payments) || 0;
-        appPayloads.paymentWebhookBytes = Number(payStats[0].webhook_bytes) || 0;
-      }
-    } catch {
-    }
-    const rxBytes = hostNetworkStats ? hostNetworkStats.rxBytes : appPayloads.inboundPayloadBytes + appPayloads.paymentWebhookBytes;
-    const txBytes = hostNetworkStats ? hostNetworkStats.txBytes : appPayloads.outboundPayloadBytes;
-    const bandwidth = {
-      source: hostNetworkStats ? "HOST_KERNEL" : "DATABASE_PAYLOADS",
-      interfaceName: hostNetworkStats?.interfaceName,
-      totalRxBytes: rxBytes,
-      totalTxBytes: txBytes,
-      totalBytes: rxBytes + txBytes,
-      applicationPayloads: appPayloads
-    };
-    return {
-      overallStatus: dbStatus === "HEALTHY" && redisStatus === "HEALTHY" ? "HEALTHY" : "DEGRADED",
-      database: {
-        status: dbStatus,
-        latencyMs: dbLatency,
-        provider: "PostgreSQL"
-      },
-      redis: {
-        status: redisStatus,
-        latencyMs: redisLatency,
-        activeVaultKeys
-      },
-      cashfree: {
-        status: hasCfCredentials ? "CONFIGURED" : "MISSING_CREDENTIALS",
-        environment: cfEnv,
-        endpoint: cfUrl
-      },
-      bandwidth
-    };
+      const rxBytes = hostNetworkStats ? hostNetworkStats.rxBytes : appPayloads.inboundPayloadBytes + appPayloads.paymentWebhookBytes;
+      const txBytes = hostNetworkStats ? hostNetworkStats.txBytes : appPayloads.outboundPayloadBytes;
+      const bandwidth = {
+        source: hostNetworkStats ? "HOST_KERNEL" : "DATABASE_PAYLOADS",
+        interfaceName: hostNetworkStats?.interfaceName,
+        totalRxBytes: rxBytes,
+        totalTxBytes: txBytes,
+        totalBytes: rxBytes + txBytes,
+        applicationPayloads: appPayloads
+      };
+      return {
+        overallStatus: dbStatus === "HEALTHY" && redisStatus === "HEALTHY" ? "HEALTHY" : "DEGRADED",
+        database: {
+          status: dbStatus,
+          latencyMs: dbLatency,
+          provider: "PostgreSQL"
+        },
+        redis: {
+          status: redisStatus,
+          latencyMs: redisLatency,
+          activeVaultKeys
+        },
+        cashfree: {
+          status: hasCfCredentials ? "CONFIGURED" : "MISSING_CREDENTIALS",
+          environment: cfEnv,
+          endpoint: cfUrl
+        },
+        bandwidth
+      };
+    });
   }
   // ==========================================
   // 8. SERVICE KILL-SWITCHES & MAINTENANCE MODE
   // ==========================================
   async getMaintenanceStatus() {
-    const globalMaint = await redis.getJson("system:maintenance:global");
-    const services = await prisma.service.findMany({
-      select: { id: true, code: true, name: true, isActive: true },
-      orderBy: { code: "asc" }
+    return await redis.remember("cache:admin:maintenance_status", 60, async () => {
+      const globalMaint = await redis.getJson("system:maintenance:global");
+      const services = await prisma.service.findMany({
+        select: { id: true, code: true, name: true, isActive: true },
+        orderBy: { code: "asc" }
+      });
+      const serviceStatuses = await Promise.all(
+        services.map(async (srv) => {
+          const maint = await redis.getJson(`service:maintenance:${srv.code}`);
+          return {
+            id: srv.id,
+            code: srv.code,
+            name: srv.name,
+            isActive: srv.isActive,
+            underMaintenance: maint ? Boolean(maint.enabled) : false,
+            maintenanceMessage: maint?.message || null
+          };
+        })
+      );
+      return {
+        globalMaintenance: {
+          enabled: globalMaint ? Boolean(globalMaint.enabled) : false,
+          message: globalMaint?.message || null
+        },
+        services: serviceStatuses
+      };
     });
-    const serviceStatuses = await Promise.all(
-      services.map(async (srv) => {
-        const maint = await redis.getJson(`service:maintenance:${srv.code}`);
-        return {
-          id: srv.id,
-          code: srv.code,
-          name: srv.name,
-          isActive: srv.isActive,
-          underMaintenance: maint ? Boolean(maint.enabled) : false,
-          maintenanceMessage: maint?.message || null
-        };
-      })
-    );
-    return {
-      globalMaintenance: {
-        enabled: globalMaint ? Boolean(globalMaint.enabled) : false,
-        message: globalMaint?.message || null
-      },
-      services: serviceStatuses
-    };
   }
   async setMaintenanceStatus(input) {
     if (input.scope === "GLOBAL") {
@@ -11512,7 +11542,11 @@ var AdminService = class {
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       });
     }
-    await redis.delPattern("cache:services:*");
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.del("cache:admin:maintenance_status")
+    ]).catch(() => {
+    });
     return {
       success: true,
       message: "Maintenance configuration updated successfully."
@@ -11522,8 +11556,10 @@ var AdminService = class {
   // 9. IN-APP BROADCAST NOTICE BOARD
   // ==========================================
   async getAnnouncement() {
-    const announcement = await redis.getJson("system:announcement");
-    return announcement || { active: false, message: "" };
+    return await redis.remember("cache:admin:announcement", 120, async () => {
+      const announcement = await redis.getJson("system:announcement");
+      return announcement || { active: false, message: "" };
+    });
   }
   async setAnnouncement(input) {
     const data = {
@@ -11531,6 +11567,8 @@ var AdminService = class {
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     await redis.setJson("system:announcement", data);
+    await redis.del("cache:admin:announcement").catch(() => {
+    });
     return {
       success: true,
       data
@@ -11635,42 +11673,44 @@ var AdminService = class {
   // 11. DYNAMIC PRICING & TIER MANAGER
   // ==========================================
   async getPricingMatrix() {
-    const services = await prisma.service.findMany({
-      include: {
-        category: true,
-        prices: true
-      },
-      orderBy: { code: "asc" }
-    });
-    const defaultEstimatedCost = {
-      PAN_FIND: 2.5,
-      PAN_DETAILS: 2,
-      KISAN_CARD: 0,
-      KISAN_REGISTRATION_CARD: 0
-    };
-    return services.map((srv) => {
-      const getPrice = (tier) => {
-        const found = srv.prices.find((p) => p.pricingTier === tier);
-        return found ? Number(found.amount) : 0;
-      };
-      const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 25);
-      const estCost = defaultEstimatedCost[srv.code] ?? 0;
-      const margin = partnerPrice - estCost;
-      return {
-        id: srv.id,
-        code: srv.code,
-        name: srv.name,
-        category: srv.category?.name || "General",
-        isActive: srv.isActive,
-        prices: {
-          public: getPrice("PUBLIC") || 40,
-          partner: partnerPrice,
-          partnerGold: getPrice("PARTNER_GOLD") || partnerPrice * 0.85,
-          enterprise: getPrice("ENTERPRISE") || partnerPrice * 0.7
+    return await redis.remember("cache:admin:pricing_matrix", 300, async () => {
+      const services = await prisma.service.findMany({
+        include: {
+          category: true,
+          prices: true
         },
-        estimatedVendorCost: estCost,
-        estimatedProfitMargin: margin
+        orderBy: { code: "asc" }
+      });
+      const defaultEstimatedCost = {
+        PAN_FIND: 2.5,
+        PAN_DETAILS: 2,
+        KISAN_CARD: 0,
+        KISAN_REGISTRATION_CARD: 0
       };
+      return services.map((srv) => {
+        const getPrice = (tier) => {
+          const found = srv.prices.find((p) => p.pricingTier === tier);
+          return found ? Number(found.amount) : 0;
+        };
+        const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 25);
+        const estCost = defaultEstimatedCost[srv.code] ?? 0;
+        const margin = partnerPrice - estCost;
+        return {
+          id: srv.id,
+          code: srv.code,
+          name: srv.name,
+          category: srv.category?.name || "General",
+          isActive: srv.isActive,
+          prices: {
+            public: getPrice("PUBLIC") || 40,
+            partner: partnerPrice,
+            partnerGold: getPrice("PARTNER_GOLD") || partnerPrice * 0.85,
+            enterprise: getPrice("ENTERPRISE") || partnerPrice * 0.7
+          },
+          estimatedVendorCost: estCost,
+          estimatedProfitMargin: margin
+        };
+      });
     });
   }
   async updateTierPrice(input) {
@@ -11697,7 +11737,11 @@ var AdminService = class {
         amount: input.amount
       }
     });
-    await redis.delPattern("cache:services:*");
+    await Promise.all([
+      redis.delPattern("cache:services:*"),
+      redis.del("cache:admin:pricing_matrix")
+    ]).catch(() => {
+    });
     return {
       success: true,
       serviceId: input.serviceId,
@@ -11825,7 +11869,7 @@ var AdminService = class {
   // ==========================================
   async getFinancialLeakage(timeRange = "30DAYS") {
     const cacheKey = `cache:admin:financial_leakage:${timeRange}`;
-    return await redis.remember(cacheKey, 15, async () => {
+    return await redis.remember(cacheKey, 300, async () => {
       const now = /* @__PURE__ */ new Date();
       let startDate;
       let endDate;
@@ -12184,8 +12228,9 @@ var AdminService = class {
   async getAuditLogs(query) {
     const { organizationId, category = "ALL", page = 1, limit = 30 } = query;
     const cacheKey = `cache:audit-logs:${organizationId || "ALL"}:${category}:${page}:${limit}`;
-    return await redis.remember(cacheKey, 15, async () => {
+    return await redis.remember(cacheKey, 60, async () => {
       const skip = (page - 1) * limit;
+      const maxTake = Math.min(Math.max((skip + limit) * 2, 35), 75);
       const isDirectWalkin = organizationId === "DIRECT_WALKIN";
       const whereWallet = isDirectWalkin ? { id: "impossible_direct_walkin_none" } : organizationId ? { wallet: { organizationId } } : {};
       const wherePayment = isDirectWalkin ? { organizationId: null } : organizationId ? { organizationId } : {};
@@ -12212,7 +12257,7 @@ var AdminService = class {
         prisma.walletTransaction.findMany({
           where: whereWallet,
           orderBy: { createdAt: "desc" },
-          take: 100,
+          take: maxTake,
           include: {
             wallet: {
               include: {
@@ -12224,7 +12269,7 @@ var AdminService = class {
         prisma.payment.findMany({
           where: wherePayment,
           orderBy: { createdAt: "desc" },
-          take: 100,
+          take: maxTake,
           include: {
             organization: { select: { id: true, name: true } },
             serviceRequest: {
@@ -12241,7 +12286,7 @@ var AdminService = class {
         prisma.serviceRequestEvent.findMany({
           where: whereEvents,
           orderBy: { createdAt: "desc" },
-          take: 150,
+          take: maxTake,
           include: {
             serviceRequest: {
               select: {
@@ -12257,7 +12302,7 @@ var AdminService = class {
         prisma.session.findMany({
           where: whereSession,
           orderBy: { createdAt: "desc" },
-          take: 50,
+          take: Math.min(maxTake, 30),
           include: {
             user: {
               select: {
@@ -12277,7 +12322,7 @@ var AdminService = class {
         prisma.apiLog.findMany({
           where: whereApiLog,
           orderBy: { createdAt: "desc" },
-          take: 150,
+          take: maxTake,
           include: {
             organization: { select: { id: true, name: true } },
             user: { select: { id: true, name: true, email: true } }
@@ -12472,24 +12517,26 @@ var AdminService = class {
   // 15. DPDP COMPLIANCE & EPHEMERAL VAULT AUDIT
   // ==========================================
   async getVaultAudit() {
-    let activeKeys = [];
-    try {
-      const client = redis.getRawClient();
-      if (client) {
-        activeKeys = await client.keys("vault:*");
+    return await redis.remember("cache:admin:vault_audit", 60, async () => {
+      let activeKeys = [];
+      try {
+        const client = redis.getRawClient();
+        if (client) {
+          activeKeys = await client.keys("vault:*");
+        }
+      } catch {
+        activeKeys = [];
       }
-    } catch {
-      activeKeys = [];
-    }
-    return {
-      complianceStandard: "DPDP Act (India) 2023 Compliant",
-      vaultStrategy: "24-Hour Ephemeral In-Memory TTL Auto-Purge",
-      activeCitizenEncryptedKeysCount: activeKeys.length,
-      sampleActiveKeys: activeKeys.slice(0, 10),
-      autoPurgeVerified: true,
-      dataRetentionWindowHours: 24,
-      auditTimestamp: (/* @__PURE__ */ new Date()).toISOString()
-    };
+      return {
+        complianceStandard: "DPDP Act (India) 2023 Compliant",
+        vaultStrategy: "24-Hour Ephemeral In-Memory TTL Auto-Purge",
+        activeCitizenEncryptedKeysCount: activeKeys.length,
+        sampleActiveKeys: activeKeys.slice(0, 10),
+        autoPurgeVerified: true,
+        dataRetentionWindowHours: 24,
+        auditTimestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    });
   }
 };
 var adminService = new AdminService();
@@ -12555,6 +12602,7 @@ adminRouter.get("/public/announcement", async (c) => {
 adminRouter.use("*", requireAdmin());
 adminRouter.get("/stats/overview", async (c) => {
   const stats = await adminService.getOverviewStats();
+  c.header("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
   return c.json({ success: true, data: stats });
 });
 adminRouter.get("/transactions", async (c) => {
@@ -12708,6 +12756,7 @@ adminRouter.get("/audit-logs", async (c) => {
     limit: Number(c.req.query("limit")) || 30
   };
   const data = await adminService.getAuditLogs(query);
+  c.header("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
   return c.json({ success: true, data });
 });
 
@@ -12757,6 +12806,7 @@ apiRouter.get("/audit-logs", async (c) => {
     page: query.page ? parseInt(query.page, 10) : 1,
     limit: query.limit ? parseInt(query.limit, 10) : 30
   });
+  c.header("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
   return c.json({ success: true, data });
 });
 apiRouter.route("/pan", panRoutes);

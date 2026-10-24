@@ -272,6 +272,31 @@ export class EphemeralVaultService {
   }
 
   /**
+   * Fast metadata-only check without AES decryption or gunzip decompression (used for fast list hydration)
+   */
+  async getVaultSummary(requestId: string): Promise<{
+    hasPdf: boolean;
+    isExpired: boolean;
+    remainingTtlSeconds: number;
+    expiresAt: string | null;
+  }> {
+    const vaultKey = this.getVaultKey(requestId);
+    const pdfKey = this.getPdfVaultKey(requestId);
+    const [vaultTtl, pdfTtl] = await Promise.all([
+      redis.ttl(vaultKey),
+      redis.ttl(pdfKey),
+    ]);
+    const maxTtl = Math.max(vaultTtl > 0 ? vaultTtl : 0, pdfTtl > 0 ? pdfTtl : 0);
+    const isExpired = maxTtl <= 0;
+    return {
+      hasPdf: pdfTtl > 0,
+      isExpired,
+      remainingTtlSeconds: maxTtl,
+      expiresAt: maxTtl > 0 ? new Date(Date.now() + maxTtl * 1000).toISOString() : null,
+    };
+  }
+
+  /**
    * Deletes vault item explicitly if needed
    */
   async deleteVaultItem(requestId: string): Promise<boolean> {
