@@ -1031,7 +1031,7 @@ export class AdminService {
           return found ? Number(found.amount) : 0;
         };
 
-        const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 25);
+        const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 20);
         const estCost = defaultEstimatedCost[srv.code] ?? 0.0;
         const margin = partnerPrice - estCost;
 
@@ -1042,7 +1042,7 @@ export class AdminService {
           category: srv.category?.name || "General",
           isActive: srv.isActive,
           prices: {
-            public: getPrice("PUBLIC") || 40,
+            public: getPrice("PUBLIC") || 30,
             partner: partnerPrice,
             partnerGold: getPrice("PARTNER_GOLD") || partnerPrice * 0.85,
             enterprise: getPrice("ENTERPRISE") || partnerPrice * 0.70,
@@ -1081,9 +1081,17 @@ export class AdminService {
       },
     });
 
-    // Invalidate service catalog and pricing matrix caches
+    if (input.pricingTier === "PARTNER") {
+      await prisma.service.update({
+        where: { id: input.serviceId },
+        data: { retailerPrice: input.amount },
+      }).catch(() => {});
+    }
+
+    // Invalidate service catalog, tier pricing and pricing matrix caches
     await Promise.all([
       redis.delPattern("cache:services:*"),
+      redis.delPattern("cache:pricing:*"),
       redis.del("cache:admin:pricing_matrix"),
     ]).catch(() => {});
 

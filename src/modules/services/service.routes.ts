@@ -42,7 +42,7 @@ serviceRoutes.get("/:code", async (c) => {
   const service = await serviceService.getServiceByCode(code, context);
   c.header(
     "Cache-Control",
-    "private, max-age=60, stale-while-revalidate=120",
+    "no-cache, no-store, must-revalidate",
   );
   return c.json({ success: true, data: service });
 });

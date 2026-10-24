@@ -43,7 +43,7 @@ export class PricingService {
         }
 
         // Default safe fallback if database price record is missing during onboarding
-        const defaultAmount = pricingTier === "PUBLIC" ? 40.00 : 25.00;
+        const defaultAmount = pricingTier === "PUBLIC" ? 30.00 : 20.00;
         return {
           amount: defaultAmount,
           currency: "INR",

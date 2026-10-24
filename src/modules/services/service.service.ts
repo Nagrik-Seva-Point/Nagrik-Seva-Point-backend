@@ -50,7 +50,7 @@ export class ServiceService {
   async getServices(context: RequestContext, query: QueryServiceInput) {
     const cacheKey = `cache:services:catalog:${context.accessMode}:${context.pricingTier}:${query?.categoryId || "ALL"}:${query?.categoryCode || "ALL"}`;
 
-    return await redis.remember(cacheKey, 3600, async () => {
+    return await redis.remember(cacheKey, 60, async () => {
       const isGuest = context.accessMode === "GUEST";
       const services = await serviceRepository.findMany(query, isGuest);
 
@@ -71,10 +71,10 @@ export class ServiceService {
 
         const publicPrice = publicPriceRecord
           ? Number(publicPriceRecord.amount)
-          : 40.0;
+          : 30.0;
         const partnerPrice = partnerPriceRecord
           ? Number(partnerPriceRecord.amount)
-          : 25.0;
+          : Number(service.retailerPrice || 20.0);
 
         // Find matching price for caller's tier, fallback to PARTNER or default
         const matchedPrice = service.prices.find((p) =>
@@ -124,7 +124,7 @@ export class ServiceService {
     const isKisanService = normalizedCode === "KISAN_REGISTRATION_CARD" || normalizedCode === "KISAN_CARD";
     const cacheKey = `cache:services:detail:${normalizedCode}:${context?.accessMode || "GUEST"}:${context?.pricingTier || "PARTNER"}`;
 
-    return await redis.remember(cacheKey, 3600, async () => {
+    return await redis.remember(cacheKey, 60, async () => {
       const service = await serviceRepository.findByCode(normalizedCode);
       if (!service) {
         throw AppError.notFound(`Service with code ${normalizedCode} not found`);
@@ -160,10 +160,10 @@ export class ServiceService {
 
       const publicPrice = publicPriceRecord
         ? Number(publicPriceRecord.amount)
-        : 20.0;
+        : 30.0;
       const partnerPrice = partnerPriceRecord
         ? Number(partnerPriceRecord.amount)
-        : 15.0;
+        : Number(service.retailerPrice || 20.0);
 
       const tier = context?.pricingTier || "PARTNER";
       const matchedPrice = service.prices.find((p) => p.pricingTier === tier) ||
@@ -366,6 +366,7 @@ export class ServiceService {
             : undefined,
           categoryId: resolvedCatId !== undefined ? resolvedCatId : undefined,
           isActive: input.isActive,
+          retailerPrice: input.partnerPrice !== undefined ? input.partnerPrice : undefined,
           isPublicAllowed: input.isPublicAllowed,
           isRetailerAllowed: input.isRetailerAllowed,
           requiresCustomer: input.requiresCustomer,

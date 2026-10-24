@@ -7609,7 +7609,7 @@ var ServiceService = class {
    */
   async getServices(context, query) {
     const cacheKey = `cache:services:catalog:${context.accessMode}:${context.pricingTier}:${query?.categoryId || "ALL"}:${query?.categoryCode || "ALL"}`;
-    return await redis.remember(cacheKey, 3600, async () => {
+    return await redis.remember(cacheKey, 60, async () => {
       const isGuest = context.accessMode === "GUEST";
       const services = await serviceRepository.findMany(query, isGuest);
       return services.map((service) => {
@@ -7625,8 +7625,8 @@ var ServiceService = class {
         const _enterprisePriceRecord = service.prices.find(
           (p) => p.pricingTier === "ENTERPRISE"
         );
-        const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 40;
-        const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 25;
+        const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 30;
+        const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : Number(service.retailerPrice || 20);
         const matchedPrice = service.prices.find(
           (p) => p.pricingTier === context.pricingTier
         ) || (context.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) || partnerPriceRecord || publicPriceRecord;
@@ -7661,7 +7661,7 @@ var ServiceService = class {
     const normalizedCode = code.toUpperCase();
     const isKisanService = normalizedCode === "KISAN_REGISTRATION_CARD" || normalizedCode === "KISAN_CARD";
     const cacheKey = `cache:services:detail:${normalizedCode}:${context?.accessMode || "GUEST"}:${context?.pricingTier || "PARTNER"}`;
-    return await redis.remember(cacheKey, 3600, async () => {
+    return await redis.remember(cacheKey, 60, async () => {
       const service = await serviceRepository.findByCode(normalizedCode);
       if (!service) {
         throw AppError.notFound(`Service with code ${normalizedCode} not found`);
@@ -7688,8 +7688,8 @@ var ServiceService = class {
       const partnerPriceRecord = service.prices.find(
         (p) => p.pricingTier === "PARTNER"
       );
-      const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 20;
-      const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : 15;
+      const publicPrice = publicPriceRecord ? Number(publicPriceRecord.amount) : 30;
+      const partnerPrice = partnerPriceRecord ? Number(partnerPriceRecord.amount) : Number(service.retailerPrice || 20);
       const tier = context?.pricingTier || "PARTNER";
       const matchedPrice = service.prices.find((p) => p.pricingTier === tier) || (context?.accessMode === "GUEST" ? publicPriceRecord : partnerPriceRecord) || partnerPriceRecord || publicPriceRecord;
       const defaultAmount = context?.accessMode === "GUEST" ? publicPrice : partnerPrice;
@@ -7855,6 +7855,7 @@ var ServiceService = class {
           description: input.description !== void 0 ? input.description?.trim() || null : void 0,
           categoryId: resolvedCatId !== void 0 ? resolvedCatId : void 0,
           isActive: input.isActive,
+          retailerPrice: input.partnerPrice !== void 0 ? input.partnerPrice : void 0,
           isPublicAllowed: input.isPublicAllowed,
           isRetailerAllowed: input.isRetailerAllowed,
           requiresCustomer: input.requiresCustomer,
@@ -8063,7 +8064,7 @@ var PricingService = class {
             };
           }
         }
-        const defaultAmount = pricingTier === "PUBLIC" ? 40 : 25;
+        const defaultAmount = pricingTier === "PUBLIC" ? 30 : 20;
         return {
           amount: defaultAmount,
           currency: "INR",
@@ -8194,7 +8195,7 @@ serviceRoutes.get("/:code", async (c) => {
   const service = await serviceService.getServiceByCode(code, context);
   c.header(
     "Cache-Control",
-    "private, max-age=60, stale-while-revalidate=120"
+    "no-cache, no-store, must-revalidate"
   );
   return c.json({ success: true, data: service });
 });
@@ -11692,7 +11693,7 @@ var AdminService = class {
           const found = srv.prices.find((p) => p.pricingTier === tier);
           return found ? Number(found.amount) : 0;
         };
-        const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 25);
+        const partnerPrice = getPrice("PARTNER") || Number(srv.retailerPrice || 20);
         const estCost = defaultEstimatedCost[srv.code] ?? 0;
         const margin = partnerPrice - estCost;
         return {
@@ -11702,7 +11703,7 @@ var AdminService = class {
           category: srv.category?.name || "General",
           isActive: srv.isActive,
           prices: {
-            public: getPrice("PUBLIC") || 40,
+            public: getPrice("PUBLIC") || 30,
             partner: partnerPrice,
             partnerGold: getPrice("PARTNER_GOLD") || partnerPrice * 0.85,
             enterprise: getPrice("ENTERPRISE") || partnerPrice * 0.7
@@ -11737,8 +11738,16 @@ var AdminService = class {
         amount: input.amount
       }
     });
+    if (input.pricingTier === "PARTNER") {
+      await prisma.service.update({
+        where: { id: input.serviceId },
+        data: { retailerPrice: input.amount }
+      }).catch(() => {
+      });
+    }
     await Promise.all([
       redis.delPattern("cache:services:*"),
+      redis.delPattern("cache:pricing:*"),
       redis.del("cache:admin:pricing_matrix")
     ]).catch(() => {
     });
