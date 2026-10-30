@@ -6627,187 +6627,6 @@ async function logApiExecution(params) {
   }
 }
 
-// src/middleware/request-context.middleware.ts
-var authContextCache = /* @__PURE__ */ new Map();
-function invalidateAuthContext(token) {
-  if (token) {
-    authContextCache.delete(token);
-  } else {
-    authContextCache.clear();
-  }
-}
-function extractAuthToken(c) {
-  const authHeader = c.req.header("Authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    return authHeader.slice(7).trim();
-  }
-  const customToken = c.req.header("x-session-token");
-  if (customToken) return customToken.trim();
-  const cookieHeader = c.req.header("cookie");
-  if (cookieHeader) {
-    const match2 = cookieHeader.match(/(?:better-auth\.session_token|__Secure-better-auth\.session_token)=([^;]+)/);
-    if (match2?.[1]) return match2[1].trim();
-  }
-  return null;
-}
-var requestContextMiddleware = () => {
-  return async (c, next) => {
-    try {
-      const token = extractAuthToken(c);
-      const requestedOrgId = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
-      const cacheKey = token ? `${token}:${requestedOrgId || "DEFAULT"}` : null;
-      if (cacheKey) {
-        const cached = authContextCache.get(cacheKey);
-        if (cached && cached.expiresAt > Date.now()) {
-          c.set("user", cached.user);
-          c.set("session", cached.session);
-          if (cached.organizationId) {
-            c.set("organizationId", cached.organizationId);
-          }
-          if (cached.organization) {
-            c.set("organization", cached.organization);
-          }
-          c.set("requestContext", cached.requestContext);
-          return await next();
-        }
-      }
-      let session = await auth.api.getSession({
-        headers: c.req.raw.headers
-      }).catch(() => null);
-      if (!session || !session.user) {
-        const authHeader = c.req.header("Authorization");
-        const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
-        const customToken = c.req.header("x-session-token");
-        const token2 = bearerToken || customToken;
-        if (token2) {
-          const sessionRecord = await prisma.session.findUnique({
-            where: { token: token2 },
-            include: { user: true }
-          });
-          if (sessionRecord && sessionRecord.expiresAt > /* @__PURE__ */ new Date()) {
-            session = {
-              session: sessionRecord,
-              user: sessionRecord.user
-            };
-          }
-        }
-      }
-      if (session && session.user) {
-        const userId = session.user.id;
-        const requestedOrgId2 = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
-        let organizationId = requestedOrgId2 || session.session.activeOrganizationId;
-        if (!organizationId) {
-          const membership = await prisma.member.findFirst({
-            where: { userId },
-            include: { organization: true },
-            orderBy: { createdAt: "asc" }
-          });
-          if (membership) {
-            organizationId = membership.organizationId;
-            c.set("organization", membership.organization);
-          }
-        } else {
-          const membership = await prisma.member.findFirst({
-            where: { userId, organizationId },
-            include: { organization: true }
-          });
-          if (membership) {
-            c.set("organization", membership.organization);
-          } else {
-            logger2.warn(
-              `User ${userId} attempted to access unauthorized org ${organizationId}`
-            );
-            organizationId = null;
-          }
-        }
-        const requestContext = {
-          accessMode: "RETAILER",
-          userId,
-          organizationId: organizationId || null,
-          customerId: null,
-          // Populated per-request payload if present
-          pricingTier: "PARTNER",
-          guestSessionId: null
-        };
-        c.set("user", session.user);
-        c.set("session", session.session);
-        c.set("organizationId", organizationId || void 0);
-        c.set("requestContext", requestContext);
-        if (cacheKey) {
-          if (authContextCache.size > 2e3) {
-            const firstKey = authContextCache.keys().next().value;
-            if (firstKey) authContextCache.delete(firstKey);
-          }
-          authContextCache.set(cacheKey, {
-            session: session.session,
-            user: session.user,
-            organizationId: organizationId || null,
-            organization: c.get("organization") || null,
-            requestContext,
-            expiresAt: Date.now() + 30 * 1e3
-          });
-        }
-      } else {
-        let guestSessionId = c.req.header("x-guest-session-id");
-        if (!guestSessionId) {
-          guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
-        }
-        const requestContext = {
-          accessMode: "GUEST",
-          userId: null,
-          organizationId: null,
-          customerId: null,
-          pricingTier: "PUBLIC",
-          guestSessionId
-        };
-        c.set("user", null);
-        c.set("session", null);
-        c.set("organizationId", void 0);
-        c.set("organization", null);
-        c.set("requestContext", requestContext);
-      }
-    } catch (error) {
-      logger2.error("Error resolving request context:", error);
-      const guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
-      c.set("requestContext", {
-        accessMode: "GUEST",
-        userId: null,
-        organizationId: null,
-        customerId: null,
-        pricingTier: "PUBLIC",
-        guestSessionId
-      });
-    }
-    await next();
-  };
-};
-
-// src/middleware/validation.middleware.ts
-var validationMiddleware = (schema, target = "json") => {
-  return async (c, next) => {
-    let data;
-    try {
-      if (target === "json") {
-        data = await c.req.json();
-      } else {
-        data = c.req.query();
-      }
-    } catch {
-      throw AppError.badRequest("Invalid request format");
-    }
-    const result = schema.safeParse(data);
-    if (!result.success) {
-      throw AppError.badRequest(
-        "Validation failed",
-        "VALIDATION_FAILED",
-        result.error.format()
-      );
-    }
-    c.set("validData", result.data);
-    await next();
-  };
-};
-
 // src/core/redis/redis.client.ts
 import { Redis } from "ioredis";
 var RedisClient = class {
@@ -7031,6 +6850,241 @@ var RedisClient = class {
 };
 var redis = new RedisClient();
 
+// src/middleware/request-context.middleware.ts
+var authContextCache = /* @__PURE__ */ new Map();
+async function invalidateAuthContext(token) {
+  if (token) {
+    authContextCache.delete(token);
+    await redis.delPattern(`cache:auth_ctx:${token}:*`).catch(() => {
+    });
+  } else {
+    authContextCache.clear();
+    await redis.delPattern("cache:auth_ctx:*").catch(() => {
+    });
+  }
+}
+function extractAuthToken(c) {
+  const authHeader = c.req.header("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+  const customToken = c.req.header("x-session-token");
+  if (customToken) return customToken.trim();
+  const cookieHeader = c.req.header("cookie");
+  if (cookieHeader) {
+    const match2 = cookieHeader.match(/(?:better-auth\.session_token|__Secure-better-auth\.session_token)=([^;]+)/);
+    if (match2?.[1]) return match2[1].trim();
+  }
+  return null;
+}
+var requestContextMiddleware = () => {
+  return async (c, next) => {
+    try {
+      const token = extractAuthToken(c);
+      const requestedOrgId = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
+      const cacheKey = token ? `${token}:${requestedOrgId || "DEFAULT"}` : null;
+      if (cacheKey) {
+        const cached = authContextCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+          c.set("user", cached.user);
+          c.set("session", cached.session);
+          if (cached.organizationId) {
+            c.set("organizationId", cached.organizationId);
+          }
+          if (cached.organization) {
+            c.set("organization", cached.organization);
+          }
+          c.set("requestContext", cached.requestContext);
+          return await next();
+        }
+        try {
+          const redisCached = await redis.getJson(`cache:auth_ctx:${cacheKey}`);
+          if (redisCached && redisCached.expiresAt > Date.now()) {
+            authContextCache.set(cacheKey, redisCached);
+            c.set("user", redisCached.user);
+            c.set("session", redisCached.session);
+            if (redisCached.organizationId) {
+              c.set("organizationId", redisCached.organizationId);
+            }
+            if (redisCached.organization) {
+              c.set("organization", redisCached.organization);
+            }
+            c.set("requestContext", redisCached.requestContext);
+            return await next();
+          }
+        } catch {
+        }
+      }
+      let session = await auth.api.getSession({
+        headers: c.req.raw.headers
+      }).catch(() => null);
+      if (!session || !session.user) {
+        const authHeader = c.req.header("Authorization");
+        const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+        const customToken = c.req.header("x-session-token");
+        const token2 = bearerToken || customToken;
+        if (token2) {
+          const sessionRecord = await prisma.session.findUnique({
+            where: { token: token2 },
+            include: { user: true }
+          });
+          if (sessionRecord && sessionRecord.expiresAt > /* @__PURE__ */ new Date()) {
+            session = {
+              session: sessionRecord,
+              user: sessionRecord.user
+            };
+          }
+        }
+      }
+      if (session && session.user) {
+        const userId = session.user.id;
+        const requestedOrgId2 = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
+        let organizationId = requestedOrgId2 || session.session.activeOrganizationId;
+        if (!organizationId) {
+          const primaryOrg = await redis.remember(
+            `cache:user_primary_org:${userId}`,
+            86400,
+            // 24 hours
+            async () => {
+              const membership = await prisma.member.findFirst({
+                where: { userId },
+                include: { organization: true },
+                orderBy: { createdAt: "asc" }
+              });
+              return membership ? {
+                organizationId: membership.organizationId,
+                organization: membership.organization
+              } : null;
+            }
+          );
+          if (primaryOrg) {
+            organizationId = primaryOrg.organizationId;
+            c.set("organization", primaryOrg.organization);
+            if (session.session?.id && !session.session.activeOrganizationId) {
+              prisma.session.update({
+                where: { id: session.session.id },
+                data: { activeOrganizationId: primaryOrg.organizationId }
+              }).catch(() => {
+              });
+            }
+          }
+        } else {
+          const targetOrgId = organizationId;
+          const verifiedOrg = await redis.remember(
+            `cache:user_org_membership:${userId}:${targetOrgId}`,
+            86400,
+            // 24 hours
+            async () => {
+              const membership = await prisma.member.findFirst({
+                where: { userId, organizationId: targetOrgId },
+                include: { organization: true }
+              });
+              return membership ? {
+                organizationId: membership.organizationId,
+                organization: membership.organization
+              } : null;
+            }
+          );
+          if (verifiedOrg) {
+            c.set("organization", verifiedOrg.organization);
+          } else {
+            logger2.warn(
+              `User ${userId} attempted to access unauthorized org ${organizationId}`
+            );
+            organizationId = null;
+          }
+        }
+        const requestContext = {
+          accessMode: "RETAILER",
+          userId,
+          organizationId: organizationId || null,
+          customerId: null,
+          // Populated per-request payload if present
+          pricingTier: "PARTNER",
+          guestSessionId: null
+        };
+        c.set("user", session.user);
+        c.set("session", session.session);
+        c.set("organizationId", organizationId || void 0);
+        c.set("requestContext", requestContext);
+        if (cacheKey) {
+          if (authContextCache.size > 2e3) {
+            const firstKey = authContextCache.keys().next().value;
+            if (firstKey) authContextCache.delete(firstKey);
+          }
+          const entry = {
+            session: session.session,
+            user: session.user,
+            organizationId: organizationId || null,
+            organization: c.get("organization") || null,
+            requestContext,
+            expiresAt: Date.now() + 60 * 1e3
+          };
+          authContextCache.set(cacheKey, entry);
+          redis.setJson(`cache:auth_ctx:${cacheKey}`, entry, 60).catch(() => {
+          });
+        }
+      } else {
+        let guestSessionId = c.req.header("x-guest-session-id");
+        if (!guestSessionId) {
+          guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
+        }
+        const requestContext = {
+          accessMode: "GUEST",
+          userId: null,
+          organizationId: null,
+          customerId: null,
+          pricingTier: "PUBLIC",
+          guestSessionId
+        };
+        c.set("user", null);
+        c.set("session", null);
+        c.set("organizationId", void 0);
+        c.set("organization", null);
+        c.set("requestContext", requestContext);
+      }
+    } catch (error) {
+      logger2.error("Error resolving request context:", error);
+      const guestSessionId = `gst_${crypto.randomUUID().replace(/-/g, "").substring(0, 16)}`;
+      c.set("requestContext", {
+        accessMode: "GUEST",
+        userId: null,
+        organizationId: null,
+        customerId: null,
+        pricingTier: "PUBLIC",
+        guestSessionId
+      });
+    }
+    await next();
+  };
+};
+
+// src/middleware/validation.middleware.ts
+var validationMiddleware = (schema, target = "json") => {
+  return async (c, next) => {
+    let data;
+    try {
+      if (target === "json") {
+        data = await c.req.json();
+      } else {
+        data = c.req.query();
+      }
+    } catch {
+      throw AppError.badRequest("Invalid request format");
+    }
+    const result = schema.safeParse(data);
+    if (!result.success) {
+      throw AppError.badRequest(
+        "Validation failed",
+        "VALIDATION_FAILED",
+        result.error.format()
+      );
+    }
+    c.set("validData", result.data);
+    await next();
+  };
+};
+
 // src/modules/auth/auth.service.ts
 var AuthService = class {
   /**
@@ -7217,6 +7271,25 @@ var AuthService = class {
           where: { token: signInResult.token },
           data: { activeOrganizationId: membership.organizationId }
         });
+        await Promise.all([
+          redis.setJson(
+            `cache:user_primary_org:${userId}`,
+            {
+              organizationId: membership.organizationId,
+              organization: membership.organization
+            },
+            86400
+          ),
+          redis.setJson(
+            `cache:user_org_membership:${userId}:${membership.organizationId}`,
+            {
+              organizationId: membership.organizationId,
+              organization: membership.organization
+            },
+            86400
+          )
+        ]).catch(() => {
+        });
       }
       logger2.info(`User ${userId} logged in successfully.`);
       logApiExecution({
@@ -7392,7 +7465,12 @@ var AuthService = class {
         });
       }
     }
-    await redis.delPattern(`cache:profile:${userId}:*`);
+    await Promise.all([
+      redis.delPattern(`cache:profile:${userId}:*`),
+      redis.del(`cache:user_primary_org:${userId}`),
+      redis.delPattern(`cache:user_org_membership:${userId}:*`)
+    ]).catch(() => {
+    });
     invalidateAuthContext();
     return this.getProfile(userId, requestedOrgId);
   }

@@ -238,6 +238,26 @@ export class AuthService {
           where: { token: signInResult.token },
           data: { activeOrganizationId: membership.organizationId },
         });
+
+        // Prime Redis caches so subsequent requests resolve organization in <0.5ms with zero DB queries
+        await Promise.all([
+          redis.setJson(
+            `cache:user_primary_org:${userId}`,
+            {
+              organizationId: membership.organizationId,
+              organization: membership.organization,
+            },
+            86400,
+          ),
+          redis.setJson(
+            `cache:user_org_membership:${userId}:${membership.organizationId}`,
+            {
+              organizationId: membership.organizationId,
+              organization: membership.organization,
+            },
+            86400,
+          ),
+        ]).catch(() => {});
       }
 
       logger.info(`User ${userId} logged in successfully.`);
@@ -450,8 +470,12 @@ export class AuthService {
       }
     }
 
-    // Invalidate cached profile & auth context so changes are immediately visible
-    await redis.delPattern(`cache:profile:${userId}:*`);
+    // Invalidate cached profile, primary org & auth context so changes are immediately visible
+    await Promise.all([
+      redis.delPattern(`cache:profile:${userId}:*`),
+      redis.del(`cache:user_primary_org:${userId}`),
+      redis.delPattern(`cache:user_org_membership:${userId}:*`),
+    ]).catch(() => {});
     invalidateAuthContext();
 
     return this.getProfile(userId, requestedOrgId);

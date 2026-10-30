@@ -4,6 +4,7 @@ import { prisma } from "../core/db/prisma";
 import type { ContextVariables } from "../app/context";
 import type { RequestContext } from "../core/types/context.types";
 import { logger } from "../core/logger/logger";
+import { redis } from "../core/redis/redis.client";
 
 interface CachedAuthContext {
   session: any;
@@ -16,11 +17,13 @@ interface CachedAuthContext {
 
 const authContextCache = new Map<string, CachedAuthContext>();
 
-export function invalidateAuthContext(token?: string) {
+export async function invalidateAuthContext(token?: string) {
   if (token) {
     authContextCache.delete(token);
+    await redis.delPattern(`cache:auth_ctx:${token}:*`).catch(() => {});
   } else {
     authContextCache.clear();
+    await redis.delPattern("cache:auth_ctx:*").catch(() => {});
   }
 }
 
@@ -64,6 +67,26 @@ export const requestContextMiddleware = (): MiddlewareHandler<
           c.set("requestContext", cached.requestContext);
           return await next();
         }
+
+        // 1b. Check Redis L2 Auth Context Cache (cross-serverless instances, ~1ms)
+        try {
+          const redisCached = await redis.getJson<CachedAuthContext>(`cache:auth_ctx:${cacheKey}`);
+          if (redisCached && redisCached.expiresAt > Date.now()) {
+            authContextCache.set(cacheKey, redisCached);
+            c.set("user", redisCached.user);
+            c.set("session", redisCached.session);
+            if (redisCached.organizationId) {
+              c.set("organizationId", redisCached.organizationId);
+            }
+            if (redisCached.organization) {
+              c.set("organization", redisCached.organization);
+            }
+            c.set("requestContext", redisCached.requestContext);
+            return await next();
+          }
+        } catch {
+          // Fall through to database session check
+        }
       }
 
       // 2. Check for authenticated session via Better Auth
@@ -101,27 +124,66 @@ export const requestContextMiddleware = (): MiddlewareHandler<
         const requestedOrgId = c.req.header("X-Organization-Id") || c.req.header("x-organization-id");
         let organizationId = requestedOrgId || session.session.activeOrganizationId;
 
-        // If no activeOrganizationId on session, query user's primary membership
+        // If no activeOrganizationId on session, query user's primary membership via Redis cache
         if (!organizationId) {
-          const membership = await prisma.member.findFirst({
-            where: { userId },
-            include: { organization: true },
-            orderBy: { createdAt: "asc" },
-          });
+          const primaryOrg = await redis.remember<{
+            organizationId: string;
+            organization: any;
+          } | null>(
+            `cache:user_primary_org:${userId}`,
+            86400, // 24 hours
+            async () => {
+              const membership = await prisma.member.findFirst({
+                where: { userId },
+                include: { organization: true },
+                orderBy: { createdAt: "asc" },
+              });
+              return membership
+                ? {
+                    organizationId: membership.organizationId,
+                    organization: membership.organization,
+                  }
+                : null;
+            },
+          );
 
-          if (membership) {
-            organizationId = membership.organizationId;
-            c.set("organization", membership.organization);
+          if (primaryOrg) {
+            organizationId = primaryOrg.organizationId;
+            c.set("organization", primaryOrg.organization);
+
+            // Auto-heal session activeOrganizationId in database asynchronously
+            if (session.session?.id && !session.session.activeOrganizationId) {
+              prisma.session.update({
+                where: { id: session.session.id },
+                data: { activeOrganizationId: primaryOrg.organizationId },
+              }).catch(() => {});
+            }
           }
         } else {
-          // Verify user actually belongs to this organization in DB (BOLA Protection)
-          const membership = await prisma.member.findFirst({
-            where: { userId, organizationId },
-            include: { organization: true },
-          });
+          const targetOrgId = organizationId as string;
+          // Verify user actually belongs to this organization in DB via Redis cache (BOLA Protection)
+          const verifiedOrg = await redis.remember<{
+            organizationId: string;
+            organization: any;
+          } | null>(
+            `cache:user_org_membership:${userId}:${targetOrgId}`,
+            86400, // 24 hours
+            async () => {
+              const membership = await prisma.member.findFirst({
+                where: { userId, organizationId: targetOrgId },
+                include: { organization: true },
+              });
+              return membership
+                ? {
+                    organizationId: membership.organizationId,
+                    organization: membership.organization,
+                  }
+                : null;
+            },
+          );
 
-          if (membership) {
-            c.set("organization", membership.organization);
+          if (verifiedOrg) {
+            c.set("organization", verifiedOrg.organization);
           } else {
             logger.warn(
               `User ${userId} attempted to access unauthorized org ${organizationId}`,
@@ -144,20 +206,22 @@ export const requestContextMiddleware = (): MiddlewareHandler<
         c.set("organizationId", organizationId || undefined);
         c.set("requestContext", requestContext);
 
-        // Cache resolved context for 30s to eliminate redundant DB calls
+        // Cache resolved context for 60s in L1 and Redis L2 to eliminate redundant DB calls
         if (cacheKey) {
           if (authContextCache.size > 2000) {
             const firstKey = authContextCache.keys().next().value;
             if (firstKey) authContextCache.delete(firstKey);
           }
-          authContextCache.set(cacheKey, {
+          const entry: CachedAuthContext = {
             session: session.session,
             user: session.user,
             organizationId: organizationId || null,
             organization: c.get("organization") || null,
             requestContext,
-            expiresAt: Date.now() + 30 * 1000,
-          });
+            expiresAt: Date.now() + 60 * 1000,
+          };
+          authContextCache.set(cacheKey, entry);
+          redis.setJson(`cache:auth_ctx:${cacheKey}`, entry, 60).catch(() => {});
         }
       } else {
         // 3. Resolve Guest Context
