@@ -4,10 +4,14 @@ import { authService } from "./auth.service";
 import {
   type CheckAvailabilityInput,
   checkAvailabilitySchema,
+  type ForgotPasswordInput,
+  forgotPasswordSchema,
   type LoginInput,
   loginSchema,
   type RegisterRetailerInput,
   registerRetailerSchema,
+  type ResetPasswordInput,
+  resetPasswordSchema,
   type UpdateProfileInput,
   updateProfileSchema,
 } from "./auth.schema";
@@ -103,6 +107,28 @@ authRoutes.patch(
       message: "Profile updated successfully",
       data: updated,
     });
+  },
+);
+
+// 6. Request Password Reset Link (Email or 10-Digit Mobile Number)
+authRoutes.post(
+  "/forgot-password",
+  validationMiddleware(forgotPasswordSchema),
+  async (c) => {
+    const data = c.get("validData") as ForgotPasswordInput;
+    const result = await authService.forgotPassword(data, c.req.raw.headers);
+    return c.json(result);
+  },
+);
+
+// 7. Reset Password via Secure One-Time Token
+authRoutes.post(
+  "/reset-password",
+  validationMiddleware(resetPasswordSchema),
+  async (c) => {
+    const data = c.get("validData") as ResetPasswordInput;
+    const result = await authService.resetPassword(data, c.req.raw.headers);
+    return c.json(result);
   },
 );
 

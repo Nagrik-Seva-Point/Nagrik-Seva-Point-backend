@@ -2022,7 +2022,9 @@ export class AdminService {
         log.serviceCode === "AUTH" ||
         actLower.includes("logout") ||
         actLower.includes("login") ||
-        actLower.includes("register");
+        actLower.includes("register") ||
+        actLower.includes("password") ||
+        actLower.includes("reset");
       const isCustomer = log.serviceCode === "CUSTOMER";
       const isDocVault = actLower.includes("download") || log.serviceCode === "DOCUMENT_VAULT";
 
@@ -2044,7 +2046,13 @@ export class AdminService {
         organizationName: orgName,
         status: log.status,
         timestamp: log.createdAt,
-        badgeVariant: isSuccess ? (category === "SECURITY" ? "outline" : "secondary") : "destructive",
+        badgeVariant: isSuccess
+          ? actLower.includes("password")
+            ? "outline"
+            : category === "SECURITY"
+            ? "outline"
+            : "secondary"
+          : "destructive",
       });
     });
 

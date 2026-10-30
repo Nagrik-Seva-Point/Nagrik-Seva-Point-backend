@@ -4,11 +4,17 @@ import { redis } from "../../core/redis/redis.client";
 import { invalidateAuthContext } from "../../middleware/request-context.middleware";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
-import { logApiExecution } from "../../core/logger/api-logger";
+import {
+  logApiExecution,
+  maskEmail,
+  maskPhoneNumber,
+} from "../../core/logger/api-logger";
 import type {
   CheckAvailabilityInput,
+  ForgotPasswordInput,
   LoginInput,
   RegisterRetailerInput,
+  ResetPasswordInput,
   UpdateProfileInput,
 } from "./auth.schema";
 
@@ -449,6 +455,175 @@ export class AuthService {
     invalidateAuthContext();
 
     return this.getProfile(userId, requestedOrgId);
+  }
+
+  /**
+   * Dispatches password reset instructions via registered Email OR 10-Digit Mobile Number.
+   */
+  async forgotPassword(data: ForgotPasswordInput, headers: Headers) {
+    const rawIdentifier = data.identifier.trim();
+    const clientIp =
+      headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      headers.get("x-real-ip") ||
+      "127.0.0.1";
+
+    let targetUser: { id: string; email: string; name: string; phone: string | null } | null = null;
+
+    if (!rawIdentifier.includes("@")) {
+      // 1. Mobile number lookup (10 digits)
+      targetUser = await prisma.user.findFirst({
+        where: { phone: rawIdentifier },
+        select: { id: true, email: true, name: true, phone: true },
+      });
+    } else {
+      // 2. Email address lookup
+      targetUser = await prisma.user.findFirst({
+        where: { email: rawIdentifier.toLowerCase() },
+        select: { id: true, email: true, name: true, phone: true },
+      });
+    }
+
+    if (!targetUser) {
+      // Record failed/unregistered lookup in audit trail
+      logApiExecution({
+        serviceCode: "AUTH",
+        action: "Password Reset Failed (Account Not Found)",
+        endpoint: "/api/auth/forgot-password",
+        reference: rawIdentifier.includes("@") ? maskEmail(rawIdentifier) : maskPhoneNumber(rawIdentifier),
+        status: "FAILED",
+        statusCode: 404,
+        ipAddress: clientIp,
+        note: `Password reset attempt for unregistered identifier: ${rawIdentifier.includes("@") ? maskEmail(rawIdentifier) : maskPhoneNumber(rawIdentifier)}`,
+      }).catch(() => {});
+
+      throw AppError.notFound(
+        rawIdentifier.includes("@")
+          ? "No account found with this email address. Please check and try again or create an account."
+          : "No account found with this 10-digit mobile number. Please check and try again or create an account.",
+        "ACCOUNT_NOT_FOUND",
+      );
+    }
+
+    // Trigger Better-Auth requestPasswordReset
+    try {
+      await auth.api.requestPasswordReset({
+        body: {
+          email: targetUser.email,
+          redirectTo: data.redirectTo,
+        },
+        headers,
+      });
+    } catch (err) {
+      logger.error(`Error requesting password reset for user ${targetUser.id}:`, err);
+    }
+
+    const maskedEmail = maskEmail(targetUser.email);
+
+    // Look up user's organization for multi-tenant audit trail
+    const userOrg = await prisma.member.findFirst({
+      where: { userId: targetUser.id },
+      select: { organizationId: true },
+    }).catch(() => null);
+
+    // Record audit trail event
+    logApiExecution({
+      userId: targetUser.id,
+      organizationId: userOrg?.organizationId || null,
+      serviceCode: "AUTH",
+      action: "Password Reset Requested",
+      endpoint: "/api/auth/forgot-password",
+      reference: maskedEmail,
+      status: "SUCCESS",
+      statusCode: 200,
+      ipAddress: clientIp,
+      note: `Password reset link dispatched via email to ${maskedEmail} (requested using ${rawIdentifier.includes("@") ? "email" : "mobile"})`,
+    }).catch(() => {});
+
+    return {
+      success: true,
+      maskedEmail,
+      message: "Password reset instructions have been dispatched.",
+    };
+  }
+
+  /**
+   * Resets the user's password using the one-time verification token.
+   */
+  async resetPassword(data: ResetPasswordInput, headers: Headers) {
+    const clientIp =
+      headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      headers.get("x-real-ip") ||
+      "127.0.0.1";
+
+    // Query token from verification table to associate with user
+    const verificationRecord = await prisma.verification.findFirst({
+      where: { value: data.token },
+    }).catch(() => null);
+
+    let targetUser: { id: string; email: string; name: string } | null = null;
+    if (verificationRecord?.identifier) {
+      targetUser = await prisma.user.findFirst({
+        where: { email: verificationRecord.identifier.toLowerCase() },
+        select: { id: true, email: true, name: true },
+      }).catch(() => null);
+    }
+
+    const userOrg = targetUser
+      ? await prisma.member.findFirst({
+          where: { userId: targetUser.id },
+          select: { organizationId: true },
+        }).catch(() => null)
+      : null;
+
+    try {
+      await auth.api.resetPassword({
+        body: {
+          token: data.token,
+          newPassword: data.newPassword,
+        },
+        headers,
+      });
+
+      // Log successful password reset in audit trail
+      logApiExecution({
+        userId: targetUser?.id || null,
+        organizationId: userOrg?.organizationId || null,
+        serviceCode: "AUTH",
+        action: "Password Reset Completed",
+        endpoint: "/api/auth/reset-password",
+        reference: targetUser ? maskEmail(targetUser.email) : "TOKEN-VERIFIED",
+        status: "SUCCESS",
+        statusCode: 200,
+        ipAddress: clientIp,
+        note: targetUser
+          ? `Password successfully updated and session credentials rotated for ${maskEmail(targetUser.email)}`
+          : "Password successfully updated via valid one-time token",
+      }).catch(() => {});
+
+      return {
+        success: true,
+        message: "Password reset successfully. You can now sign in with your new password.",
+      };
+    } catch (err: any) {
+      logger.error("Failed to reset password:", err);
+
+      // Log failed password reset attempt in audit trail
+      logApiExecution({
+        userId: targetUser?.id || null,
+        organizationId: userOrg?.organizationId || null,
+        serviceCode: "AUTH",
+        action: "Password Reset Failed",
+        endpoint: "/api/auth/reset-password",
+        reference: targetUser ? maskEmail(targetUser.email) : "INVALID-TOKEN",
+        status: "FAILED",
+        statusCode: 400,
+        ipAddress: clientIp,
+        note: `Password reset attempt failed: ${err?.body?.message || err?.message || "Invalid or expired token"}`,
+      }).catch(() => {});
+
+      const msg = err?.body?.message || err?.message || "Invalid or expired reset token. Please request a new link.";
+      throw AppError.badRequest(msg, "INVALID_TOKEN");
+    }
   }
 }
 

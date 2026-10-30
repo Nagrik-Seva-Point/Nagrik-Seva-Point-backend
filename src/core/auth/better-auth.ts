@@ -4,6 +4,9 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "../db/prisma";
 import { bearer, organization } from "better-auth/plugins";
 import { env } from "../config/env";
+import { getEnvVar } from "../config/env-helper";
+import { logger } from "../logger/logger";
+import { brevoMailService } from "../mail/brevo.service";
 
 const getCookieDomain = (): string | undefined => {
   try {
@@ -39,6 +42,33 @@ export const auth = betterAuth({
     enabled: true,
     autoSignIn: true,
     requireEmailVerification: false,
+    sendResetPassword: async ({ user, url, token }, _request) => {
+      // Determine the cleanest user-facing reset URL
+      // If Better-Auth generated an internal backend redirect URL with a callbackURL param,
+      // unwrap it to provide a direct link to the frontend reset page.
+      let directResetUrl = url;
+      try {
+        const parsed = new URL(url);
+        const callback = parsed.searchParams.get("callbackURL");
+        if (callback) {
+          directResetUrl = `${callback}?token=${token}`;
+        }
+      } catch {
+        // Fallback to raw url
+      }
+
+      logger.info(
+        `🔑 [PASSWORD RESET] Link generated for ${user.email} (${user.name}): DirectURL=${directResetUrl}, Token=${token}`,
+      );
+
+      // Dispatch via Brevo Transactional Email Service
+      await brevoMailService.sendPasswordResetEmail({
+        to: user.email,
+        name: user.name,
+        resetUrl: directResetUrl,
+        token,
+      });
+    },
   },
   user: {
     additionalFields: {

@@ -7,15 +7,15 @@ var __export = (target, all) => {
 // src/serverless.ts
 import "dotenv/config";
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/request/constants.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/request/constants.js
 var GET_MATCH_RESULT = /* @__PURE__ */ Symbol();
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/utils/buffer.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/utils/buffer.js
 var bufferToFormData = (arrayBuffer, contentType) => {
   return new Response(arrayBuffer, { headers: { "Content-Type": contentType.replace(/^[^;]+/, (mediaType) => mediaType.toLowerCase()) } }).formData();
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/utils/body.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/utils/body.js
 var MAX_NESTED_OBJECTS = 1e4;
 var isRawRequest = (request) => "headers" in request;
 var parseBody = async (request, options = /* @__PURE__ */ Object.create(null)) => {
@@ -79,7 +79,7 @@ var throwNestingLimitExceeded = () => {
   throw new Error("Nesting limit exceeded");
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/utils/url.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/utils/url.js
 var splitPath = (path) => {
   const paths = path.split("/");
   if (paths[0] === "") paths.shift();
@@ -205,16 +205,21 @@ var _getQueryParam = (url, key, multiple) => {
   if (hashIndex !== -1) url = url.slice(0, hashIndex);
   let encoded;
   if (!multiple && key && key.indexOf("%") === -1 && key.indexOf("+") === -1) {
-    let keyIndex2 = url.indexOf("?", 8);
+    const queryIndex = url.indexOf("?", 8);
+    let keyIndex2 = queryIndex;
     if (keyIndex2 === -1) return;
     if (!url.startsWith(key, keyIndex2 + 1)) keyIndex2 = url.indexOf(`&${key}`, keyIndex2 + 1);
     while (keyIndex2 !== -1) {
       const trailingKeyCode = url.charCodeAt(keyIndex2 + key.length + 1);
-      if (trailingKeyCode === 61) {
-        const valueIndex = keyIndex2 + key.length + 2;
-        const endIndex = url.indexOf("&", valueIndex);
-        return _decodeURI(url.slice(valueIndex, endIndex === -1 ? void 0 : endIndex));
-      } else if (trailingKeyCode == 38 || isNaN(trailingKeyCode)) return "";
+      if (trailingKeyCode === 61 || trailingKeyCode === 38 || isNaN(trailingKeyCode)) {
+        if (keyIndex2 > queryIndex && /(?:^|&)[^=&]*[%+]/.test(url.slice(queryIndex + 1, keyIndex2))) break;
+        if (trailingKeyCode === 61) {
+          const valueIndex = keyIndex2 + key.length + 2;
+          const endIndex = url.indexOf("&", valueIndex);
+          return _decodeURI(url.slice(valueIndex, endIndex === -1 ? void 0 : endIndex));
+        }
+        return "";
+      }
       keyIndex2 = url.indexOf(`&${key}`, keyIndex2 + 1);
     }
     encoded = /[%+]/.test(url);
@@ -250,7 +255,7 @@ var getQueryParams = (url, key) => {
 };
 var decodeURIComponent_ = decodeURIComponent;
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/request.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/request.js
 var HonoRequest = class {
   /**
   * `.raw` can get the raw Request object.
@@ -520,7 +525,7 @@ var HonoRequest = class {
   }
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/utils/html.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/utils/html.js
 var HtmlEscapedCallbackPhase = {
   Stringify: 1,
   BeforeStream: 2,
@@ -550,7 +555,7 @@ var resolveCallback = async (str, phase, preserveCallbacks, context, buffer) => 
   else return resStr;
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/context.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/context.js
 var TEXT_PLAIN = "text/plain; charset=UTF-8";
 var setDefaultContentType = (contentType, headers) => {
   return {
@@ -928,7 +933,7 @@ var Context = class {
   };
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/compose.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/compose.js
 var compose = (middleware, onError, onNotFound) => {
   return (context, next) => {
     let index = -1;
@@ -959,7 +964,7 @@ var compose = (middleware, onError, onNotFound) => {
   };
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router.js
 var METHODS = [
   "get",
   "post",
@@ -973,10 +978,10 @@ var MESSAGE_MATCHER_IS_ALREADY_BUILT = "Can not add a route since the matcher is
 var UnsupportedPathError = class extends Error {
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/utils/constants.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/utils/constants.js
 var COMPOSED_HANDLER = "__COMPOSED_HANDLER";
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/hono-base.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/hono-base.js
 var notFoundHandler = (c) => {
   return c.text("404 Not Found", 404);
 };
@@ -1317,10 +1322,10 @@ var Hono = class Hono2 {
   };
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router/utils.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router/utils.js
 var createNullObject = () => /* @__PURE__ */ Object.create(null);
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router/reg-exp-router/matcher.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router/reg-exp-router/matcher.js
 var emptyParam = [];
 function match(method, path) {
   const matchers = this.buildAllMatchers();
@@ -1337,7 +1342,7 @@ function match(method, path) {
   return match2(method, path);
 }
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router/reg-exp-router/node.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router/reg-exp-router/node.js
 var LABEL_REG_EXP_STR = "[^/]+";
 var TAIL_WILDCARD_REG_EXP_STR = "(?:|/.*)";
 var PATH_ERROR = /* @__PURE__ */ Symbol();
@@ -1418,7 +1423,7 @@ var Node = class Node2 {
   }
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router/reg-exp-router/trie.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router/reg-exp-router/trie.js
 var Trie = class {
   #context = { varIndex: 0 };
   #root = new Node();
@@ -1483,7 +1488,7 @@ var Trie = class {
   }
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router/reg-exp-router/router.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router/reg-exp-router/router.js
 var wildcardRegExpCache = createNullObject();
 function buildWildcardRegExp(path) {
   return wildcardRegExpCache[path] ??= new RegExp(`^${path.replace(/\/:[^/{}]+(?:\{\[\^\/]\+})?(?=[/{]|$)|\/?\*$|([.\\+*[^\]$()?{}|])/g, (match2, metaChar) => metaChar ? `\\${metaChar}` : match2 === "/*" ? TAIL_WILDCARD_REG_EXP_STR : match2 === "*" ? ".*" : `/:${LABEL_REG_EXP_STR}`)}$`);
@@ -1577,7 +1582,7 @@ var RegExpRouter = class {
   }
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router/smart-router/router.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router/smart-router/router.js
 var SmartRouter = class {
   name = "SmartRouter";
   #routers = [];
@@ -1624,7 +1629,7 @@ var SmartRouter = class {
   }
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router/trie-router/node.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router/trie-router/node.js
 var emptyParams = createNullObject();
 var order = 0;
 var Node3 = class Node4 {
@@ -1720,7 +1725,7 @@ var Node3 = class Node4 {
             const restPathString = path.slice(partOffsets[i]);
             const m = matcher.exec(restPathString);
             if (m) {
-              params[name] = m[0];
+              if (!Object.hasOwn(params, name)) params[name] = m[0];
               this.#pushHandlerSets(handlerSets, child, method, node.#params, params);
               if (m[0].length === restPathString.length && child.#children["*"]) this.#pushHandlerSets(handlerSets, child.#children["*"], method, node.#params, params);
               for (const _ in child.#children) {
@@ -1733,7 +1738,7 @@ var Node3 = class Node4 {
             }
           }
           if (matcher === true || matcher.test(part)) {
-            params[name] = part;
+            if (!Object.hasOwn(params, name)) params[name] = part;
             if (isLast) {
               this.#pushHandlerSets(handlerSets, child, method, params, node.#params);
               if (child.#children["*"]) this.#pushHandlerSets(handlerSets, child.#children["*"], method, params, node.#params);
@@ -1754,7 +1759,7 @@ var Node3 = class Node4 {
   }
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/router/trie-router/router.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/router/trie-router/router.js
 var TrieRouter = class {
   name = "TrieRouter";
   #node = new Node3();
@@ -1766,7 +1771,7 @@ var TrieRouter = class {
   }
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/hono.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/hono.js
 var Hono3 = class extends Hono {
   /**
   * Creates an instance of the Hono class.
@@ -1779,7 +1784,7 @@ var Hono3 = class extends Hono {
   }
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/middleware/cors/index.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/middleware/cors/index.js
 var cors = (options) => {
   const opts = {
     origin: "*",
@@ -1847,7 +1852,7 @@ var cors = (options) => {
   };
 };
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/utils/color.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/utils/color.js
 function getColorEnabled() {
   const { process: process2, Deno } = globalThis;
   return !(typeof Deno?.noColor === "boolean" ? Deno.noColor : process2 !== void 0 ? "NO_COLOR" in process2?.env : false);
@@ -1864,7 +1869,7 @@ async function getColorEnabledAsync() {
   })() : !getColorEnabled());
 }
 
-// node_modules/.deno/hono@4.13.13/node_modules/hono/dist/middleware/logger/index.js
+// node_modules/.pnpm/hono@4.13.14/node_modules/hono/dist/middleware/logger/index.js
 var humanize = (times) => {
   const [delimiter, separator] = [",", "."];
   return times.map((v) => v.replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1" + delimiter)).join(separator);
@@ -2004,7 +2009,7 @@ var requestIdMiddleware = () => {
   };
 };
 
-// node_modules/.deno/zod@3.25.76/node_modules/zod/v3/external.js
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -2116,7 +2121,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// node_modules/.deno/zod@3.25.76/node_modules/zod/v3/helpers/util.js
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -2250,7 +2255,7 @@ var getParsedType = (data) => {
   }
 };
 
-// node_modules/.deno/zod@3.25.76/node_modules/zod/v3/ZodError.js
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -2368,7 +2373,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// node_modules/.deno/zod@3.25.76/node_modules/zod/v3/locales/en.js
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -2471,7 +2476,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// node_modules/.deno/zod@3.25.76/node_modules/zod/v3/errors.js
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -2480,7 +2485,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// node_modules/.deno/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -2590,14 +2595,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// node_modules/.deno/zod@3.25.76/node_modules/zod/v3/helpers/errorUtil.js
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// node_modules/.deno/zod@3.25.76/node_modules/zod/v3/types.js
+// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -6193,6 +6198,247 @@ var prisma = globalCtx.__prismaClient;
 
 // src/core/auth/better-auth.ts
 import { bearer, organization } from "better-auth/plugins";
+
+// src/core/mail/brevo.service.ts
+var BrevoMailService = class {
+  brevoApiUrl = "https://api.brevo.com/v3/smtp/email";
+  getApiKey() {
+    return getEnvVar("BREVO_API_KEY") || getEnvVar("SENDINBLUE_API_KEY") || void 0;
+  }
+  getDefaultSender() {
+    const email = getEnvVar("BREVO_SENDER_EMAIL") || getEnvVar("SMTP_FROM") || "nagriksevapoint@gmail.com";
+    const name = getEnvVar("BREVO_SENDER_NAME") || "Nagrik Seva Point";
+    return { name, email };
+  }
+  /**
+   * Sends a transactional email using Brevo's v3 REST API.
+   */
+  async sendEmail(options) {
+    const apiKey = this.getApiKey();
+    const sender = options.sender || this.getDefaultSender();
+    const recipients = Array.isArray(options.to) ? options.to : [{ email: options.to }];
+    if (!apiKey) {
+      logger2.warn(
+        `[BREVO MAIL] BREVO_API_KEY is not set in .env. Email to ${recipients.map((r) => r.email).join(", ")} was not sent via Brevo.`
+      );
+      return {
+        success: false,
+        error: "BREVO_API_KEY not configured"
+      };
+    }
+    try {
+      const payload = {
+        sender,
+        to: recipients
+      };
+      if (options.templateId) {
+        payload.templateId = options.templateId;
+        if (options.params) {
+          payload.params = options.params;
+        }
+      } else {
+        payload.subject = options.subject || "Important Notification";
+        payload.htmlContent = options.htmlContent || "<p>Notification</p>";
+        if (options.textContent) {
+          payload.textContent = options.textContent;
+        }
+      }
+      const response = await fetch(this.brevoApiUrl, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "api-key": apiKey,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const errorMsg = data?.message || `Brevo API responded with status ${response.status}`;
+        logger2.error(`[BREVO MAIL] Failed to send email: ${errorMsg}`, data);
+        return { success: false, error: errorMsg };
+      }
+      const messageId = data?.messageId;
+      logger2.info(
+        `[BREVO MAIL] Email sent successfully to ${recipients.map((r) => r.email).join(", ")} (MessageId: ${messageId || "ok"})`
+      );
+      return {
+        success: true,
+        messageId
+      };
+    } catch (err) {
+      logger2.error("[BREVO MAIL] Unexpected network/runtime error:", err);
+      return {
+        success: false,
+        error: err.message || "Failed to send email via Brevo"
+      };
+    }
+  }
+  /**
+   * Dispatches a branded Password Reset Email to a registered retailer or user.
+   */
+  async sendPasswordResetEmail({
+    to,
+    name,
+    resetUrl,
+    token
+  }) {
+    const displayName = name?.trim() || "Partner";
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reset Your Password - Nagrik Seva Point</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F1F5F9; padding: 40px 16px;">
+    <tr>
+      <td align="center">
+        <!-- Main Card Container -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 580px; background-color: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);">
+          
+          <!-- Top Accent Color Bar -->
+          <tr>
+            <td height="4" style="background: linear-gradient(90deg, #FD3820 0%, #FF6B4A 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
+          </tr>
+
+          <!-- Header with Official Full Logo (Centered on Light Background for Full Contrast) -->
+          <tr>
+            <td align="center" style="background-color: #FFFFFF; border-bottom: 1px solid #F1F5F9; padding: 28px 32px 24px 32px; text-align: center;">
+              <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" height="46" style="height: 46px; width: auto; max-width: 220px; display: block; margin: 0 auto; border: 0;" />
+              </a>
+            </td>
+          </tr>
+
+          <!-- Main Content Body -->
+          <tr>
+            <td style="padding: 36px 32px 28px 32px;">
+              <!-- Title -->
+              <h1 style="margin: 0 0 10px 0; font-size: 24px; font-weight: 800; color: #0F172A; letter-spacing: -0.5px; line-height: 1.3;">
+                Password Reset Request
+              </h1>
+              <p style="margin: 0 0 24px 0; font-size: 14px; color: #64748B; line-height: 1.5;">
+                Authorized request for your Nagrik Seva Point caf\xE9 workspace account.
+              </p>
+
+              <!-- Greeting & Context -->
+              <p style="margin: 0 0 14px 0; font-size: 15px; color: #334155; line-height: 1.6;">
+                Namaste <strong>${displayName}</strong>,
+              </p>
+              <p style="margin: 0 0 24px 0; font-size: 14px; color: #475569; line-height: 1.6;">
+                We received a request to reset the password for your account linked with <span style="font-weight: 600; color: #0F172A;">${to}</span>. To choose a new password, click the button below:
+              </p>
+
+              <!-- CTA Button -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 28px 0;">
+                <tr>
+                  <td align="center">
+                    <a href="${resetUrl}" target="_blank" rel="noopener noreferrer" style="background-color: #FD3820; color: #FFFFFF !important; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 36px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 12px rgba(253, 56, 32, 0.35); border: 1px solid #D92D16;">
+                      Reset Password &nbsp;&rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Security Information Pills -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; margin: 24px 0; padding: 16px;">
+                <tr>
+                  <td style="font-size: 12px; color: #475569; line-height: 1.6;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="6" border="0">
+                      <tr>
+                        <td width="33%" align="center" style="border-right: 1px solid #E2E8F0;">
+                          <div style="font-weight: 700; color: #0F172A; font-size: 13px;">60 Minutes</div>
+                          <div style="font-size: 11px; color: #64748B; margin-top: 3px;">Link Validity</div>
+                        </td>
+                        <td width="33%" align="center" style="border-right: 1px solid #E2E8F0;">
+                          <div style="font-weight: 700; color: #0F172A; font-size: 13px;">One-Time Use</div>
+                          <div style="font-size: 11px; color: #64748B; margin-top: 3px;">Single Token</div>
+                        </td>
+                        <td width="33%" align="center">
+                          <div style="font-weight: 700; color: #0F172A; font-size: 13px;">Encrypted</div>
+                          <div style="font-size: 11px; color: #64748B; margin-top: 3px;">Account Safe</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Fallback Direct URL Box -->
+              <p style="margin: 24px 0 8px 0; font-size: 12px; font-weight: 600; color: #64748B;">
+                Button not working? Copy and paste this link in your browser:
+              </p>
+              <div style="background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 8px; padding: 10px 14px; font-size: 11px; color: #475569; word-break: break-all; line-height: 1.5; font-family: monospace;">
+                <a href="${resetUrl}" target="_blank" style="color: #FD3820; text-decoration: underline;">${resetUrl}</a>
+              </div>
+
+              <!-- Security Reassurance -->
+              <p style="margin: 24px 0 0 0; font-size: 12px; color: #94A3B8; line-height: 1.6; border-top: 1px dashed #E2E8F0; padding-top: 18px;">
+                If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged and your account access is unaffected.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Professional Footer -->
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 24px 32px; text-align: center;">
+              <p style="margin: 0 0 8px 0; font-size: 12px; font-weight: 700; color: #334155;">
+                Nagrik Seva Point &bull; Dedicated Caf\xE9 Partner Support
+              </p>
+              <p style="margin: 0 0 12px 0; font-size: 11px; color: #64748B; line-height: 1.5;">
+                For queries or assistance, write to us at <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; text-decoration: none; font-weight: 600;">nagriksevapoint@gmail.com</a>
+              </p>
+              <p style="margin: 0; font-size: 11px; color: #94A3B8;">
+                &copy; 2026 Nagrik Seva Point. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+    const textContent = `
+Namaste ${displayName},
+
+We received a request to reset your password for your Nagrik Seva Point account (${to}).
+
+To reset your password, please visit the following secure link:
+${resetUrl}
+
+This link is valid for 60 minutes.
+
+If you did not request this password reset, please ignore this email. Your password will remain unchanged.
+
+\u2014 Nagrik Seva Point Team
+nagriksevapoint@gmail.com
+`;
+    const configuredTemplateId = getEnvVar("BREVO_RESET_TEMPLATE_ID") || getEnvVar("BREVO_TEMPLATE_ID");
+    const parsedTemplateId = configuredTemplateId ? parseInt(configuredTemplateId, 10) : void 0;
+    return this.sendEmail({
+      to: [{ email: to, name: displayName }],
+      subject: "Reset your Nagrik Seva Point password",
+      templateId: parsedTemplateId && !isNaN(parsedTemplateId) ? parsedTemplateId : void 0,
+      params: {
+        NAME: displayName,
+        EMAIL: to,
+        RESET_URL: resetUrl,
+        TOKEN: token,
+        EXPIRY_MINUTES: "60"
+      },
+      htmlContent,
+      textContent
+    });
+  }
+};
+var brevoMailService = new BrevoMailService();
+
+// src/core/auth/better-auth.ts
 var getCookieDomain = () => {
   try {
     const url = new URL(env.BETTER_AUTH_URL);
@@ -6225,7 +6471,27 @@ var auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     autoSignIn: true,
-    requireEmailVerification: false
+    requireEmailVerification: false,
+    sendResetPassword: async ({ user, url, token }, _request) => {
+      let directResetUrl = url;
+      try {
+        const parsed = new URL(url);
+        const callback = parsed.searchParams.get("callbackURL");
+        if (callback) {
+          directResetUrl = `${callback}?token=${token}`;
+        }
+      } catch {
+      }
+      logger2.info(
+        `\u{1F511} [PASSWORD RESET] Link generated for ${user.email} (${user.name}): DirectURL=${directResetUrl}, Token=${token}`
+      );
+      await brevoMailService.sendPasswordResetEmail({
+        to: user.email,
+        name: user.name,
+        resetUrl: directResetUrl,
+        token
+      });
+    }
   },
   user: {
     additionalFields: {
@@ -6299,6 +6565,11 @@ var auth = betterAuth({
 });
 
 // src/core/logger/api-logger.ts
+function maskPhoneNumber(phone) {
+  if (!phone) return "";
+  const cleaned = phone.trim();
+  return cleaned.replace(/(?:\+91[\-\s]?)?([6-9]\d{5})(\d{4})\b/g, "XXXXXX$2");
+}
 function maskEmail(email) {
   if (!email) return "";
   return email.trim().replace(
@@ -7125,6 +7396,139 @@ var AuthService = class {
     invalidateAuthContext();
     return this.getProfile(userId, requestedOrgId);
   }
+  /**
+   * Dispatches password reset instructions via registered Email OR 10-Digit Mobile Number.
+   */
+  async forgotPassword(data, headers) {
+    const rawIdentifier = data.identifier.trim();
+    const clientIp = headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || "127.0.0.1";
+    let targetUser = null;
+    if (!rawIdentifier.includes("@")) {
+      targetUser = await prisma.user.findFirst({
+        where: { phone: rawIdentifier },
+        select: { id: true, email: true, name: true, phone: true }
+      });
+    } else {
+      targetUser = await prisma.user.findFirst({
+        where: { email: rawIdentifier.toLowerCase() },
+        select: { id: true, email: true, name: true, phone: true }
+      });
+    }
+    if (!targetUser) {
+      logApiExecution({
+        serviceCode: "AUTH",
+        action: "Password Reset Failed (Account Not Found)",
+        endpoint: "/api/auth/forgot-password",
+        reference: rawIdentifier.includes("@") ? maskEmail(rawIdentifier) : maskPhoneNumber(rawIdentifier),
+        status: "FAILED",
+        statusCode: 404,
+        ipAddress: clientIp,
+        note: `Password reset attempt for unregistered identifier: ${rawIdentifier.includes("@") ? maskEmail(rawIdentifier) : maskPhoneNumber(rawIdentifier)}`
+      }).catch(() => {
+      });
+      throw AppError.notFound(
+        rawIdentifier.includes("@") ? "No account found with this email address. Please check and try again or create an account." : "No account found with this 10-digit mobile number. Please check and try again or create an account.",
+        "ACCOUNT_NOT_FOUND"
+      );
+    }
+    try {
+      await auth.api.requestPasswordReset({
+        body: {
+          email: targetUser.email,
+          redirectTo: data.redirectTo
+        },
+        headers
+      });
+    } catch (err) {
+      logger2.error(`Error requesting password reset for user ${targetUser.id}:`, err);
+    }
+    const maskedEmail = maskEmail(targetUser.email);
+    const userOrg = await prisma.member.findFirst({
+      where: { userId: targetUser.id },
+      select: { organizationId: true }
+    }).catch(() => null);
+    logApiExecution({
+      userId: targetUser.id,
+      organizationId: userOrg?.organizationId || null,
+      serviceCode: "AUTH",
+      action: "Password Reset Requested",
+      endpoint: "/api/auth/forgot-password",
+      reference: maskedEmail,
+      status: "SUCCESS",
+      statusCode: 200,
+      ipAddress: clientIp,
+      note: `Password reset link dispatched via email to ${maskedEmail} (requested using ${rawIdentifier.includes("@") ? "email" : "mobile"})`
+    }).catch(() => {
+    });
+    return {
+      success: true,
+      maskedEmail,
+      message: "Password reset instructions have been dispatched."
+    };
+  }
+  /**
+   * Resets the user's password using the one-time verification token.
+   */
+  async resetPassword(data, headers) {
+    const clientIp = headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || "127.0.0.1";
+    const verificationRecord = await prisma.verification.findFirst({
+      where: { value: data.token }
+    }).catch(() => null);
+    let targetUser = null;
+    if (verificationRecord?.identifier) {
+      targetUser = await prisma.user.findFirst({
+        where: { email: verificationRecord.identifier.toLowerCase() },
+        select: { id: true, email: true, name: true }
+      }).catch(() => null);
+    }
+    const userOrg = targetUser ? await prisma.member.findFirst({
+      where: { userId: targetUser.id },
+      select: { organizationId: true }
+    }).catch(() => null) : null;
+    try {
+      await auth.api.resetPassword({
+        body: {
+          token: data.token,
+          newPassword: data.newPassword
+        },
+        headers
+      });
+      logApiExecution({
+        userId: targetUser?.id || null,
+        organizationId: userOrg?.organizationId || null,
+        serviceCode: "AUTH",
+        action: "Password Reset Completed",
+        endpoint: "/api/auth/reset-password",
+        reference: targetUser ? maskEmail(targetUser.email) : "TOKEN-VERIFIED",
+        status: "SUCCESS",
+        statusCode: 200,
+        ipAddress: clientIp,
+        note: targetUser ? `Password successfully updated and session credentials rotated for ${maskEmail(targetUser.email)}` : "Password successfully updated via valid one-time token"
+      }).catch(() => {
+      });
+      return {
+        success: true,
+        message: "Password reset successfully. You can now sign in with your new password."
+      };
+    } catch (err) {
+      logger2.error("Failed to reset password:", err);
+      logApiExecution({
+        userId: targetUser?.id || null,
+        organizationId: userOrg?.organizationId || null,
+        serviceCode: "AUTH",
+        action: "Password Reset Failed",
+        endpoint: "/api/auth/reset-password",
+        reference: targetUser ? maskEmail(targetUser.email) : "INVALID-TOKEN",
+        status: "FAILED",
+        statusCode: 400,
+        ipAddress: clientIp,
+        note: `Password reset attempt failed: ${err?.body?.message || err?.message || "Invalid or expired token"}`
+      }).catch(() => {
+      });
+      const msg = err?.body?.message || err?.message || "Invalid or expired reset token. Please request a new link.";
+      throw AppError.badRequest(msg, "INVALID_TOKEN");
+    }
+  }
 };
 var authService = new AuthService();
 
@@ -7157,6 +7561,14 @@ var updateProfileSchema = external_exports.object({
     "Mobile number must be a valid 10-digit Indian phone number"
   ).optional(),
   cyberCafeName: external_exports.string().min(3, "Cyber Caf\xE9 / Shop name must be at least 3 characters").max(120).optional()
+});
+var forgotPasswordSchema = external_exports.object({
+  identifier: external_exports.string().min(3, "Please enter your registered Email or 10-digit Mobile Number").max(120),
+  redirectTo: external_exports.string().optional()
+});
+var resetPasswordSchema = external_exports.object({
+  token: external_exports.string().min(1, "Reset token is required"),
+  newPassword: external_exports.string().min(8, "Password must be at least 8 characters")
 });
 
 // src/modules/auth/auth.routes.ts
@@ -7234,6 +7646,24 @@ authRoutes.patch(
       message: "Profile updated successfully",
       data: updated
     });
+  }
+);
+authRoutes.post(
+  "/forgot-password",
+  validationMiddleware(forgotPasswordSchema),
+  async (c) => {
+    const data = c.get("validData");
+    const result = await authService.forgotPassword(data, c.req.raw.headers);
+    return c.json(result);
+  }
+);
+authRoutes.post(
+  "/reset-password",
+  validationMiddleware(resetPasswordSchema),
+  async (c) => {
+    const data = c.get("validData");
+    const result = await authService.resetPassword(data, c.req.raw.headers);
+    return c.json(result);
   }
 );
 
@@ -12476,7 +12906,7 @@ var AdminService = class {
         const isSuccess = log2.status === "SUCCESS";
         const orgName = log2.organization?.name || "Cyber Caf\xE9";
         const actLower = log2.action.toLowerCase();
-        const isAuth = log2.serviceCode === "AUTH" || actLower.includes("logout") || actLower.includes("login") || actLower.includes("register");
+        const isAuth = log2.serviceCode === "AUTH" || actLower.includes("logout") || actLower.includes("login") || actLower.includes("register") || actLower.includes("password") || actLower.includes("reset");
         const isCustomer = log2.serviceCode === "CUSTOMER";
         const isDocVault = actLower.includes("download") || log2.serviceCode === "DOCUMENT_VAULT";
         let category2 = "SERVICE";
@@ -12495,7 +12925,7 @@ var AdminService = class {
           organizationName: orgName,
           status: log2.status,
           timestamp: log2.createdAt,
-          badgeVariant: isSuccess ? category2 === "SECURITY" ? "outline" : "secondary" : "destructive"
+          badgeVariant: isSuccess ? actLower.includes("password") ? "outline" : category2 === "SECURITY" ? "outline" : "secondary" : "destructive"
         });
       });
       const summary = {
