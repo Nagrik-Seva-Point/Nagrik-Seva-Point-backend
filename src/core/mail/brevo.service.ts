@@ -1,5 +1,6 @@
 import { getEnvVar } from "../config/env-helper";
 import { logger } from "../logger/logger";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 export interface BrevoRecipient {
   email: string;
@@ -21,6 +22,22 @@ export interface SendEmailOptions {
 
 export class BrevoMailService {
   private readonly brevoApiUrl = "https://api.brevo.com/v3/smtp/email";
+
+  public getProxyUrl(): string | undefined {
+    const rawProxy =
+      getEnvVar("BREVO_PROXY_URL") ||
+      getEnvVar("STATIC_PROXY_URL") ||
+      getEnvVar("PROXY_URL") ||
+      getEnvVar("EZYTM_PROXY_URL") ||
+      getEnvVar("WEBSHARE_URL") ||
+      getEnvVar("WEBSHARE_PROXY_URL") ||
+      getEnvVar("FIXIE_URL") ||
+      getEnvVar("QUOTAGUARDSTATIC_URL") ||
+      getEnvVar("HTTPS_PROXY") ||
+      getEnvVar("HTTP_PROXY");
+
+    return rawProxy ? rawProxy.replace(/["']/g, "").trim() : undefined;
+  }
 
   private getApiKey(): string | undefined {
     return (
@@ -81,7 +98,22 @@ export class BrevoMailService {
         }
       }
 
-      const response = await fetch(this.brevoApiUrl, {
+      const activeProxyUrl = this.getProxyUrl();
+      let dispatcher: ProxyAgent | undefined = undefined;
+
+      if (activeProxyUrl) {
+        try {
+          dispatcher = new ProxyAgent(activeProxyUrl);
+          const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
+          logger.info(`[BREVO MAIL] Routing email dispatch via Static Proxy: ${maskedProxy}`);
+        } catch (err) {
+          logger.error(`[BREVO MAIL] Failed to initialize ProxyAgent with URL "${activeProxyUrl}":`, err);
+        }
+      }
+
+      const fetchFn = dispatcher ? undiciFetch : fetch;
+
+      const response = await fetchFn(this.brevoApiUrl, {
         method: "POST",
         headers: {
           accept: "application/json",
@@ -89,6 +121,8 @@ export class BrevoMailService {
           "content-type": "application/json",
         },
         body: JSON.stringify(payload),
+        // @ts-ignore: dispatcher supported by undiciFetch
+        dispatcher,
       });
 
       const data = await response.json().catch(() => ({}));
@@ -97,7 +131,15 @@ export class BrevoMailService {
         const errorMsg =
           (data as { message?: string })?.message ||
           `Brevo API responded with status ${response.status}`;
-        logger.error(`[BREVO MAIL] Failed to send email: ${errorMsg}`, data);
+
+        if (response.status === 401 && (errorMsg.includes("unrecognised IP") || errorMsg.includes("authorised_ips"))) {
+          logger.error(
+            `🚨 [BREVO MAIL SECURITY] Unauthorized IP detected! Please authorize the Static IP in Brevo Dashboard: https://app.brevo.com/security/authorised_ips - Message: ${errorMsg}`,
+          );
+        } else {
+          logger.error(`[BREVO MAIL] Failed to send email: ${errorMsg}`, data);
+        }
+
         return { success: false, error: errorMsg };
       }
 

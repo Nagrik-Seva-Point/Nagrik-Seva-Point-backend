@@ -6200,8 +6200,13 @@ var prisma = globalCtx.__prismaClient;
 import { bearer, organization } from "better-auth/plugins";
 
 // src/core/mail/brevo.service.ts
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 var BrevoMailService = class {
   brevoApiUrl = "https://api.brevo.com/v3/smtp/email";
+  getProxyUrl() {
+    const rawProxy = getEnvVar("BREVO_PROXY_URL") || getEnvVar("STATIC_PROXY_URL") || getEnvVar("PROXY_URL") || getEnvVar("EZYTM_PROXY_URL") || getEnvVar("WEBSHARE_URL") || getEnvVar("WEBSHARE_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY") || getEnvVar("HTTP_PROXY");
+    return rawProxy ? rawProxy.replace(/["']/g, "").trim() : void 0;
+  }
   getApiKey() {
     return getEnvVar("BREVO_API_KEY") || getEnvVar("SENDINBLUE_API_KEY") || void 0;
   }
@@ -6243,19 +6248,39 @@ var BrevoMailService = class {
           payload.textContent = options.textContent;
         }
       }
-      const response = await fetch(this.brevoApiUrl, {
+      const activeProxyUrl = this.getProxyUrl();
+      let dispatcher = void 0;
+      if (activeProxyUrl) {
+        try {
+          dispatcher = new ProxyAgent(activeProxyUrl);
+          const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
+          logger2.info(`[BREVO MAIL] Routing email dispatch via Static Proxy: ${maskedProxy}`);
+        } catch (err) {
+          logger2.error(`[BREVO MAIL] Failed to initialize ProxyAgent with URL "${activeProxyUrl}":`, err);
+        }
+      }
+      const fetchFn = dispatcher ? undiciFetch : fetch;
+      const response = await fetchFn(this.brevoApiUrl, {
         method: "POST",
         headers: {
           accept: "application/json",
           "api-key": apiKey,
           "content-type": "application/json"
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        // @ts-ignore: dispatcher supported by undiciFetch
+        dispatcher
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         const errorMsg = data?.message || `Brevo API responded with status ${response.status}`;
-        logger2.error(`[BREVO MAIL] Failed to send email: ${errorMsg}`, data);
+        if (response.status === 401 && (errorMsg.includes("unrecognised IP") || errorMsg.includes("authorised_ips"))) {
+          logger2.error(
+            `\u{1F6A8} [BREVO MAIL SECURITY] Unauthorized IP detected! Please authorize the Static IP in Brevo Dashboard: https://app.brevo.com/security/authorised_ips - Message: ${errorMsg}`
+          );
+        } else {
+          logger2.error(`[BREVO MAIL] Failed to send email: ${errorMsg}`, data);
+        }
         return { success: false, error: errorMsg };
       }
       const messageId = data?.messageId;
@@ -9100,7 +9125,7 @@ var CashfreeGateway = class {
 var cashfreeGateway = new CashfreeGateway();
 
 // src/core/integrations/ezytm/ezytm.gateway.ts
-import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { ProxyAgent as ProxyAgent2, fetch as undiciFetch2 } from "undici";
 var EzytmGateway = class {
   baseUrl;
   tokenId;
@@ -9218,7 +9243,7 @@ var EzytmGateway = class {
     let dispatcher = void 0;
     if (activeProxyUrl) {
       try {
-        dispatcher = new ProxyAgent(activeProxyUrl);
+        dispatcher = new ProxyAgent2(activeProxyUrl);
         const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
         logger2.info(`[EzyTM Gateway] Routing request through Static IP Proxy: ${maskedProxy}`);
       } catch (err) {
@@ -9228,7 +9253,7 @@ var EzytmGateway = class {
       logger2.warn("[EzyTM Gateway] \u26A0\uFE0F NO PROXY URL found in environment (checked EZYTM_PROXY_URL, WEBSHARE_URL, PROXY_URL, HTTPS_PROXY). Using direct connection.");
     }
     try {
-      const fetchFunction = dispatcher ? undiciFetch : fetch;
+      const fetchFunction = dispatcher ? undiciFetch2 : fetch;
       const response = await fetchFunction(url, {
         method: "POST",
         headers,
