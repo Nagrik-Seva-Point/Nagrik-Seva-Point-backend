@@ -8313,6 +8313,7 @@ var ServiceRepository = class {
     } else {
       where.isRetailerAllowed = true;
     }
+    where.code = { not: "WALLET_TOPUP" };
     return await prisma.service.findMany({
       where,
       include: {
@@ -12048,7 +12049,7 @@ var PaymentService = class {
           name: "Wallet Balance Top-up",
           description: "Instant UPI / QR recharge for retailer organization wallet",
           isPublicAllowed: false,
-          isRetailerAllowed: true,
+          isRetailerAllowed: false,
           requiresCustomer: false,
           requiresUpload: false,
           producesDocument: false

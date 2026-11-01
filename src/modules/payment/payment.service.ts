@@ -888,7 +888,7 @@ export class PaymentService {
           name: "Wallet Balance Top-up",
           description: "Instant UPI / QR recharge for retailer organization wallet",
           isPublicAllowed: false,
-          isRetailerAllowed: true,
+          isRetailerAllowed: false,
           requiresCustomer: false,
           requiresUpload: false,
           producesDocument: false,

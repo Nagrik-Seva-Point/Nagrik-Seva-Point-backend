@@ -20,6 +20,8 @@ export class ServiceRepository {
       where.isRetailerAllowed = true;
     }
 
+    where.code = { not: "WALLET_TOPUP" };
+
     return await prisma.service.findMany({
       where,
       include: {
