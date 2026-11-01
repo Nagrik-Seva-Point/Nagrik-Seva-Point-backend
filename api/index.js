@@ -13971,80 +13971,20 @@ var AdminService = class {
     });
   }
   async setAnnouncement(input) {
-    const { sendEmailToVles, testRecipientEmail, ...announcementData } = input;
     const data = {
-      ...announcementData,
+      active: input.active,
+      message: input.message,
+      title: input.title,
+      severity: input.severity || "info",
+      expiresAt: input.expiresAt,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     await redis.setJson("system:announcement", data);
     await redis.del("cache:admin:announcement").catch(() => {
     });
-    let emailBroadcastStatus = {
-      sent: 0,
-      mode: "NONE"
-    };
-    if (testRecipientEmail && testRecipientEmail.trim()) {
-      const targetTestEmail = testRecipientEmail.trim();
-      logger2.info(`[AdminService] Sending test dummy announcement email to: ${targetTestEmail}`);
-      try {
-        await brevoMailService.sendVLEBroadcastEmail({
-          to: targetTestEmail,
-          vleName: "Admin Test Recipient",
-          title: data.title || "\u092E\u0939\u0924\u094D\u0935\u092A\u0942\u0930\u094D\u0923 \u0938\u0942\u091A\u0928\u093E - \u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0915\u0947\u0902\u0926\u094D\u0930",
-          message: data.message || "\u092F\u0939 \u090F\u0915 \u092A\u0930\u0940\u0915\u094D\u0937\u0923 \u0918\u094B\u0937\u0923\u093E \u0939\u0948\u0964",
-          severity: data.severity || "info"
-        });
-        emailBroadcastStatus = {
-          sent: 1,
-          mode: "TEST_SAMPLE",
-          testSentTo: targetTestEmail
-        };
-      } catch (err) {
-        logger2.error(`[AdminService] Failed to send test announcement email:`, err);
-      }
-    } else if (sendEmailToVles && data.active && data.message) {
-      if (process.env.ENABLE_VLE_EMAIL_BROADCAST === "true") {
-        logger2.info(`[AdminService] Live VLE Email Broadcast authorized. Fetching registered VLEs...`);
-        try {
-          const users = await prisma.user.findMany({
-            where: { email: { not: "" } },
-            select: { email: true, name: true }
-          });
-          let broadcastCount = 0;
-          for (const u of users) {
-            if (!u.email) continue;
-            try {
-              await brevoMailService.sendVLEBroadcastEmail({
-                to: u.email,
-                vleName: u.name || "\u0938\u092E\u094D\u092E\u093E\u0928\u093F\u0924 \u0935\u0940\u090F\u0932\u0908 \u092C\u0902\u0927\u0941",
-                title: data.title || "\u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0915\u0947\u0902\u0926\u094D\u0930 - \u0906\u0935\u0936\u094D\u092F\u0915 \u0938\u0942\u091A\u0928\u093E",
-                message: data.message,
-                severity: data.severity || "info"
-              });
-              broadcastCount++;
-            } catch (vleErr) {
-              logger2.warn(`[AdminService] Failed to deliver broadcast to ${u.email}:`, vleErr);
-            }
-          }
-          emailBroadcastStatus = {
-            sent: broadcastCount,
-            mode: "LIVE_BROADCAST"
-          };
-        } catch (dbErr) {
-          logger2.error(`[AdminService] Failed to fetch users for broadcast:`, dbErr);
-        }
-      } else {
-        logger2.warn(`[AdminService] sendEmailToVles requested, but live email broadcast is locked (ENABLE_VLE_EMAIL_BROADCAST != true). Main accounts protected.`);
-        emailBroadcastStatus = {
-          sent: 0,
-          mode: "SAFETY_LOCKED"
-        };
-      }
-    }
     return {
       success: true,
-      data,
-      emailBroadcastStatus
+      data
     };
   }
   // ==========================================
@@ -15080,7 +15020,19 @@ var AdminService = class {
         messageId: res.messageId
       };
     }
-    logger2.info(`[AdminService] Dispatching targeted email (${language}) to ${recipientEmails.length} selected VLEs in parallel with retry.`);
+    logger2.info(`[AdminService] Dispatching targeted email (${language}) to ${recipientEmails.length} selected VLEs in chunks of 10.`);
+    const campaignMeta = {
+      subject,
+      title: title || subject,
+      message,
+      language: language || "hi",
+      severity: severity || "info",
+      includeButton: includeButton !== false,
+      dispatchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      totalRecipients: recipientEmails.length
+    };
+    await redis.setJson("admin:latest_email_campaign", campaignMeta, 86400 * 30).catch(() => {
+    });
     const users = await prisma.user.findMany({
       where: { email: { in: recipientEmails } },
       select: {
@@ -15126,7 +15078,7 @@ var AdminService = class {
                 statusCode: 200,
                 organizationId: orgId || null,
                 userId: userId || null,
-                note: `Delivered to ${email} (${vleName}) on attempt ${attempt}. MsgId: ${res.messageId || "N/A"}`
+                note: `Delivered to ${email} (${vleName}) on attempt ${attempt}. MsgId: ${res.messageId || "N/A"} | Subject: "${subject}" | Lang: ${language}`
               }
             }).catch(() => {
             });
@@ -15162,7 +15114,7 @@ var AdminService = class {
           statusCode: 500,
           organizationId: orgId || null,
           userId: userId || null,
-          note: `FAILED after ${maxAttempts} retries: ${errorMessage} | Subject: "${subject}"`
+          note: `FAILED after ${maxAttempts} retries: ${errorMessage} | Subject: "${subject}" | Lang: ${language}`
         }
       }).catch((dbErr) => logger2.warn("[AdminService] Failed to write failure to ApiLog:", dbErr));
       try {
@@ -15239,12 +15191,22 @@ var AdminService = class {
       const campaignLogs = logs.filter(
         (l) => latestTime - new Date(l.createdAt).getTime() <= campaignWindowMs
       );
-      let latestSubject = "Important Notification from Nagrik Seva Point";
-      for (const log2 of campaignLogs) {
-        if (log2.note && log2.note.includes('Subject: "')) {
-          const match2 = log2.note.match(/Subject:\s*"([^"]+)"/);
-          if (match2 && match2[1]) {
-            latestSubject = match2[1];
+      const savedCampaign = await redis.getJson("admin:latest_email_campaign").catch(() => null);
+      let latestSubject = savedCampaign?.subject || "Important Notification from Nagrik Seva Point";
+      let campaignLang = savedCampaign?.language || "hi";
+      if (!savedCampaign) {
+        for (const log2 of campaignLogs) {
+          if (log2.note && log2.note.includes('Subject: "')) {
+            const match2 = log2.note.match(/Subject:\s*"([^"]+)"/);
+            if (match2 && match2[1]) {
+              latestSubject = match2[1];
+              break;
+            }
+          }
+        }
+        for (const log2 of campaignLogs) {
+          if (log2.note?.includes("Lang: en") || latestSubject.includes("New Feature") || latestSubject.includes("Instant Wallet")) {
+            campaignLang = "en";
             break;
           }
         }
@@ -15292,6 +15254,11 @@ var AdminService = class {
         sentCount: successLogs.length,
         failedCount: failedLogs.length,
         subject: latestSubject,
+        language: campaignLang,
+        title: savedCampaign?.title || latestSubject,
+        message: savedCampaign?.message || null,
+        severity: savedCampaign?.severity || "info",
+        includeButton: savedCampaign?.includeButton ?? true,
         failures,
         recentSuccesses: successLogs.slice(0, 10).map((s) => ({
           email: s.reference,
@@ -15307,6 +15274,11 @@ var AdminService = class {
         sentCount: 0,
         failedCount: 0,
         subject: null,
+        language: "hi",
+        title: null,
+        message: null,
+        severity: "info",
+        includeButton: true,
         failures: [],
         recentSuccesses: []
       };
@@ -15322,16 +15294,18 @@ var AdminService = class {
     }
     const failedEmails = audit.failures.map((f) => f.email);
     logger2.info(`[AdminService] Resending email to ${failedEmails.length} failed recipients using chunking queue...`);
-    const defaultMsg = options?.language === "en" ? "We are excited to announce that the Prepaid Wallet Service is now officially active on your retailer dashboard!\n\nSay goodbye to repetitive QR code scans and gateway delays for every single customer request. Simply top up your wallet once and enjoy instant 1-click checkouts with zero transaction drop-offs.\n\nServe your walk-in customers faster and save valuable time. Click the button below to add balance and start using your wallet today!" : "\u0939\u092E\u0947\u0902 \u092F\u0939 \u092C\u0924\u093E\u0924\u0947 \u0939\u0941\u090F \u0905\u0924\u094D\u092F\u0902\u0924 \u092A\u094D\u0930\u0938\u0928\u094D\u0928\u0924\u093E \u0939\u094B \u0930\u0939\u0940 \u0939\u0948 \u0915\u093F \u0906\u092A\u0915\u0947 \u0930\u093F\u091F\u0947\u0932\u0930 \u0921\u0948\u0936\u092C\u094B\u0930\u094D\u0921 \u092A\u0930 \u0935\u0949\u0932\u0947\u091F \u0938\u0947\u0935\u093E (Wallet Service) \u0938\u0915\u094D\u0930\u093F\u092F \u0915\u0930 \u0926\u0940 \u0917\u0908 \u0939\u0948\u0964\n\n\u0905\u092C \u0906\u092A\u0915\u094B \u092A\u094D\u0930\u0924\u094D\u092F\u0947\u0915 \u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0914\u0930 \u0917\u094D\u0930\u093E\u0939\u0915 \u0915\u0947 \u0932\u093F\u090F \u092C\u093E\u0930-\u092C\u093E\u0930 \u0915\u094D\u092F\u0942\u0906\u0930 \u0915\u094B\u0921 \u0938\u094D\u0915\u0948\u0928 \u0915\u0930\u0928\u0947 \u092F\u093E \u0905\u0932\u0917-\u0905\u0932\u0917 \u092D\u0941\u0917\u0924\u093E\u0928 \u0915\u0930\u0928\u0947 \u0915\u0940 \u0906\u0935\u0936\u094D\u092F\u0915\u0924\u093E \u0928\u0939\u0940\u0902 \u0939\u094B\u0917\u0940\u0964 \u0915\u0947\u0935\u0932 \u090F\u0915 \u092C\u093E\u0930 \u0905\u092A\u0928\u0947 \u0935\u0949\u0932\u0947\u091F \u0915\u094B \u0930\u093F\u091A\u093E\u0930\u094D\u091C \u0915\u0930\u0947\u0902 \u0914\u0930 1-\u0915\u094D\u0932\u093F\u0915 \u092E\u0947\u0902 \u092C\u093F\u0928\u093E \u0915\u093F\u0938\u0940 \u0930\u0941\u0915\u093E\u0935\u091F \u0915\u0947 \u0938\u092D\u0940 \u0938\u0947\u0935\u093E\u0913\u0902 \u0915\u093E \u0924\u094D\u0935\u0930\u093F\u0924 \u0932\u093E\u092D \u0909\u0920\u093E\u090F\u0902\u0964\n\n\u0907\u0938\u0938\u0947 \u092C\u0948\u0902\u0915 \u0938\u0930\u094D\u0935\u0930 \u0921\u093E\u0909\u0928 \u0939\u094B\u0928\u0947 \u0914\u0930 \u092A\u0947\u092E\u0947\u0902\u091F \u0905\u091F\u0915\u0928\u0947 \u0915\u0940 \u0938\u092E\u0938\u094D\u092F\u093E \u0938\u0947 \u0939\u092E\u0947\u0936\u093E \u0915\u0947 \u0932\u093F\u090F \u092E\u0941\u0915\u094D\u0924\u093F \u092E\u093F\u0932\u0947\u0917\u0940 \u0924\u0925\u093E \u0906\u092A\u0915\u0947 \u0915\u0940\u092E\u0924\u0940 \u0938\u092E\u092F \u0915\u0940 \u092C\u091A\u0924 \u0939\u094B\u0917\u0940\u0964\n\n\u0915\u0943\u092A\u092F\u093E \u0928\u0940\u091A\u0947 \u0926\u093F\u090F \u0917\u090F \u092C\u091F\u0928 \u092A\u0930 \u0915\u094D\u0932\u093F\u0915 \u0915\u0930\u0915\u0947 \u0905\u092A\u0928\u093E \u0935\u0949\u0932\u0947\u091F \u0930\u093F\u091A\u093E\u0930\u094D\u091C \u0915\u0930\u0947\u0902 \u0914\u0930 \u0906\u091C \u0939\u0940 \u0907\u0938 \u0938\u0941\u092A\u0930\u092B\u093E\u0938\u094D\u091F \u0938\u0941\u0935\u093F\u0927\u093E \u0915\u093E \u0932\u093E\u092D \u0909\u0920\u093E\u090F\u0902!";
-    const defaultSubject = options?.language === "en" ? audit.subject || "New Feature: Instant Wallet Service is Now Active on Nagrik Seva Point!" : "\u{1F680} \u092E\u0939\u0924\u094D\u0935\u092A\u0942\u0930\u094D\u0923 \u0938\u0942\u091A\u0928\u093E: \u0906\u092A\u0915\u0947 \u0921\u0948\u0936\u092C\u094B\u0930\u094D\u0921 \u092A\u0930 \u0935\u0949\u0932\u0947\u091F \u0938\u0947\u0935\u093E \u0938\u0915\u094D\u0930\u093F\u092F \u2014 \u0905\u092C 1-\u0915\u094D\u0932\u093F\u0915 \u092E\u0947\u0902 \u0924\u0941\u0930\u0902\u0924 \u0915\u093E\u092E \u0915\u0930\u0947\u0902!";
+    const targetLanguage = options?.language || audit.language || "hi";
+    const targetSubject = options?.subject?.trim() || audit.subject || (targetLanguage === "en" ? "Important Notification" : "\u092E\u0939\u0924\u094D\u0935\u092A\u0942\u0930\u094D\u0923 \u0938\u0942\u091A\u0928\u093E");
+    const targetMessage = options?.message?.trim() || audit.message || (targetLanguage === "en" ? "Official service advisory from Nagrik Seva Point." : "\u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0915\u0947\u0902\u0926\u094D\u0930 \u0938\u0947 \u0906\u0927\u093F\u0915\u093E\u0930\u093F\u0915 \u0938\u0942\u091A\u0928\u093E\u0964");
+    const targetTitle = options?.title?.trim() || targetSubject;
     return await this.sendTargetedVleEmail({
       recipientEmails: failedEmails,
-      subject: options?.subject?.trim() || defaultSubject,
-      title: options?.title?.trim() || defaultSubject,
-      message: options?.message?.trim() || defaultMsg,
-      language: options?.language || (audit.subject?.includes("New Feature") ? "en" : "hi"),
-      severity: options?.severity || "info",
-      includeButton: options?.includeButton !== false
+      subject: targetSubject,
+      title: targetTitle,
+      message: targetMessage,
+      language: targetLanguage,
+      severity: options?.severity || audit.severity || "info",
+      includeButton: options?.includeButton !== void 0 ? options.includeButton : audit.includeButton ?? true
     });
   }
   /**
@@ -15381,9 +15355,7 @@ var announcementSchema = external_exports.object({
   message: external_exports.string().optional().default(""),
   title: external_exports.string().optional(),
   severity: external_exports.enum(["info", "warning", "success"]).default("info"),
-  expiresAt: external_exports.string().optional(),
-  sendEmailToVles: external_exports.boolean().optional().default(false),
-  testRecipientEmail: external_exports.string().email().optional().or(external_exports.literal(""))
+  expiresAt: external_exports.string().optional()
 }).superRefine((data, ctx) => {
   if (data.active && (!data.message || !data.message.trim())) {
     ctx.addIssue({

@@ -27,8 +27,6 @@ export const announcementSchema = z
     title: z.string().optional(),
     severity: z.enum(["info", "warning", "success"]).default("info"),
     expiresAt: z.string().optional(),
-    sendEmailToVles: z.boolean().optional().default(false),
-    testRecipientEmail: z.string().email().optional().or(z.literal("")),
   })
   .superRefine((data, ctx) => {
     if (data.active && (!data.message || !data.message.trim())) {

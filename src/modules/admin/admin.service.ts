@@ -887,86 +887,21 @@ export class AdminService {
   }
 
   async setAnnouncement(input: AnnouncementInput) {
-    const { sendEmailToVles, testRecipientEmail, ...announcementData } = input;
     const data = {
-      ...announcementData,
+      active: input.active,
+      message: input.message,
+      title: input.title,
+      severity: input.severity || "info",
+      expiresAt: input.expiresAt,
       updatedAt: new Date().toISOString(),
     };
 
     await redis.setJson("system:announcement", data);
     await redis.del("cache:admin:announcement").catch(() => {});
 
-    let emailBroadcastStatus: { sent: number; mode: string; testSentTo?: string } = {
-      sent: 0,
-      mode: "NONE",
-    };
-
-    // 1. SAFE DUMMY TEST: If testRecipientEmail is provided, send preview ONLY to that specific address
-    if (testRecipientEmail && testRecipientEmail.trim()) {
-      const targetTestEmail = testRecipientEmail.trim();
-      logger.info(`[AdminService] Sending test dummy announcement email to: ${targetTestEmail}`);
-      try {
-        await brevoMailService.sendVLEBroadcastEmail({
-          to: targetTestEmail,
-          vleName: "Admin Test Recipient",
-          title: data.title || "महत्वपूर्ण सूचना - नागरिक सेवा केंद्र",
-          message: data.message || "यह एक परीक्षण घोषणा है।",
-          severity: data.severity || "info",
-        });
-        emailBroadcastStatus = {
-          sent: 1,
-          mode: "TEST_SAMPLE",
-          testSentTo: targetTestEmail,
-        };
-      } catch (err) {
-        logger.error(`[AdminService] Failed to send test announcement email:`, err);
-      }
-    } else if (sendEmailToVles && data.active && data.message) {
-      // 2. LIVE BROADCAST: Strictly gated behind explicit environment authorization
-      if (process.env.ENABLE_VLE_EMAIL_BROADCAST === "true") {
-        logger.info(`[AdminService] Live VLE Email Broadcast authorized. Fetching registered VLEs...`);
-        try {
-          const users = await prisma.user.findMany({
-            where: { email: { not: "" } },
-            select: { email: true, name: true },
-          });
-
-          let broadcastCount = 0;
-          for (const u of users) {
-            if (!u.email) continue;
-            try {
-              await brevoMailService.sendVLEBroadcastEmail({
-                to: u.email,
-                vleName: u.name || "सम्मानित वीएलई बंधु",
-                title: data.title || "नागरिक सेवा केंद्र - आवश्यक सूचना",
-                message: data.message,
-                severity: data.severity || "info",
-              });
-              broadcastCount++;
-            } catch (vleErr) {
-              logger.warn(`[AdminService] Failed to deliver broadcast to ${u.email}:`, vleErr);
-            }
-          }
-          emailBroadcastStatus = {
-            sent: broadcastCount,
-            mode: "LIVE_BROADCAST",
-          };
-        } catch (dbErr) {
-          logger.error(`[AdminService] Failed to fetch users for broadcast:`, dbErr);
-        }
-      } else {
-        logger.warn(`[AdminService] sendEmailToVles requested, but live email broadcast is locked (ENABLE_VLE_EMAIL_BROADCAST != true). Main accounts protected.`);
-        emailBroadcastStatus = {
-          sent: 0,
-          mode: "SAFETY_LOCKED",
-        };
-      }
-    }
-
     return {
       success: true,
       data,
-      emailBroadcastStatus,
     };
   }
 
@@ -2259,7 +2194,20 @@ export class AdminService {
     }
 
     // 2. LIVE TARGETED DISPATCH TO SELECTED VLES
-    logger.info(`[AdminService] Dispatching targeted email (${language}) to ${recipientEmails.length} selected VLEs in parallel with retry.`);
+    logger.info(`[AdminService] Dispatching targeted email (${language}) to ${recipientEmails.length} selected VLEs in chunks of 10.`);
+
+    // Persist active campaign metadata to Redis so language, subject, message are permanent and locked
+    const campaignMeta = {
+      subject,
+      title: title || subject,
+      message,
+      language: language || "hi",
+      severity: severity || "info",
+      includeButton: includeButton !== false,
+      dispatchedAt: new Date().toISOString(),
+      totalRecipients: recipientEmails.length,
+    };
+    await redis.setJson("admin:latest_email_campaign", campaignMeta, 86400 * 30).catch(() => {});
 
     // Lookup recipient user records and organizations for dynamic personalization
     const users = await prisma.user.findMany({
@@ -2309,7 +2257,7 @@ export class AdminService {
           });
 
           if (res.success) {
-            // Log successful delivery to ApiLog audit trail
+            // Log successful delivery to ApiLog audit trail with explicit Language and Subject
             await prisma.apiLog.create({
               data: {
                 serviceCode: "EMAIL_DISPATCH",
@@ -2320,7 +2268,7 @@ export class AdminService {
                 statusCode: 200,
                 organizationId: orgId || null,
                 userId: userId || null,
-                note: `Delivered to ${email} (${vleName}) on attempt ${attempt}. MsgId: ${res.messageId || "N/A"}`,
+                note: `Delivered to ${email} (${vleName}) on attempt ${attempt}. MsgId: ${res.messageId || "N/A"} | Subject: "${subject}" | Lang: ${language}`,
               },
             }).catch(() => {});
             return { success: true, email };
@@ -2351,7 +2299,7 @@ export class AdminService {
       };
       failedDetails.push(failureRecord);
 
-      // 1. Persist failure to PostgreSQL ApiLog for permanent audit trail
+      // 1. Persist failure to PostgreSQL ApiLog for permanent audit trail with explicit Language and Subject
       await prisma.apiLog.create({
         data: {
           serviceCode: "EMAIL_DISPATCH",
@@ -2362,7 +2310,7 @@ export class AdminService {
           statusCode: 500,
           organizationId: orgId || null,
           userId: userId || null,
-          note: `FAILED after ${maxAttempts} retries: ${errorMessage} | Subject: "${subject}"`,
+          note: `FAILED after ${maxAttempts} retries: ${errorMessage} | Subject: "${subject}" | Lang: ${language}`,
         },
       }).catch((dbErr) => logger.warn("[AdminService] Failed to write failure to ApiLog:", dbErr));
 
@@ -2459,13 +2407,33 @@ export class AdminService {
         (l) => latestTime - new Date(l.createdAt).getTime() <= campaignWindowMs
       );
 
-      // Extract subject from note if present
-      let latestSubject = "Important Notification from Nagrik Seva Point";
-      for (const log of campaignLogs) {
-        if (log.note && log.note.includes('Subject: "')) {
-          const match = log.note.match(/Subject:\s*"([^"]+)"/);
-          if (match && match[1]) {
-            latestSubject = match[1];
+      // Extract subject and language from saved campaign or note
+      const savedCampaign = await redis.getJson<{
+        subject: string;
+        title: string;
+        message: string;
+        language: "hi" | "en";
+        severity: string;
+        includeButton: boolean;
+        dispatchedAt: string;
+      }>("admin:latest_email_campaign").catch(() => null);
+
+      let latestSubject = savedCampaign?.subject || "Important Notification from Nagrik Seva Point";
+      let campaignLang: "hi" | "en" = savedCampaign?.language || "hi";
+
+      if (!savedCampaign) {
+        for (const log of campaignLogs) {
+          if (log.note && log.note.includes('Subject: "')) {
+            const match = log.note.match(/Subject:\s*"([^"]+)"/);
+            if (match && match[1]) {
+              latestSubject = match[1];
+              break;
+            }
+          }
+        }
+        for (const log of campaignLogs) {
+          if (log.note?.includes("Lang: en") || latestSubject.includes("New Feature") || latestSubject.includes("Instant Wallet")) {
+            campaignLang = "en";
             break;
           }
         }
@@ -2521,6 +2489,11 @@ export class AdminService {
         sentCount: successLogs.length,
         failedCount: failedLogs.length,
         subject: latestSubject,
+        language: campaignLang,
+        title: savedCampaign?.title || latestSubject,
+        message: savedCampaign?.message || null,
+        severity: savedCampaign?.severity || "info",
+        includeButton: savedCampaign?.includeButton ?? true,
         failures,
         recentSuccesses: successLogs.slice(0, 10).map((s) => ({
           email: s.reference,
@@ -2536,6 +2509,11 @@ export class AdminService {
         sentCount: 0,
         failedCount: 0,
         subject: null,
+        language: "hi",
+        title: null,
+        message: null,
+        severity: "info",
+        includeButton: true,
         failures: [],
         recentSuccesses: [],
       };
@@ -2561,22 +2539,20 @@ export class AdminService {
     const failedEmails = audit.failures.map((f) => f.email);
     logger.info(`[AdminService] Resending email to ${failedEmails.length} failed recipients using chunking queue...`);
 
-    const defaultMsg = options?.language === "en"
-      ? "We are excited to announce that the Prepaid Wallet Service is now officially active on your retailer dashboard!\n\nSay goodbye to repetitive QR code scans and gateway delays for every single customer request. Simply top up your wallet once and enjoy instant 1-click checkouts with zero transaction drop-offs.\n\nServe your walk-in customers faster and save valuable time. Click the button below to add balance and start using your wallet today!"
-      : "हमें यह बताते हुए अत्यंत प्रसन्नता हो रही है कि आपके रिटेलर डैशबोर्ड पर वॉलेट सेवा (Wallet Service) सक्रिय कर दी गई है।\n\nअब आपको प्रत्येक नागरिक सेवा और ग्राहक के लिए बार-बार क्यूआर कोड स्कैन करने या अलग-अलग भुगतान करने की आवश्यकता नहीं होगी। केवल एक बार अपने वॉलेट को रिचार्ज करें और 1-क्लिक में बिना किसी रुकावट के सभी सेवाओं का त्वरित लाभ उठाएं।\n\nइससे बैंक सर्वर डाउन होने और पेमेंट अटकने की समस्या से हमेशा के लिए मुक्ति मिलेगी तथा आपके कीमती समय की बचत होगी।\n\nकृपया नीचे दिए गए बटन पर क्लिक करके अपना वॉलेट रिचार्ज करें और आज ही इस सुपरफास्ट सुविधा का लाभ उठाएं!";
-
-    const defaultSubject = options?.language === "en"
-      ? (audit.subject || "New Feature: Instant Wallet Service is Now Active on Nagrik Seva Point!")
-      : "🚀 महत्वपूर्ण सूचना: आपके डैशबोर्ड पर वॉलेट सेवा सक्रिय — अब 1-क्लिक में तुरंत काम करें!";
+    // Strictly preserve original campaign language: NEVER switch or translate behind the scenes!
+    const targetLanguage: "hi" | "en" = options?.language || audit.language || "hi";
+    const targetSubject = options?.subject?.trim() || audit.subject || (targetLanguage === "en" ? "Important Notification" : "महत्वपूर्ण सूचना");
+    const targetMessage = options?.message?.trim() || audit.message || (targetLanguage === "en" ? "Official service advisory from Nagrik Seva Point." : "नागरिक सेवा केंद्र से आधिकारिक सूचना।");
+    const targetTitle = options?.title?.trim() || targetSubject;
 
     return await this.sendTargetedVleEmail({
       recipientEmails: failedEmails,
-      subject: options?.subject?.trim() || defaultSubject,
-      title: options?.title?.trim() || defaultSubject,
-      message: options?.message?.trim() || defaultMsg,
-      language: options?.language || (audit.subject?.includes("New Feature") ? "en" : "hi"),
-      severity: options?.severity || "info",
-      includeButton: options?.includeButton !== false,
+      subject: targetSubject,
+      title: targetTitle,
+      message: targetMessage,
+      language: targetLanguage,
+      severity: (options?.severity as any) || (audit.severity as any) || "info",
+      includeButton: options?.includeButton !== undefined ? options.includeButton : (audit.includeButton ?? true),
     });
   }
 
