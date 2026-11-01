@@ -2378,10 +2378,22 @@ export class AdminService {
       return { success: false, email, reason: errorMessage };
     };
 
-    // Execute all recipients concurrently in parallel
-    const dispatchPromises = recipientEmails
-      .filter((e): e is string => Boolean(e && e.trim()))
-      .map((email) => {
+    // Process recipients in small chunks of 10 to ensure proxy socket stability and zero dropped requests
+    const BATCH_SIZE = 10;
+    const BATCH_DELAY_MS = 500;
+    const validEmails = recipientEmails.filter((e): e is string => Boolean(e && e.trim()));
+    const results: Array<{ success: boolean; email: string; reason?: string }> = [];
+
+    logger.info(`[AdminService] Starting chunked email dispatch for ${validEmails.length} recipients in batches of ${BATCH_SIZE} with ${BATCH_DELAY_MS}ms pacing...`);
+
+    for (let i = 0; i < validEmails.length; i += BATCH_SIZE) {
+      const chunk = validEmails.slice(i, i + BATCH_SIZE);
+      const chunkNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalChunks = Math.ceil(validEmails.length / BATCH_SIZE);
+
+      logger.info(`[AdminService] Dispatching batch ${chunkNumber}/${totalChunks} (${chunk.length} emails)...`);
+
+      const chunkPromises = chunk.map((email) => {
         const lowerEmail = email.toLowerCase().trim();
         const u = userMap.get(lowerEmail);
         const name = u?.name?.trim();
@@ -2391,29 +2403,190 @@ export class AdminService {
         return sendWithRetry(lowerEmail, vleName, orgId, userId);
       });
 
-    const results = await Promise.all(dispatchPromises);
+      const chunkResults = await Promise.all(chunkPromises);
+      results.push(...chunkResults);
+
+      if (i + BATCH_SIZE < validEmails.length) {
+        await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+      }
+    }
+
     const sentCount = results.filter((r) => r.success).length;
     const failures = results.filter((r) => !r.success).map((r) => r.email);
 
     return {
       success: true,
       mode: "LIVE_TARGETED",
+      totalCount: validEmails.length,
       sentCount,
       failedCount: failures.length,
       message: failures.length === 0
-        ? `Email successfully delivered to all ${sentCount} recipient(s).`
-        : `Delivered to ${sentCount} recipient(s), but ${failures.length} failed after 3 retries.`,
+        ? `Email successfully delivered to all ${sentCount} recipient(s) in safe 10-email batches.`
+        : `Delivered to ${sentCount} recipient(s), but ${failures.length} failed after retries.`,
       failures,
       failedDetails,
     };
   }
 
   /**
-   * Get list of email dispatch failures from Redis
+   * Get comprehensive email dispatch audit from Postgres ApiLog
+   */
+  async getEmailDispatchAudit() {
+    try {
+      const logs = await prisma.apiLog.findMany({
+        where: { serviceCode: "EMAIL_DISPATCH" },
+        orderBy: { createdAt: "desc" },
+        take: 350,
+      });
+
+      if (logs.length === 0) {
+        return {
+          hasHistory: false,
+          latestDispatchAt: null,
+          totalAttempted: 0,
+          sentCount: 0,
+          failedCount: 0,
+          subject: null,
+          failures: [],
+          recentSuccesses: [],
+        };
+      }
+
+      // Group recent logs within 2 hours of latest log as current session
+      const latestTime = new Date(logs[0].createdAt).getTime();
+      const campaignWindowMs = 2 * 60 * 60 * 1000;
+      const campaignLogs = logs.filter(
+        (l) => latestTime - new Date(l.createdAt).getTime() <= campaignWindowMs
+      );
+
+      // Extract subject from note if present
+      let latestSubject = "Important Notification from Nagrik Seva Point";
+      for (const log of campaignLogs) {
+        if (log.note && log.note.includes('Subject: "')) {
+          const match = log.note.match(/Subject:\s*"([^"]+)"/);
+          if (match && match[1]) {
+            latestSubject = match[1];
+            break;
+          }
+        }
+      }
+
+      // Deduplicate by recipient email to get latest status per VLE
+      const latestStatusPerEmail = new Map<string, typeof logs[0]>();
+      for (const log of campaignLogs) {
+        if (!latestStatusPerEmail.has(log.reference)) {
+          latestStatusPerEmail.set(log.reference, log);
+        }
+      }
+
+      const allUniqueVles = Array.from(latestStatusPerEmail.values());
+      const successLogs = allUniqueVles.filter((l) => l.status === "SUCCESS");
+      const failedLogs = allUniqueVles.filter((l) => l.status === "FAILED");
+
+      // Lookup user names for failed VLEs
+      const failedEmails = failedLogs.map((l) => l.reference);
+      const failedUsers = await prisma.user.findMany({
+        where: { email: { in: failedEmails } },
+        select: { email: true, name: true },
+      });
+      const nameMap = new Map(failedUsers.map((u) => [u.email.toLowerCase(), u.name]));
+
+      const failures = failedLogs.map((f) => {
+        let reason = "Socket timeout / connection drop";
+        if (f.note) {
+          if (f.note.includes("fetch failed")) {
+            reason = "Proxy connection reset / socket timeout";
+          } else if (f.note.includes("401")) {
+            reason = "Brevo IP unrecognised / authorization required";
+          } else {
+            const parts = f.note.split(":");
+            if (parts.length > 1) {
+              reason = parts[1].split("|")[0].trim();
+            }
+          }
+        }
+
+        return {
+          email: f.reference,
+          vleName: nameMap.get(f.reference.toLowerCase()) || "Retail Partner",
+          reason,
+          failedAt: f.createdAt.toISOString(),
+        };
+      });
+
+      return {
+        hasHistory: true,
+        latestDispatchAt: logs[0].createdAt.toISOString(),
+        totalAttempted: allUniqueVles.length,
+        sentCount: successLogs.length,
+        failedCount: failedLogs.length,
+        subject: latestSubject,
+        failures,
+        recentSuccesses: successLogs.slice(0, 10).map((s) => ({
+          email: s.reference,
+          deliveredAt: s.createdAt.toISOString(),
+        })),
+      };
+    } catch (err: any) {
+      logger.error("[AdminService] Failed to load email dispatch audit:", err);
+      return {
+        hasHistory: false,
+        latestDispatchAt: null,
+        totalAttempted: 0,
+        sentCount: 0,
+        failedCount: 0,
+        subject: null,
+        failures: [],
+        recentSuccesses: [],
+      };
+    }
+  }
+
+  /**
+   * Resend strictly to failed recipients using safe 10-email chunking queue
+   */
+  async resendFailedVleEmails(options?: {
+    subject?: string;
+    title?: string;
+    message?: string;
+    language?: "hi" | "en";
+    severity?: "info" | "warning" | "urgent" | "success";
+    includeButton?: boolean;
+  }) {
+    const audit = await this.getEmailDispatchAudit();
+    if (audit.failures.length === 0) {
+      throw AppError.badRequest("No failed recipients found to resend.", "NO_FAILED_RECIPIENTS");
+    }
+
+    const failedEmails = audit.failures.map((f) => f.email);
+    logger.info(`[AdminService] Resending email to ${failedEmails.length} failed recipients using chunking queue...`);
+
+    const defaultMsg = options?.language === "en"
+      ? "We are excited to announce that the Prepaid Wallet Service is now officially active on your retailer dashboard!\n\nSay goodbye to repetitive QR code scans and gateway delays for every single customer request. Simply top up your wallet once and enjoy instant 1-click checkouts with zero transaction drop-offs.\n\nServe your walk-in customers faster and save valuable time. Click the button below to add balance and start using your wallet today!"
+      : "हमें यह बताते हुए अत्यंत प्रसन्नता हो रही है कि आपके रिटेलर डैशबोर्ड पर वॉलेट सेवा (Wallet Service) सक्रिय कर दी गई है।\n\nअब आपको प्रत्येक नागरिक सेवा और ग्राहक के लिए बार-बार क्यूआर कोड स्कैन करने या अलग-अलग भुगतान करने की आवश्यकता नहीं होगी। केवल एक बार अपने वॉलेट को रिचार्ज करें और 1-क्लिक में बिना किसी रुकावट के सभी सेवाओं का त्वरित लाभ उठाएं।\n\nइससे बैंक सर्वर डाउन होने और पेमेंट अटकने की समस्या से हमेशा के लिए मुक्ति मिलेगी तथा आपके कीमती समय की बचत होगी।\n\nकृपया नीचे दिए गए बटन पर क्लिक करके अपना वॉलेट रिचार्ज करें और आज ही इस सुपरफास्ट सुविधा का लाभ उठाएं!";
+
+    const defaultSubject = options?.language === "en"
+      ? (audit.subject || "New Feature: Instant Wallet Service is Now Active on Nagrik Seva Point!")
+      : "🚀 महत्वपूर्ण सूचना: आपके डैशबोर्ड पर वॉलेट सेवा सक्रिय — अब 1-क्लिक में तुरंत काम करें!";
+
+    return await this.sendTargetedVleEmail({
+      recipientEmails: failedEmails,
+      subject: options?.subject?.trim() || defaultSubject,
+      title: options?.title?.trim() || defaultSubject,
+      message: options?.message?.trim() || defaultMsg,
+      language: options?.language || (audit.subject?.includes("New Feature") ? "en" : "hi"),
+      severity: options?.severity || "info",
+      includeButton: options?.includeButton !== false,
+    });
+  }
+
+  /**
+   * Get list of email dispatch failures from Postgres ApiLog
    */
   async getEmailDispatchFailures() {
     try {
-      return (await redis.getJson<any[]>("admin:email_dispatch_failures")) || [];
+      const audit = await this.getEmailDispatchAudit();
+      return audit.failures;
     } catch {
       return [];
     }

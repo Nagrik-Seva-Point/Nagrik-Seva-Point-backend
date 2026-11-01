@@ -221,6 +221,25 @@ adminRouter.post(
 );
 
 /**
+ * GET /admin/communications/dispatch-audit
+ * View comprehensive status: last dispatch time, success count, failed count, failures list
+ */
+adminRouter.get("/communications/dispatch-audit", async (c) => {
+  const audit = await adminService.getEmailDispatchAudit();
+  return c.json({ success: true, data: audit });
+});
+
+/**
+ * POST /admin/communications/resend-failures
+ * Resend targeted email strictly to failed recipients using batch chunking queue
+ */
+adminRouter.post("/communications/resend-failures", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const result = await adminService.resendFailedVleEmails(body);
+  return c.json(result);
+});
+
+/**
  * GET /admin/communications/dispatch-failures
  * View failed email deliveries after 3 retries
  */

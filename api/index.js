@@ -6203,6 +6203,28 @@ import { bearer, organization } from "better-auth/plugins";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 var BrevoMailService = class {
   brevoApiUrl = "https://api.brevo.com/v3/smtp/email";
+  cachedDispatcher = void 0;
+  lastProxyUrl = void 0;
+  getDispatcher() {
+    const activeProxyUrl = this.getProxyUrl();
+    if (!activeProxyUrl) return void 0;
+    if (this.cachedDispatcher && this.lastProxyUrl === activeProxyUrl) {
+      return this.cachedDispatcher;
+    }
+    try {
+      this.cachedDispatcher = new ProxyAgent({
+        uri: activeProxyUrl,
+        keepAliveTimeout: 3e4,
+        keepAliveMaxTimeout: 6e4
+      });
+      this.lastProxyUrl = activeProxyUrl;
+      const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
+      logger2.info(`[BREVO MAIL] Initialized pooled ProxyAgent via Static Proxy: ${maskedProxy}`);
+    } catch (err) {
+      logger2.error(`[BREVO MAIL] Failed to initialize ProxyAgent with URL "${activeProxyUrl}":`, err);
+    }
+    return this.cachedDispatcher;
+  }
   getProxyUrl() {
     const rawProxy = getEnvVar("BREVO_PROXY_URL") || getEnvVar("STATIC_PROXY_URL") || getEnvVar("PROXY_URL") || getEnvVar("EZYTM_PROXY_URL") || getEnvVar("WEBSHARE_URL") || getEnvVar("WEBSHARE_PROXY_URL") || getEnvVar("FIXIE_URL") || getEnvVar("QUOTAGUARDSTATIC_URL") || getEnvVar("HTTPS_PROXY") || getEnvVar("HTTP_PROXY");
     return rawProxy ? rawProxy.replace(/["']/g, "").trim() : void 0;
@@ -6248,17 +6270,7 @@ var BrevoMailService = class {
           payload.textContent = options.textContent;
         }
       }
-      const activeProxyUrl = this.getProxyUrl();
-      let dispatcher = void 0;
-      if (activeProxyUrl) {
-        try {
-          dispatcher = new ProxyAgent(activeProxyUrl);
-          const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
-          logger2.info(`[BREVO MAIL] Routing email dispatch via Static Proxy: ${maskedProxy}`);
-        } catch (err) {
-          logger2.error(`[BREVO MAIL] Failed to initialize ProxyAgent with URL "${activeProxyUrl}":`, err);
-        }
-      }
+      const dispatcher = this.getDispatcher();
       const fetchFn = dispatcher ? undiciFetch : fetch;
       const response = await fetchFn(this.brevoApiUrl, {
         method: "POST",
@@ -9954,7 +9966,7 @@ var PanService = class {
     logger2.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
     vendorWalletService.deductApiCost({
       serviceCode: "PAN_FIND",
-      unitCost: 2.5,
+      unitCost: 3,
       reference: `Aadhaar ending in ${aadhaar.slice(-4)}`
     }).catch((err) => {
       logger2.error("[PanService] Failed to deduct wallet balance for PAN_FIND:", err);
@@ -10067,7 +10079,7 @@ var PanService = class {
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
     vendorWalletService.deductApiCost({
       serviceCode: "PAN_DETAILS",
-      unitCost: 2,
+      unitCost: 2.5,
       reference: `PAN ending in ${cleanPan.slice(-4)}`
     }).catch((err) => {
       logger2.error("[PanService] Failed to deduct wallet balance for PAN_DETAILS:", err);
@@ -14143,8 +14155,8 @@ var AdminService = class {
         orderBy: { code: "asc" }
       });
       const defaultEstimatedCost = {
-        PAN_FIND: 2.5,
-        PAN_DETAILS: 2,
+        PAN_FIND: 3,
+        PAN_DETAILS: 2.5,
         KISAN_CARD: 0,
         KISAN_REGISTRATION_CARD: 0
       };
@@ -14361,8 +14373,8 @@ var AdminService = class {
         whereDate.createdAt = { gte: startDate };
       }
       const serviceCostMap = {
-        PAN_FIND: 2.5,
-        PAN_DETAILS: 2,
+        PAN_FIND: 3,
+        PAN_DETAILS: 2.5,
         KISAN_CARD: 0,
         KISAN_REGISTRATION_CARD: 0
       };
@@ -14509,7 +14521,7 @@ var AdminService = class {
       for (const log2 of upstreamApiLogs) {
         if (claimedLogIds.has(log2.id)) continue;
         const code = log2.serviceCode;
-        const unitCost = serviceCostMap[code] ?? (code === "PAN_FIND" ? 2.5 : 2);
+        const unitCost = serviceCostMap[code] ?? (code === "PAN_FIND" ? 3 : 2.5);
         if (code === "PAN_FIND") panFindCalls++;
         else if (code === "PAN_DETAILS") panDetailsCalls++;
         else otherCalls++;
@@ -14563,13 +14575,13 @@ var AdminService = class {
       const dropoffRate = 100 - conversionRate;
       const plainApiWalletBurn = {
         panFindCalls,
-        panFindBurn: Number((panFindCalls * 2.5).toFixed(2)),
+        panFindBurn: Number((panFindCalls * 3).toFixed(2)),
         panDetailsCalls,
-        panDetailsBurn: Number((panDetailsCalls * 2).toFixed(2)),
+        panDetailsBurn: Number((panDetailsCalls * 2.5).toFixed(2)),
         otherCalls,
         otherBurn: 0,
         totalCalls: panFindCalls + panDetailsCalls,
-        totalCreditBurned: Number((panFindCalls * 2.5 + panDetailsCalls * 2).toFixed(2))
+        totalCreditBurned: Number((panFindCalls * 3 + panDetailsCalls * 2.5).toFixed(2))
       };
       const serviceBreakdown = Object.values(serviceMap).filter((s) => s.totalInvocations > 0).map((s) => {
         const serviceNet = s.completedRevenue - (s.fulfilledCost + s.wastedCost);
@@ -15162,34 +15174,173 @@ var AdminService = class {
       }
       return { success: false, email, reason: errorMessage };
     };
-    const dispatchPromises = recipientEmails.filter((e) => Boolean(e && e.trim())).map((email) => {
-      const lowerEmail = email.toLowerCase().trim();
-      const u = userMap.get(lowerEmail);
-      const name = u?.name?.trim();
-      const vleName = name ? name : isEn ? "Retail Partner" : "\u0938\u092E\u094D\u092E\u093E\u0928\u093F\u0924 \u0935\u0940\u090F\u0932\u0908 \u092C\u0902\u0927\u0941";
-      const orgId = u?.members?.[0]?.organizationId;
-      const userId = u?.id;
-      return sendWithRetry(lowerEmail, vleName, orgId, userId);
-    });
-    const results = await Promise.all(dispatchPromises);
+    const BATCH_SIZE = 10;
+    const BATCH_DELAY_MS = 500;
+    const validEmails = recipientEmails.filter((e) => Boolean(e && e.trim()));
+    const results = [];
+    logger2.info(`[AdminService] Starting chunked email dispatch for ${validEmails.length} recipients in batches of ${BATCH_SIZE} with ${BATCH_DELAY_MS}ms pacing...`);
+    for (let i = 0; i < validEmails.length; i += BATCH_SIZE) {
+      const chunk = validEmails.slice(i, i + BATCH_SIZE);
+      const chunkNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalChunks = Math.ceil(validEmails.length / BATCH_SIZE);
+      logger2.info(`[AdminService] Dispatching batch ${chunkNumber}/${totalChunks} (${chunk.length} emails)...`);
+      const chunkPromises = chunk.map((email) => {
+        const lowerEmail = email.toLowerCase().trim();
+        const u = userMap.get(lowerEmail);
+        const name = u?.name?.trim();
+        const vleName = name ? name : isEn ? "Retail Partner" : "\u0938\u092E\u094D\u092E\u093E\u0928\u093F\u0924 \u0935\u0940\u090F\u0932\u0908 \u092C\u0902\u0927\u0941";
+        const orgId = u?.members?.[0]?.organizationId;
+        const userId = u?.id;
+        return sendWithRetry(lowerEmail, vleName, orgId, userId);
+      });
+      const chunkResults = await Promise.all(chunkPromises);
+      results.push(...chunkResults);
+      if (i + BATCH_SIZE < validEmails.length) {
+        await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+      }
+    }
     const sentCount = results.filter((r) => r.success).length;
     const failures = results.filter((r) => !r.success).map((r) => r.email);
     return {
       success: true,
       mode: "LIVE_TARGETED",
+      totalCount: validEmails.length,
       sentCount,
       failedCount: failures.length,
-      message: failures.length === 0 ? `Email successfully delivered to all ${sentCount} recipient(s).` : `Delivered to ${sentCount} recipient(s), but ${failures.length} failed after 3 retries.`,
+      message: failures.length === 0 ? `Email successfully delivered to all ${sentCount} recipient(s) in safe 10-email batches.` : `Delivered to ${sentCount} recipient(s), but ${failures.length} failed after retries.`,
       failures,
       failedDetails
     };
   }
   /**
-   * Get list of email dispatch failures from Redis
+   * Get comprehensive email dispatch audit from Postgres ApiLog
+   */
+  async getEmailDispatchAudit() {
+    try {
+      const logs = await prisma.apiLog.findMany({
+        where: { serviceCode: "EMAIL_DISPATCH" },
+        orderBy: { createdAt: "desc" },
+        take: 350
+      });
+      if (logs.length === 0) {
+        return {
+          hasHistory: false,
+          latestDispatchAt: null,
+          totalAttempted: 0,
+          sentCount: 0,
+          failedCount: 0,
+          subject: null,
+          failures: [],
+          recentSuccesses: []
+        };
+      }
+      const latestTime = new Date(logs[0].createdAt).getTime();
+      const campaignWindowMs = 2 * 60 * 60 * 1e3;
+      const campaignLogs = logs.filter(
+        (l) => latestTime - new Date(l.createdAt).getTime() <= campaignWindowMs
+      );
+      let latestSubject = "Important Notification from Nagrik Seva Point";
+      for (const log2 of campaignLogs) {
+        if (log2.note && log2.note.includes('Subject: "')) {
+          const match2 = log2.note.match(/Subject:\s*"([^"]+)"/);
+          if (match2 && match2[1]) {
+            latestSubject = match2[1];
+            break;
+          }
+        }
+      }
+      const latestStatusPerEmail = /* @__PURE__ */ new Map();
+      for (const log2 of campaignLogs) {
+        if (!latestStatusPerEmail.has(log2.reference)) {
+          latestStatusPerEmail.set(log2.reference, log2);
+        }
+      }
+      const allUniqueVles = Array.from(latestStatusPerEmail.values());
+      const successLogs = allUniqueVles.filter((l) => l.status === "SUCCESS");
+      const failedLogs = allUniqueVles.filter((l) => l.status === "FAILED");
+      const failedEmails = failedLogs.map((l) => l.reference);
+      const failedUsers = await prisma.user.findMany({
+        where: { email: { in: failedEmails } },
+        select: { email: true, name: true }
+      });
+      const nameMap = new Map(failedUsers.map((u) => [u.email.toLowerCase(), u.name]));
+      const failures = failedLogs.map((f) => {
+        let reason = "Socket timeout / connection drop";
+        if (f.note) {
+          if (f.note.includes("fetch failed")) {
+            reason = "Proxy connection reset / socket timeout";
+          } else if (f.note.includes("401")) {
+            reason = "Brevo IP unrecognised / authorization required";
+          } else {
+            const parts = f.note.split(":");
+            if (parts.length > 1) {
+              reason = parts[1].split("|")[0].trim();
+            }
+          }
+        }
+        return {
+          email: f.reference,
+          vleName: nameMap.get(f.reference.toLowerCase()) || "Retail Partner",
+          reason,
+          failedAt: f.createdAt.toISOString()
+        };
+      });
+      return {
+        hasHistory: true,
+        latestDispatchAt: logs[0].createdAt.toISOString(),
+        totalAttempted: allUniqueVles.length,
+        sentCount: successLogs.length,
+        failedCount: failedLogs.length,
+        subject: latestSubject,
+        failures,
+        recentSuccesses: successLogs.slice(0, 10).map((s) => ({
+          email: s.reference,
+          deliveredAt: s.createdAt.toISOString()
+        }))
+      };
+    } catch (err) {
+      logger2.error("[AdminService] Failed to load email dispatch audit:", err);
+      return {
+        hasHistory: false,
+        latestDispatchAt: null,
+        totalAttempted: 0,
+        sentCount: 0,
+        failedCount: 0,
+        subject: null,
+        failures: [],
+        recentSuccesses: []
+      };
+    }
+  }
+  /**
+   * Resend strictly to failed recipients using safe 10-email chunking queue
+   */
+  async resendFailedVleEmails(options) {
+    const audit = await this.getEmailDispatchAudit();
+    if (audit.failures.length === 0) {
+      throw AppError.badRequest("No failed recipients found to resend.", "NO_FAILED_RECIPIENTS");
+    }
+    const failedEmails = audit.failures.map((f) => f.email);
+    logger2.info(`[AdminService] Resending email to ${failedEmails.length} failed recipients using chunking queue...`);
+    const defaultMsg = options?.language === "en" ? "We are excited to announce that the Prepaid Wallet Service is now officially active on your retailer dashboard!\n\nSay goodbye to repetitive QR code scans and gateway delays for every single customer request. Simply top up your wallet once and enjoy instant 1-click checkouts with zero transaction drop-offs.\n\nServe your walk-in customers faster and save valuable time. Click the button below to add balance and start using your wallet today!" : "\u0939\u092E\u0947\u0902 \u092F\u0939 \u092C\u0924\u093E\u0924\u0947 \u0939\u0941\u090F \u0905\u0924\u094D\u092F\u0902\u0924 \u092A\u094D\u0930\u0938\u0928\u094D\u0928\u0924\u093E \u0939\u094B \u0930\u0939\u0940 \u0939\u0948 \u0915\u093F \u0906\u092A\u0915\u0947 \u0930\u093F\u091F\u0947\u0932\u0930 \u0921\u0948\u0936\u092C\u094B\u0930\u094D\u0921 \u092A\u0930 \u0935\u0949\u0932\u0947\u091F \u0938\u0947\u0935\u093E (Wallet Service) \u0938\u0915\u094D\u0930\u093F\u092F \u0915\u0930 \u0926\u0940 \u0917\u0908 \u0939\u0948\u0964\n\n\u0905\u092C \u0906\u092A\u0915\u094B \u092A\u094D\u0930\u0924\u094D\u092F\u0947\u0915 \u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0914\u0930 \u0917\u094D\u0930\u093E\u0939\u0915 \u0915\u0947 \u0932\u093F\u090F \u092C\u093E\u0930-\u092C\u093E\u0930 \u0915\u094D\u092F\u0942\u0906\u0930 \u0915\u094B\u0921 \u0938\u094D\u0915\u0948\u0928 \u0915\u0930\u0928\u0947 \u092F\u093E \u0905\u0932\u0917-\u0905\u0932\u0917 \u092D\u0941\u0917\u0924\u093E\u0928 \u0915\u0930\u0928\u0947 \u0915\u0940 \u0906\u0935\u0936\u094D\u092F\u0915\u0924\u093E \u0928\u0939\u0940\u0902 \u0939\u094B\u0917\u0940\u0964 \u0915\u0947\u0935\u0932 \u090F\u0915 \u092C\u093E\u0930 \u0905\u092A\u0928\u0947 \u0935\u0949\u0932\u0947\u091F \u0915\u094B \u0930\u093F\u091A\u093E\u0930\u094D\u091C \u0915\u0930\u0947\u0902 \u0914\u0930 1-\u0915\u094D\u0932\u093F\u0915 \u092E\u0947\u0902 \u092C\u093F\u0928\u093E \u0915\u093F\u0938\u0940 \u0930\u0941\u0915\u093E\u0935\u091F \u0915\u0947 \u0938\u092D\u0940 \u0938\u0947\u0935\u093E\u0913\u0902 \u0915\u093E \u0924\u094D\u0935\u0930\u093F\u0924 \u0932\u093E\u092D \u0909\u0920\u093E\u090F\u0902\u0964\n\n\u0907\u0938\u0938\u0947 \u092C\u0948\u0902\u0915 \u0938\u0930\u094D\u0935\u0930 \u0921\u093E\u0909\u0928 \u0939\u094B\u0928\u0947 \u0914\u0930 \u092A\u0947\u092E\u0947\u0902\u091F \u0905\u091F\u0915\u0928\u0947 \u0915\u0940 \u0938\u092E\u0938\u094D\u092F\u093E \u0938\u0947 \u0939\u092E\u0947\u0936\u093E \u0915\u0947 \u0932\u093F\u090F \u092E\u0941\u0915\u094D\u0924\u093F \u092E\u093F\u0932\u0947\u0917\u0940 \u0924\u0925\u093E \u0906\u092A\u0915\u0947 \u0915\u0940\u092E\u0924\u0940 \u0938\u092E\u092F \u0915\u0940 \u092C\u091A\u0924 \u0939\u094B\u0917\u0940\u0964\n\n\u0915\u0943\u092A\u092F\u093E \u0928\u0940\u091A\u0947 \u0926\u093F\u090F \u0917\u090F \u092C\u091F\u0928 \u092A\u0930 \u0915\u094D\u0932\u093F\u0915 \u0915\u0930\u0915\u0947 \u0905\u092A\u0928\u093E \u0935\u0949\u0932\u0947\u091F \u0930\u093F\u091A\u093E\u0930\u094D\u091C \u0915\u0930\u0947\u0902 \u0914\u0930 \u0906\u091C \u0939\u0940 \u0907\u0938 \u0938\u0941\u092A\u0930\u092B\u093E\u0938\u094D\u091F \u0938\u0941\u0935\u093F\u0927\u093E \u0915\u093E \u0932\u093E\u092D \u0909\u0920\u093E\u090F\u0902!";
+    const defaultSubject = options?.language === "en" ? audit.subject || "New Feature: Instant Wallet Service is Now Active on Nagrik Seva Point!" : "\u{1F680} \u092E\u0939\u0924\u094D\u0935\u092A\u0942\u0930\u094D\u0923 \u0938\u0942\u091A\u0928\u093E: \u0906\u092A\u0915\u0947 \u0921\u0948\u0936\u092C\u094B\u0930\u094D\u0921 \u092A\u0930 \u0935\u0949\u0932\u0947\u091F \u0938\u0947\u0935\u093E \u0938\u0915\u094D\u0930\u093F\u092F \u2014 \u0905\u092C 1-\u0915\u094D\u0932\u093F\u0915 \u092E\u0947\u0902 \u0924\u0941\u0930\u0902\u0924 \u0915\u093E\u092E \u0915\u0930\u0947\u0902!";
+    return await this.sendTargetedVleEmail({
+      recipientEmails: failedEmails,
+      subject: options?.subject?.trim() || defaultSubject,
+      title: options?.title?.trim() || defaultSubject,
+      message: options?.message?.trim() || defaultMsg,
+      language: options?.language || (audit.subject?.includes("New Feature") ? "en" : "hi"),
+      severity: options?.severity || "info",
+      includeButton: options?.includeButton !== false
+    });
+  }
+  /**
+   * Get list of email dispatch failures from Postgres ApiLog
    */
   async getEmailDispatchFailures() {
     try {
-      return await redis.getJson("admin:email_dispatch_failures") || [];
+      const audit = await this.getEmailDispatchAudit();
+      return audit.failures;
     } catch {
       return [];
     }
@@ -15389,6 +15540,15 @@ adminRouter.post(
     return c.json(result);
   }
 );
+adminRouter.get("/communications/dispatch-audit", async (c) => {
+  const audit = await adminService.getEmailDispatchAudit();
+  return c.json({ success: true, data: audit });
+});
+adminRouter.post("/communications/resend-failures", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const result = await adminService.resendFailedVleEmails(body);
+  return c.json(result);
+});
 adminRouter.get("/communications/dispatch-failures", async (c) => {
   const failures = await adminService.getEmailDispatchFailures();
   return c.json({ success: true, data: failures });

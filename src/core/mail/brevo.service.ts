@@ -22,6 +22,29 @@ export interface SendEmailOptions {
 
 export class BrevoMailService {
   private readonly brevoApiUrl = "https://api.brevo.com/v3/smtp/email";
+  private cachedDispatcher: ProxyAgent | undefined = undefined;
+  private lastProxyUrl: string | undefined = undefined;
+
+  public getDispatcher(): ProxyAgent | undefined {
+    const activeProxyUrl = this.getProxyUrl();
+    if (!activeProxyUrl) return undefined;
+    if (this.cachedDispatcher && this.lastProxyUrl === activeProxyUrl) {
+      return this.cachedDispatcher;
+    }
+    try {
+      this.cachedDispatcher = new ProxyAgent({
+        uri: activeProxyUrl,
+        keepAliveTimeout: 30000,
+        keepAliveMaxTimeout: 60000,
+      });
+      this.lastProxyUrl = activeProxyUrl;
+      const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
+      logger.info(`[BREVO MAIL] Initialized pooled ProxyAgent via Static Proxy: ${maskedProxy}`);
+    } catch (err) {
+      logger.error(`[BREVO MAIL] Failed to initialize ProxyAgent with URL "${activeProxyUrl}":`, err);
+    }
+    return this.cachedDispatcher;
+  }
 
   public getProxyUrl(): string | undefined {
     const rawProxy =
@@ -98,19 +121,7 @@ export class BrevoMailService {
         }
       }
 
-      const activeProxyUrl = this.getProxyUrl();
-      let dispatcher: ProxyAgent | undefined = undefined;
-
-      if (activeProxyUrl) {
-        try {
-          dispatcher = new ProxyAgent(activeProxyUrl);
-          const maskedProxy = activeProxyUrl.replace(/:[^:@]+@/, ":****@");
-          logger.info(`[BREVO MAIL] Routing email dispatch via Static Proxy: ${maskedProxy}`);
-        } catch (err) {
-          logger.error(`[BREVO MAIL] Failed to initialize ProxyAgent with URL "${activeProxyUrl}":`, err);
-        }
-      }
-
+      const dispatcher = this.getDispatcher();
       const fetchFn = dispatcher ? undiciFetch : fetch;
 
       const response = await fetchFn(this.brevoApiUrl, {
