@@ -221,6 +221,24 @@ adminRouter.post(
 );
 
 /**
+ * GET /admin/communications/dispatch-failures
+ * View failed email deliveries after 3 retries
+ */
+adminRouter.get("/communications/dispatch-failures", async (c) => {
+  const failures = await adminService.getEmailDispatchFailures();
+  return c.json({ success: true, data: failures });
+});
+
+/**
+ * DELETE /admin/communications/dispatch-failures
+ * Clear email dispatch failure records
+ */
+adminRouter.delete("/communications/dispatch-failures", async (c) => {
+  const result = await adminService.clearEmailDispatchFailures();
+  return c.json(result);
+});
+
+/**
  * 10. Manual Wallet Credit/Debit Adjustment
  * POST /admin/organizations/:id/wallet/adjust
  */

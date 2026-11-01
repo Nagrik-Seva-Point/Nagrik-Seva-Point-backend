@@ -2259,16 +2259,18 @@ export class AdminService {
     }
 
     // 2. LIVE TARGETED DISPATCH TO SELECTED VLES
-    logger.info(`[AdminService] Dispatching targeted email (${language}) to ${recipientEmails.length} selected VLEs.`);
+    logger.info(`[AdminService] Dispatching targeted email (${language}) to ${recipientEmails.length} selected VLEs in parallel with retry.`);
 
     // Lookup recipient user records and organizations for dynamic personalization
     const users = await prisma.user.findMany({
       where: { email: { in: recipientEmails } },
       select: {
+        id: true,
         email: true,
         name: true,
         members: {
           select: {
+            organizationId: true,
             organization: {
               select: { name: true },
             },
@@ -2280,50 +2282,153 @@ export class AdminService {
 
     const userMap = new Map(users.map((u) => [u.email.toLowerCase(), u]));
 
-    let sentCount = 0;
-    const failures: string[] = [];
+    const failedDetails: Array<{
+      email: string;
+      vleName: string;
+      reason: string;
+      attempts: number;
+      failedAt: string;
+    }> = [];
 
-    for (const email of recipientEmails) {
-      if (!email) continue;
-      const lowerEmail = email.toLowerCase().trim();
-      const u = userMap.get(lowerEmail);
-      const name = u?.name?.trim();
-      const vleName = name
-        ? name
-        : isEn
-        ? "Retail Partner"
-        : "सम्मानित वीएलई बंधु";
+    // Helper: Send single email with automatic retries (up to 3 attempts with exponential backoff)
+    const sendWithRetry = async (email: string, vleName: string, orgId?: string, userId?: string) => {
+      const maxAttempts = 3;
+      let lastError: any = null;
 
-      try {
-        const res = await brevoMailService.sendVLEBroadcastEmail({
-          to: email,
-          vleName,
-          title: title || subject,
-          customSubject: subject,
-          message,
-          severity,
-          language,
-          includeButton,
-        });
-        if (res.success) {
-          sentCount++;
-        } else {
-          failures.push(email);
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const res = await brevoMailService.sendVLEBroadcastEmail({
+            to: email,
+            vleName,
+            title: title || subject,
+            customSubject: subject,
+            message,
+            severity,
+            language,
+            includeButton,
+          });
+
+          if (res.success) {
+            // Log successful delivery to ApiLog audit trail
+            await prisma.apiLog.create({
+              data: {
+                serviceCode: "EMAIL_DISPATCH",
+                action: "Targeted VLE Email",
+                endpoint: "/admin/communications/send-targeted-email",
+                reference: email,
+                status: "SUCCESS",
+                statusCode: 200,
+                organizationId: orgId || null,
+                userId: userId || null,
+                note: `Delivered to ${email} (${vleName}) on attempt ${attempt}. MsgId: ${res.messageId || "N/A"}`,
+              },
+            }).catch(() => {});
+            return { success: true, email };
+          } else {
+            lastError = new Error(res.error || "Brevo returned unsuccessful status");
+          }
+        } catch (err: any) {
+          lastError = err;
         }
-      } catch (err) {
-        logger.warn(`[AdminService] Failed to deliver targeted email to ${email}:`, err);
-        failures.push(email);
+
+        // If failed and attempts remain, delay before next retry
+        if (attempt < maxAttempts) {
+          const backoffDelay = attempt === 1 ? 500 : 1200;
+          await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+        }
       }
-    }
+
+      // If we reach here, it failed ALL 3 retries
+      const errorMessage = lastError?.message || "Delivery failed after 3 retry attempts";
+      logger.error(`[AdminService] Critical: Email failed after ${maxAttempts} retries for ${email}: ${errorMessage}`);
+
+      const failureRecord = {
+        email,
+        vleName,
+        reason: errorMessage,
+        attempts: maxAttempts,
+        failedAt: new Date().toISOString(),
+      };
+      failedDetails.push(failureRecord);
+
+      // 1. Persist failure to PostgreSQL ApiLog for permanent audit trail
+      await prisma.apiLog.create({
+        data: {
+          serviceCode: "EMAIL_DISPATCH",
+          action: "Targeted VLE Email",
+          endpoint: "/admin/communications/send-targeted-email",
+          reference: email,
+          status: "FAILED",
+          statusCode: 500,
+          organizationId: orgId || null,
+          userId: userId || null,
+          note: `FAILED after ${maxAttempts} retries: ${errorMessage} | Subject: "${subject}"`,
+        },
+      }).catch((dbErr) => logger.warn("[AdminService] Failed to write failure to ApiLog:", dbErr));
+
+      // 2. Persist failure to Redis for instant retrieval and alert inspection
+      try {
+        const existing = (await redis.getJson<any[]>("admin:email_dispatch_failures")) || [];
+        const updated = [{ ...failureRecord, subject, language }, ...existing].slice(0, 50);
+        await redis.setJson("admin:email_dispatch_failures", updated, 86400 * 7); // Retain for 7 days
+      } catch (redisErr) {
+        logger.warn("[AdminService] Failed to push failure to Redis:", redisErr);
+      }
+
+      return { success: false, email, reason: errorMessage };
+    };
+
+    // Execute all recipients concurrently in parallel
+    const dispatchPromises = recipientEmails
+      .filter((e): e is string => Boolean(e && e.trim()))
+      .map((email) => {
+        const lowerEmail = email.toLowerCase().trim();
+        const u = userMap.get(lowerEmail);
+        const name = u?.name?.trim();
+        const vleName = name ? name : isEn ? "Retail Partner" : "सम्मानित वीएलई बंधु";
+        const orgId = u?.members?.[0]?.organizationId;
+        const userId = u?.id;
+        return sendWithRetry(lowerEmail, vleName, orgId, userId);
+      });
+
+    const results = await Promise.all(dispatchPromises);
+    const sentCount = results.filter((r) => r.success).length;
+    const failures = results.filter((r) => !r.success).map((r) => r.email);
 
     return {
       success: true,
       mode: "LIVE_TARGETED",
       sentCount,
       failedCount: failures.length,
-      message: `Email successfully delivered to ${sentCount} recipient(s).`,
+      message: failures.length === 0
+        ? `Email successfully delivered to all ${sentCount} recipient(s).`
+        : `Delivered to ${sentCount} recipient(s), but ${failures.length} failed after 3 retries.`,
       failures,
+      failedDetails,
     };
+  }
+
+  /**
+   * Get list of email dispatch failures from Redis
+   */
+  async getEmailDispatchFailures() {
+    try {
+      return (await redis.getJson<any[]>("admin:email_dispatch_failures")) || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Clear email dispatch failures
+   */
+  async clearEmailDispatchFailures() {
+    try {
+      await redis.del("admin:email_dispatch_failures");
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
   }
 }
 
