@@ -96,6 +96,14 @@ export class PanService {
       };
     }
 
+    // 24-HOUR REDIS CACHE CHECK (Saves ₹2.50 per duplicate lookup across both guest and logged-in users)
+    const cacheKey = `cache:pan_find:aadhaar:${aadhaar.trim()}`;
+    const cachedResult = await redis.getJson<PanFindOutput>(cacheKey);
+    if (cachedResult && cachedResult.maskedPan && cachedResult.searchToken) {
+      logger.info(`[PanService] ⚡ Cache HIT for Aadhaar ending in ${aadhaar.slice(-4)}. Served from 24h Redis cache (₹0 API burn).`);
+      return cachedResult;
+    }
+
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
     logger.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
 
@@ -119,12 +127,20 @@ export class PanService {
           pan: panNumber,
           aadhaarMasked: `XXXXXXXX${aadhaar.slice(-4)}`,
         });
-        logger.info(`[PanService] Successfully matched PAN (Masked: ${maskedPan}, Token Encrypted)`);
-
-        return {
+        
+        const result: PanFindOutput = {
           maskedPan,
           searchToken,
         };
+
+        // Cache in Redis for 24 hours (86,400 seconds)
+        await redis.setJson(cacheKey, result, 86400).catch((cacheErr) => {
+          logger.warn("[PanService] Failed to cache PAN_FIND result:", cacheErr);
+        });
+
+        logger.info(`[PanService] Successfully matched PAN (Masked: ${maskedPan}, Cached 24h in Redis)`);
+
+        return result;
       }
 
       // Handled case: PAN is linked according to official API, but PAN number is not exposed/found in this response
@@ -224,6 +240,14 @@ export class PanService {
       throw AppError.badRequest("Verification provider gateway timed out. Please try again.", "PAN_DETAILS_FAILED");
     }
 
+    // 24-HOUR REDIS CACHE CHECK (Saves ₹2.00 per duplicate lookup across both guest and logged-in users)
+    const cacheKey = `cache:pan_details:pan:${cleanPan}`;
+    const cachedDetails = await redis.getJson<PanDetailsOutput>(cacheKey);
+    if (cachedDetails && cachedDetails.pan) {
+      logger.info(`[PanService] ⚡ Cache HIT for PAN ${cleanPan.slice(0, 5)}****. Served from 24h Redis cache (₹0 API burn).`);
+      return cachedDetails;
+    }
+
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
 
     // In-flight automatic company vendor wallet deduction (₹2.00 per hit)
@@ -239,7 +263,7 @@ export class PanService {
 
     if (response.Errorcode === 100 && response.data) {
       const d = response.data;
-      return {
+      const detailsResult: PanDetailsOutput = {
         pan: d.pan_number || cleanPan,
         fullName: d.full_name || "N/A",
         maskedAadhaar: d.masked_aadhaar || "N/A",
@@ -254,6 +278,13 @@ export class PanService {
           ? `${d.category.charAt(0).toUpperCase() + d.category.slice(1)}`
           : "Individual",
       };
+
+      // Cache successful PAN details in Redis for 24 hours (86,400 seconds)
+      await redis.setJson(cacheKey, detailsResult, 86400).catch((cacheErr) => {
+        logger.warn("[PanService] Failed to cache PAN_DETAILS result:", cacheErr);
+      });
+
+      return detailsResult;
     }
 
     const failureReason = response.msg ||

@@ -1,4 +1,5 @@
 import { prisma } from "../../core/db/prisma";
+import { redis } from "../../core/redis/redis.client";
 import { logger } from "../../core/logger/logger";
 import { panService } from "../pan/pan.service";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
@@ -47,16 +48,22 @@ export class ServiceDispatcher {
         case "PAN_FIND": {
           const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
           const input = (request.inputData || {}) as Record<string, unknown>;
-          const searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : "") || "";
+          let searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : "") || "";
           
+          if (!searchToken && typeof input?.aadhaar === "string" && input.aadhaar) {
+            const panRes = await panService.findPanByAadhaar(String(input.aadhaar));
+            searchToken = panRes.searchToken;
+          }
+
           if (!searchToken) {
-            throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
+            throw new Error("Missing searchToken or Aadhaar for PAN_FIND service");
           }
 
           const decrypted = decryptPanToken(searchToken);
           resultData = {
             pan: decrypted.pan,
-            maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX1234",
+            maskedPan: `XXXXX${decrypted.pan.slice(5)}`,
+            maskedAadhaar: decrypted.aadhaarMasked || (input?.aadhaar ? `XXXXXXXX${String(input.aadhaar).slice(-4)}` : "XXXXXXXX1234"),
             status: "SUCCESS",
             message: "PAN number retrieved successfully",
           };
@@ -130,6 +137,56 @@ export class ServiceDispatcher {
             status: "SUCCESS",
             vaultActive: true,
             completedAt: new Date().toISOString(),
+          };
+          break;
+        }
+
+        case "WALLET_TOPUP": {
+          const orgId = request.organizationId;
+          const topupAmount = Number(request.amount);
+          if (!orgId) {
+            throw new Error("Missing organizationId for WALLET_TOPUP");
+          }
+
+          // Atomically credit the retailer organization's wallet balance
+          const { newBalance, transaction } = await prisma.$transaction(async (tx) => {
+            let wallet = await tx.wallet.findUnique({ where: { organizationId: orgId } });
+            if (!wallet) {
+              wallet = await tx.wallet.create({
+                data: { organizationId: orgId, balance: 0.00, currency: "INR" },
+              });
+            }
+
+            const updatedWallet = await tx.wallet.update({
+              where: { id: wallet.id },
+              data: { balance: { increment: topupAmount } },
+            });
+            const newBal = Number(updatedWallet.balance);
+
+            const txRecord = await tx.walletTransaction.create({
+              data: {
+                walletId: wallet.id,
+                amount: topupAmount,
+                type: "CREDIT",
+                balanceAfter: newBal,
+                referenceId: serviceRequestId,
+                description: `Wallet Top-up via UPI / Cashfree (${request.referenceNumber})`,
+              },
+            });
+
+            return { newBalance: newBal, transaction: txRecord };
+          });
+
+          // Invalidate cache
+          redis.delPattern(`cache:wallet:${orgId}:*`).catch(() => {});
+          redis.delPattern(`cache:requests:query:${orgId}:*`).catch(() => {});
+
+          resultData = {
+            status: "SUCCESS",
+            message: `Wallet recharged successfully with ₹${topupAmount.toFixed(2)}`,
+            topupAmount,
+            newBalance,
+            transactionId: transaction.id,
           };
           break;
         }

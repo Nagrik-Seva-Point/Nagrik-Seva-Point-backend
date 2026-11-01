@@ -14,6 +14,7 @@ const retailerPaymentSelect = {
   orderId: true,
   transactionId: true,
   paymentMode: true,
+  bankReference: true,
   errorMessage: true,
   paidAt: true,
   createdAt: true,

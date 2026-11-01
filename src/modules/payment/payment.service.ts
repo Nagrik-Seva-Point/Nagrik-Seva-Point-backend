@@ -6,6 +6,11 @@ import { cashfreeGateway } from "../../core/integrations/cashfree/cashfree.gatew
 import { serviceDispatcher } from "../services/service.dispatcher";
 import { sanitizeDpdpData } from "../../core/logger/api-logger";
 import { randomUUID } from "crypto";
+import { serviceService } from "../services/service.service";
+import { pricingService } from "../pricing/pricing.service";
+import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
+import { paymentEmailService } from "../../core/mail/payment-email.service";
+import type { RequestContext } from "../../core/types/context.types";
 
 function sanitizeGatewayPayload(payload: unknown): Record<string, unknown> | undefined {
   if (!payload || typeof payload !== "object") return undefined;
@@ -263,7 +268,11 @@ export class PaymentService {
           { serviceRequestId: identifier },
         ]
       },
-      include: { serviceRequest: true }
+      include: {
+        serviceRequest: {
+          include: { service: true },
+        },
+      },
     });
 
     if (!payment) {
@@ -318,6 +327,76 @@ export class PaymentService {
     } catch (err) {
       logger.error(`[PaymentService] Fulfillment failed for Request ${payment.serviceRequestId}:`, err);
     }
+
+    // 4. Trigger Payment Success Email Notification
+    try {
+      let recipientEmail = "operator@nagriksevapoint.in";
+      let recipientName = "Operator";
+      let resolvedOrgName: string | undefined = undefined;
+      let newBalance: number | undefined = undefined;
+
+      if (payment.userId) {
+        const u = await prisma.user.findUnique({
+          where: { id: payment.userId },
+          include: {
+            members: {
+              include: {
+                organization: {
+                  include: { wallet: true },
+                },
+              },
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
+        if (u?.email) recipientEmail = u.email;
+        if (u?.name) recipientName = u.name;
+
+        const primaryMember = u?.members?.[0];
+        if (primaryMember?.organization) {
+          resolvedOrgName = primaryMember.organization.name;
+          if (primaryMember.organization.wallet) {
+            newBalance = Number(primaryMember.organization.wallet.balance);
+          }
+        }
+      }
+
+      const orgId = payment.organizationId || payment.serviceRequest?.organizationId;
+      if (orgId) {
+        const org = await prisma.organization.findUnique({
+          where: { id: orgId },
+          include: { wallet: true },
+        });
+        if (org?.name) {
+          resolvedOrgName = org.name;
+        }
+        if (org?.wallet) {
+          newBalance = Number(org.wallet.balance);
+        }
+      }
+
+      if (!resolvedOrgName && payment.serviceRequest?.inputData) {
+        const input = payment.serviceRequest.inputData as any;
+        if (input?.orgName && typeof input.orgName === "string") {
+          resolvedOrgName = input.orgName;
+        }
+      }
+
+      await paymentEmailService.notifyPaymentSuccess({
+        to: recipientEmail,
+        userName: recipientName,
+        orgName: resolvedOrgName,
+        amount: Number(payment.amount),
+        newBalance,
+        orderId: payment.orderId || payment.id,
+        paymentId: String(txId),
+        bankReference: details?.bankReference,
+        paymentMode: details?.paymentMode || payment.paymentMode || "UPI",
+        serviceName: payment.serviceRequest?.service?.name || "Cyber Café Wallet Top-up",
+      });
+    } catch (mailErr) {
+      logger.warn(`[PaymentService] Non-blocking payment success notification warning:`, mailErr);
+    }
   }
 
   async markPaymentFailed(
@@ -334,7 +413,10 @@ export class PaymentService {
           { orderId: identifier },
           { serviceRequestId: identifier },
         ]
-      }
+      },
+      include: {
+        serviceRequest: true,
+      },
     });
 
     if (!payment) return;
@@ -364,6 +446,528 @@ export class PaymentService {
         note: `Payment failed: ${safeError || "Payment declined or cancelled by gateway"}`,
       },
     });
+
+    // Trigger Payment Failed Email Notification
+    try {
+      let recipientEmail = "operator@nagriksevapoint.in";
+      let recipientName = "Operator";
+      let resolvedOrgName: string | undefined = undefined;
+
+      if (payment.userId) {
+        const u = await prisma.user.findUnique({
+          where: { id: payment.userId },
+          include: {
+            members: {
+              include: {
+                organization: true,
+              },
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
+        if (u?.email) recipientEmail = u.email;
+        if (u?.name) recipientName = u.name;
+
+        const primaryMember = u?.members?.[0];
+        if (primaryMember?.organization?.name) {
+          resolvedOrgName = primaryMember.organization.name;
+        }
+      }
+
+      const orgId = payment.organizationId || payment.serviceRequest?.organizationId;
+      if (orgId) {
+        const org = await prisma.organization.findUnique({
+          where: { id: orgId },
+        });
+        if (org?.name) {
+          resolvedOrgName = org.name;
+        }
+      }
+
+      if (!resolvedOrgName && payment.serviceRequest?.inputData) {
+        const input = payment.serviceRequest.inputData as any;
+        if (input?.orgName && typeof input.orgName === "string") {
+          resolvedOrgName = input.orgName;
+        }
+      }
+
+      await paymentEmailService.notifyPaymentFailed({
+        to: recipientEmail,
+        userName: recipientName,
+        orgName: resolvedOrgName,
+        amount: Number(payment.amount),
+        orderId: payment.orderId || payment.id,
+        errorMessage: safeError,
+      });
+    } catch (mailErr) {
+      logger.warn(`[PaymentService] Non-blocking payment failure notification warning:`, mailErr);
+    }
+  }
+
+  /**
+   * Get organization wallet balance
+   */
+  async getWalletBalance(organizationId: string) {
+    let wallet = await prisma.wallet.findUnique({
+      where: { organizationId },
+    });
+
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          organizationId,
+          balance: 0.00,
+          currency: "INR",
+        },
+      });
+    }
+
+    const recentTransactions = await prisma.walletTransaction.findMany({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+
+    return {
+      walletId: wallet.id,
+      balance: Number(wallet.balance),
+      currency: wallet.currency,
+      recentTransactions: recentTransactions.map((tx) => ({
+        id: tx.id,
+        amount: Number(tx.amount),
+        type: tx.type,
+        balanceAfter: Number(tx.balanceAfter),
+        description: tx.description,
+        createdAt: tx.createdAt,
+      })),
+    };
+  }
+
+  /**
+   * Get Paginated Wallet Transactions with Filtering and Aggregations
+   */
+  async getWalletTransactions(
+    organizationId: string,
+    options?: { page?: number; limit?: number; type?: string; search?: string }
+  ) {
+    let wallet = await prisma.wallet.findUnique({
+      where: { organizationId },
+    });
+
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          organizationId,
+          balance: 0.00,
+          currency: "INR",
+        },
+      });
+    }
+
+    const page = Math.max(1, Number(options?.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(options?.limit || 20)));
+    const skip = (page - 1) * limit;
+
+    const whereClause: any = {
+      walletId: wallet.id,
+    };
+
+    if (options?.type && options.type !== "ALL") {
+      const typeUpper = options.type.toUpperCase();
+      if (typeUpper === "REFUND") {
+        whereClause.type = "CREDIT";
+        whereClause.description = { contains: "refund", mode: "insensitive" };
+      } else if (typeUpper === "CREDIT") {
+        whereClause.type = "CREDIT";
+        whereClause.NOT = { description: { contains: "refund", mode: "insensitive" } };
+      } else if (typeUpper === "DEBIT") {
+        whereClause.type = "DEBIT";
+      }
+    }
+
+    if (options?.search?.trim()) {
+      const q = options.search.trim();
+      whereClause.OR = [
+        { description: { contains: q, mode: "insensitive" } },
+        { referenceId: { contains: q, mode: "insensitive" } },
+      ];
+    }
+
+    const [total, items, debitSum, refundSum, totalCreditSum] = await Promise.all([
+      prisma.walletTransaction.count({ where: whereClause }),
+      prisma.walletTransaction.findMany({
+        where: whereClause,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.walletTransaction.aggregate({
+        where: { walletId: wallet.id, type: "DEBIT" },
+        _sum: { amount: true },
+      }),
+      prisma.walletTransaction.aggregate({
+        where: {
+          walletId: wallet.id,
+          type: "CREDIT",
+          description: { contains: "refund", mode: "insensitive" },
+        },
+        _sum: { amount: true },
+      }),
+      prisma.walletTransaction.aggregate({
+        where: { walletId: wallet.id, type: "CREDIT" },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    const totalDebited = Number(debitSum._sum.amount || 0);
+    const totalRefunded = Number(refundSum._sum.amount || 0);
+    const totalCredited = Math.max(0, Number(totalCreditSum._sum.amount || 0) - totalRefunded);
+
+    return {
+      balance: Number(wallet.balance),
+      currency: wallet.currency,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+      stats: {
+        totalCredited,
+        totalDebited,
+        totalRefunded,
+      },
+      items: items.map((tx) => {
+        const isRef = tx.type === "CREDIT" && !!tx.description?.toLowerCase().includes("refund");
+        return {
+          id: tx.id,
+          amount: Number(tx.amount),
+          type: isRef ? ("REFUND" as const) : tx.type,
+          balanceAfter: Number(tx.balanceAfter),
+          referenceId: tx.referenceId,
+          description: tx.description,
+          createdAt: tx.createdAt,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Direct Wallet Payment with 100% Instant Refund Guarantee on failure
+   */
+  async payWithWallet(
+    context: RequestContext,
+    input: {
+      serviceCode: string;
+      customerId?: string;
+      inputData?: any;
+    }
+  ) {
+    if (!context.organizationId || !context.userId) {
+      throw AppError.forbidden("Retailer login required to pay via wallet");
+    }
+
+    // 1. Resolve service and pricing
+    const service = await serviceService.getServiceByCode(input.serviceCode, context);
+    if (!service.isActive) {
+      throw AppError.badRequest("Requested service is currently disabled", "SERVICE_DISABLED");
+    }
+
+    const priceSnapshot = await pricingService.calculatePrice(service.id, context.pricingTier);
+    const servicePrice = Number(priceSnapshot.amount);
+
+    // 2. Fetch or initialize wallet
+    let wallet = await prisma.wallet.findUnique({
+      where: { organizationId: context.organizationId },
+    });
+
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          organizationId: context.organizationId,
+          balance: 0.00,
+          currency: "INR",
+        },
+      });
+    }
+
+    const currentBalance = Number(wallet.balance);
+    if (currentBalance < servicePrice) {
+      throw AppError.badRequest(
+        `अपर्याप्त वॉलेट बैलेंस (Insufficient Balance)। वर्तमान बैलेंस ₹${currentBalance.toFixed(2)} है, जबकि इस सेवा का शुल्क ₹${servicePrice.toFixed(2)} है। कृपया वॉलेट रिचार्ज करें।`,
+        "INSUFFICIENT_WALLET_BALANCE"
+      );
+    }
+
+    // 3. Generate Reference
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const referenceNumber = `REQ-${dateStr}-${service.code}-${randomSuffix}`;
+
+    const rawInput = (input.inputData || {}) as Record<string, unknown>;
+
+    // 4. Atomic Deduction & Request Creation
+    const { request, balanceAfterDebit } = await prisma.$transaction(async (tx) => {
+      const updatedWallet = await tx.wallet.update({
+        where: { id: wallet.id },
+        data: { balance: { decrement: servicePrice } },
+      });
+      const newBal = Number(updatedWallet.balance);
+
+      const walTx = await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          amount: servicePrice,
+          type: "DEBIT",
+          balanceAfter: newBal,
+          referenceId: referenceNumber,
+          description: `Wallet Payment: ${service.name} (${referenceNumber})`,
+        },
+      });
+
+      const newReq = await tx.serviceRequest.create({
+        data: {
+          referenceNumber,
+          serviceId: service.id,
+          accessMode: "RETAILER",
+          pricingTier: context.pricingTier || "PARTNER",
+          userId: context.userId,
+          organizationId: context.organizationId,
+          customerId: input.customerId || null,
+          amount: servicePrice,
+          currency: "INR",
+          status: "PAYMENT_CAPTURED",
+          inputData: (input.inputData || {}) as any,
+        },
+      });
+
+      await tx.payment.create({
+        data: {
+          serviceRequestId: newReq.id,
+          organizationId: context.organizationId,
+          userId: context.userId,
+          amount: servicePrice,
+          currency: "INR",
+          method: "WALLET",
+          status: "CAPTURED",
+          paidAt: new Date(),
+          paymentMode: "WALLET_DEDUCTION",
+          orderId: referenceNumber,
+          transactionId: walTx.id,
+          bankReference: `WAL-${Date.now()}`,
+        },
+      });
+
+      await tx.serviceRequestEvent.create({
+        data: {
+          serviceRequestId: newReq.id,
+          status: "PAYMENT_CAPTURED",
+          note: `Paid ₹${servicePrice.toFixed(2)} directly from Organization Wallet. New Balance: ₹${newBal.toFixed(2)}`,
+        },
+      });
+
+      return { request: newReq, balanceAfterDebit: newBal };
+    });
+
+    // Stash search token in ephemeral vault if passed
+    if (rawInput.searchToken || rawInput.pan) {
+      await ephemeralVault.stashTempSearchToken(
+        request.id,
+        String(rawInput.searchToken || rawInput.pan)
+      );
+    }
+
+    // 5. Trigger service fulfillment
+    try {
+      await serviceDispatcher.fulfillAsync(request.id);
+
+      const finalReq = await prisma.serviceRequest.findUnique({
+        where: { id: request.id },
+      });
+
+      if (finalReq?.status === "PROVIDER_FAILED") {
+        throw new Error("Upstream government registry returned no matching record");
+      }
+
+      const vault = await ephemeralVault.getVaultItem(request.id);
+
+      return {
+        success: true,
+        serviceRequestId: request.id,
+        referenceNumber,
+        amount: servicePrice,
+        newBalance: balanceAfterDebit,
+        data: vault.data,
+        message: "Payment successful and verified record unlocked!",
+      };
+    } catch (fulfillmentErr: any) {
+      // 6. 100% AUTOMATIC INSTANT REFUND TO WALLET ON FAILURE
+      logger.warn(`[PaymentService] Service execution failed for ${request.id}. Issuing instant 100% wallet refund...`);
+
+      const balanceAfterRefund = await prisma.$transaction(async (tx) => {
+        const refWallet = await tx.wallet.update({
+          where: { id: wallet.id },
+          data: { balance: { increment: servicePrice } },
+        });
+        const refBal = Number(refWallet.balance);
+
+        await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            amount: servicePrice,
+            type: "CREDIT",
+            balanceAfter: refBal,
+            referenceId: request.id,
+            description: `Instant Refund: ${service.name} failed (${referenceNumber})`,
+          },
+        });
+
+        await tx.payment.updateMany({
+          where: { serviceRequestId: request.id },
+          data: {
+            status: "REFUNDED",
+            refundedAt: new Date(),
+            errorMessage: `Auto-refunded to wallet: ${fulfillmentErr?.message || "Service failure"}`,
+          },
+        });
+
+        await tx.serviceRequest.update({
+          where: { id: request.id },
+          data: { status: "REFUNDED" },
+        });
+
+        await tx.serviceRequestEvent.create({
+          data: {
+            serviceRequestId: request.id,
+            status: "REFUNDED",
+            note: `₹${servicePrice.toFixed(2)} instantly refunded back to retailer wallet due to verification failure`,
+          },
+        });
+
+        return refBal;
+      });
+
+      return {
+        success: false,
+        refunded: true,
+        serviceRequestId: request.id,
+        referenceNumber,
+        amount: servicePrice,
+        newBalance: balanceAfterRefund,
+        message: `सत्यापन असफल रहा। ₹${servicePrice.toFixed(2)} आपके वॉलेट में तुरंत (Instant Refund) वापस जमा कर दिए गए हैं। आपका वर्तमान वॉलेट बैलेंस: ₹${balanceAfterRefund.toFixed(2)}।`,
+      };
+    }
+  }
+
+  /**
+   * Create a Cashfree Payment Order for Retailer Organization Wallet Top-up
+   */
+  async createWalletTopupOrder(
+    context: { userId: string; organizationId: string },
+    amount: number
+  ) {
+    if (!context.organizationId || !context.userId) {
+      throw AppError.forbidden("Retailer login required to top-up wallet", "AUTH_REQUIRED");
+    }
+
+    const numAmount = Number(amount);
+    if (!numAmount || isNaN(numAmount) || numAmount < 10) {
+      throw AppError.badRequest("न्यूनतम टॉप-अप राशि ₹10 है (Minimum top-up amount is ₹10)");
+    }
+    if (numAmount > 50000) {
+      throw AppError.badRequest("अधिकतम टॉप-अप राशि ₹50,000 है (Maximum top-up amount is ₹50,000)");
+    }
+
+    // 1. Ensure WALLET_TOPUP service exists
+    let service = await prisma.service.findUnique({
+      where: { code: "WALLET_TOPUP" },
+    });
+
+    if (!service) {
+      service = await prisma.service.create({
+        data: {
+          code: "WALLET_TOPUP",
+          name: "Wallet Balance Top-up",
+          description: "Instant UPI / QR recharge for retailer organization wallet",
+          isPublicAllowed: false,
+          isRetailerAllowed: true,
+          requiresCustomer: false,
+          requiresUpload: false,
+          producesDocument: false,
+        },
+      });
+    }
+
+    // 2. Fetch User & Org Details
+    const [user, org] = await Promise.all([
+      prisma.user.findUnique({ where: { id: context.userId } }),
+      prisma.organization.findUnique({ where: { id: context.organizationId } }),
+    ]);
+
+    const customerName = user?.name || org?.name || "Cyber Café Retailer";
+    const customerEmail = user?.email || "retailer@nagriksevapoint.in";
+    const customerPhone = user?.phone ? user.phone.replace(/[^0-9]/g, "").slice(-10) : "9876543210";
+
+    // 3. Generate Unique Reference Number
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const referenceNumber = `REQ-${dateStr}-TOPUP-${randomSuffix}`;
+
+    // 4. Create ServiceRequest in REQUEST_CREATED status
+    const request = await prisma.serviceRequest.create({
+      data: {
+        referenceNumber,
+        serviceId: service.id,
+        accessMode: "RETAILER",
+        pricingTier: "PARTNER",
+        userId: context.userId,
+        organizationId: context.organizationId,
+        amount: numAmount,
+        currency: "INR",
+        status: "REQUEST_CREATED",
+        inputData: {
+          topupAmount: numAmount,
+          orgName: org?.name || "Cyber Café",
+        },
+      },
+    });
+
+    await prisma.serviceRequestEvent.create({
+      data: {
+        serviceRequestId: request.id,
+        status: "REQUEST_CREATED",
+        note: `Initiated Wallet Top-up order for ₹${numAmount.toFixed(2)} via Cashfree UPI Gateway`,
+      },
+    });
+
+    // 5. Create Cashfree Order
+    const orderNote = `Wallet Top-up ₹${numAmount.toFixed(2)} (${org?.name || "Café"})`;
+    const paymentSession = await this.createCashfreeOrderFromRequest(
+      {
+        id: request.id,
+        amount: numAmount,
+        organizationId: context.organizationId,
+      },
+      context.userId,
+      null,
+      customerName,
+      customerEmail,
+      customerPhone,
+      orderNote,
+      {
+        type: "WALLET_TOPUP",
+        organizationId: context.organizationId,
+      }
+    );
+
+    return {
+      serviceRequestId: request.id,
+      referenceNumber,
+      amount: numAmount,
+      currency: "INR",
+      payment: paymentSession,
+      order_id: paymentSession.order_id,
+      payment_session_id: paymentSession.payment_session_id,
+      mode: paymentSession.mode,
+    };
   }
 }
 

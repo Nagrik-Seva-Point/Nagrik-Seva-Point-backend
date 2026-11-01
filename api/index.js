@@ -9943,6 +9943,12 @@ var PanService = class {
         })
       };
     }
+    const cacheKey = `cache:pan_find:aadhaar:${aadhaar.trim()}`;
+    const cachedResult = await redis.getJson(cacheKey);
+    if (cachedResult && cachedResult.maskedPan && cachedResult.searchToken) {
+      logger2.info(`[PanService] \u26A1 Cache HIT for Aadhaar ending in ${aadhaar.slice(-4)}. Served from 24h Redis cache (\u20B90 API burn).`);
+      return cachedResult;
+    }
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
     logger2.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
     vendorWalletService.deductApiCost({
@@ -9960,11 +9966,15 @@ var PanService = class {
           pan: panNumber,
           aadhaarMasked: `XXXXXXXX${aadhaar.slice(-4)}`
         });
-        logger2.info(`[PanService] Successfully matched PAN (Masked: ${maskedPan}, Token Encrypted)`);
-        return {
+        const result = {
           maskedPan,
           searchToken
         };
+        await redis.setJson(cacheKey, result, 86400).catch((cacheErr) => {
+          logger2.warn("[PanService] Failed to cache PAN_FIND result:", cacheErr);
+        });
+        logger2.info(`[PanService] Successfully matched PAN (Masked: ${maskedPan}, Cached 24h in Redis)`);
+        return result;
       }
       if (response.Data?.Message?.toLowerCase() === "linked") {
         const linkedMsg = "PAN is linked with this Aadhaar number, but PAN number were not found. Please try again later.";
@@ -10047,6 +10057,12 @@ var PanService = class {
       logger2.info(`[PanService] Test PAN (Timeout Simulation) detected.`);
       throw AppError.badRequest("Verification provider gateway timed out. Please try again.", "PAN_DETAILS_FAILED");
     }
+    const cacheKey = `cache:pan_details:pan:${cleanPan}`;
+    const cachedDetails = await redis.getJson(cacheKey);
+    if (cachedDetails && cachedDetails.pan) {
+      logger2.info(`[PanService] \u26A1 Cache HIT for PAN ${cleanPan.slice(0, 5)}****. Served from 24h Redis cache (\u20B90 API burn).`);
+      return cachedDetails;
+    }
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
     vendorWalletService.deductApiCost({
       serviceCode: "PAN_DETAILS",
@@ -10057,7 +10073,7 @@ var PanService = class {
     });
     if (response.Errorcode === 100 && response.data) {
       const d = response.data;
-      return {
+      const detailsResult = {
         pan: d.pan_number || cleanPan,
         fullName: d.full_name || "N/A",
         maskedAadhaar: d.masked_aadhaar || "N/A",
@@ -10066,6 +10082,10 @@ var PanService = class {
         aadhaarLinked: Boolean(d.aadhaar_linked),
         category: d.category ? `${d.category.charAt(0).toUpperCase() + d.category.slice(1)}` : "Individual"
       };
+      await redis.setJson(cacheKey, detailsResult, 86400).catch((cacheErr) => {
+        logger2.warn("[PanService] Failed to cache PAN_DETAILS result:", cacheErr);
+      });
+      return detailsResult;
     }
     const failureReason = response.msg || "Failed to retrieve PAN details from official registry.";
     if (isVendorLowBalance(response.Errorcode, failureReason)) {
@@ -10553,14 +10573,19 @@ var ServiceDispatcher = class {
         case "PAN_FIND": {
           const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
           const input = request.inputData || {};
-          const searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : "") || "";
+          let searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : "") || "";
+          if (!searchToken && typeof input?.aadhaar === "string" && input.aadhaar) {
+            const panRes = await panService.findPanByAadhaar(String(input.aadhaar));
+            searchToken = panRes.searchToken;
+          }
           if (!searchToken) {
-            throw new Error("Missing searchToken in ephemeral vault for PAN_FIND service");
+            throw new Error("Missing searchToken or Aadhaar for PAN_FIND service");
           }
           const decrypted = decryptPanToken(searchToken);
           resultData = {
             pan: decrypted.pan,
-            maskedAadhaar: decrypted.aadhaarMasked || "XXXXXXXX1234",
+            maskedPan: `XXXXX${decrypted.pan.slice(5)}`,
+            maskedAadhaar: decrypted.aadhaarMasked || (input?.aadhaar ? `XXXXXXXX${String(input.aadhaar).slice(-4)}` : "XXXXXXXX1234"),
             status: "SUCCESS",
             message: "PAN number retrieved successfully"
           };
@@ -10632,6 +10657,49 @@ var ServiceDispatcher = class {
           };
           break;
         }
+        case "WALLET_TOPUP": {
+          const orgId = request.organizationId;
+          const topupAmount = Number(request.amount);
+          if (!orgId) {
+            throw new Error("Missing organizationId for WALLET_TOPUP");
+          }
+          const { newBalance, transaction } = await prisma.$transaction(async (tx) => {
+            let wallet = await tx.wallet.findUnique({ where: { organizationId: orgId } });
+            if (!wallet) {
+              wallet = await tx.wallet.create({
+                data: { organizationId: orgId, balance: 0, currency: "INR" }
+              });
+            }
+            const updatedWallet = await tx.wallet.update({
+              where: { id: wallet.id },
+              data: { balance: { increment: topupAmount } }
+            });
+            const newBal = Number(updatedWallet.balance);
+            const txRecord = await tx.walletTransaction.create({
+              data: {
+                walletId: wallet.id,
+                amount: topupAmount,
+                type: "CREDIT",
+                balanceAfter: newBal,
+                referenceId: serviceRequestId,
+                description: `Wallet Top-up via UPI / Cashfree (${request.referenceNumber})`
+              }
+            });
+            return { newBalance: newBal, transaction: txRecord };
+          });
+          redis.delPattern(`cache:wallet:${orgId}:*`).catch(() => {
+          });
+          redis.delPattern(`cache:requests:query:${orgId}:*`).catch(() => {
+          });
+          resultData = {
+            status: "SUCCESS",
+            message: `Wallet recharged successfully with \u20B9${topupAmount.toFixed(2)}`,
+            topupAmount,
+            newBalance,
+            transactionId: transaction.id
+          };
+          break;
+        }
         default:
           throw new Error(`Unsupported service code: ${request.service.code}`);
       }
@@ -10680,6 +10748,590 @@ var serviceDispatcher = new ServiceDispatcher();
 
 // src/modules/payment/payment.service.ts
 import { randomUUID } from "crypto";
+
+// src/core/mail/payment-email.service.ts
+var PaymentEmailService = class {
+  /**
+   * Formats a name with honorific "Namaste {Name}" for email greetings. If the name is empty or undefined, defaults to "Operator".
+   */
+  formatGreetingName(name) {
+    const clean = (name || "Operator").trim();
+    if (clean.toLowerCase()) {
+      return clean;
+    }
+    return `${clean}`;
+  }
+  /**
+   * Generates production-ready, mobile-responsive HTML for Payment / Wallet Topup Success
+   * Language: Professional English (with "Namaste {Name}" greeting)
+   * Palette: Nagrik Orange (#FD3820), Nagrik Navy (#122134), Slate 50 (#F8FAFC)
+   */
+  generateSuccessEmailHtml(params) {
+    const rawUserName = params.userName || "Operator";
+    const greeting = `Namaste ${this.formatGreetingName(rawUserName)},`;
+    const orgName = params.orgName?.trim() || (rawUserName !== "Operator" ? `${rawUserName}'s Cyber Caf\xE9` : "Cyber Caf\xE9");
+    const amountStr = Number(params.amount || 0).toFixed(2);
+    const balanceStr = params.newBalance !== void 0 ? Number(params.newBalance).toFixed(2) : void 0;
+    const dateStr = params.paidAt || (/* @__PURE__ */ new Date()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+    const orderId = params.orderId || "CF_ORD_PREVIEW";
+    const txnId = params.paymentId || params.bankReference || "TXN_UPI_LIVE";
+    const mode = params.paymentMode || "UPI / QR Gateway";
+    const service = params.serviceName || "Cyber Caf\xE9 Wallet Top-up";
+    const subject = `Payment Received (\u20B9${amountStr}) - Nagrik Seva Point`;
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${subject}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #122134;">
+  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #F8FAFC; padding: 24px 12px;">
+    <tr>
+      <td align="center">
+        <!-- Main Card Container -->
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #FFFFFF; border-radius: 16px; overflow: hidden; border: 1px solid #CBD5E1; box-shadow: 0 4px 16px rgba(18, 33, 52, 0.06);">
+          
+          <!-- Top Nagrik Orange Brand Stripe -->
+          <tr>
+            <td style="height: 5px; background: linear-gradient(90deg, #FD3820 0%, #D92D16 100%);"></td>
+          </tr>
+
+          <!-- Core Header with Official Website Logo -->
+          <tr>
+            <td style="background-color: #FFFFFF; padding: 24px 32px 20px 32px; text-align: center; border-bottom: 1px solid #E2E8F0;">
+              <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center">
+                    <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                      <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" width="220" style="display: block; border: 0; outline: none; text-decoration: none; max-width: 220px; height: auto; margin: 0 auto;" />
+                    </a>
+                    <div style="font-size: 11px; font-weight: 700; color: #FD3820; text-transform: uppercase; letter-spacing: 1.2px; margin-top: 8px;">
+                      Official Retailer &amp; Operator Desk
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Success Alert Ribbon -->
+          <tr>
+            <td style="background-color: #ECFDF5; border-bottom: 1px solid #D1FAE5; padding: 13px 24px; text-align: center;">
+              <div style="display: inline-block; vertical-align: middle;">
+                <span style="display: inline-block; background-color: #059669; color: #FFFFFF; font-size: 11px; font-weight: 800; padding: 3px 10px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 8px;">
+                  \u2713 Payment Successful
+                </span>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Body Content -->
+          <tr>
+            <td style="padding: 28px 32px 24px 32px;">
+              <!-- Greeting with 'Namaste {Name}' -->
+              <h1 style="margin: 0 0 10px 0; font-size: 18px; font-weight: 800; color: #122134;">
+                ${greeting}
+              </h1>
+              <p style="margin: 0 0 22px 0; font-size: 14px; line-height: 1.6; color: #475569;">
+                Your payment of <strong style="color: #122134;">\u20B9${amountStr}</strong> for <strong style="color: #122134;">${orgName}</strong> has been successfully processed and credited to your Nagrik Seva Point wallet.
+              </p>
+
+              <!-- Highlighted Amount Card -->
+              <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 12px; margin-bottom: 24px;">
+                <tr>
+                  <td style="padding: 20px; text-align: center;">
+                    <div style="font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px;">
+                      Amount Paid
+                    </div>
+                    <div style="font-size: 34px; font-weight: 800; color: #059669; font-family: monospace; letter-spacing: -1px;">
+                      \u20B9${amountStr}
+                    </div>
+                    ${balanceStr !== void 0 ? `<div style="margin-top: 8px; font-size: 12px; font-weight: 700; color: #122134; background-color: #ECFDF5; display: inline-block; padding: 5px 14px; border-radius: 8px; border: 1px solid #A7F3D0;">
+                            New Available Balance: <span style="font-family: monospace; font-weight: 800; color: #059669;">\u20B9${balanceStr}</span>
+                          </div>` : ""}
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Transaction Summary Table with Proper Row Gaps for Mobile -->
+              <div style="font-size: 11px; font-weight: 800; color: #64748B; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px;">
+                Transaction Summary
+              </div>
+              <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 26px;">
+                <!-- Row 1: Cyber Caf\xE9 / Organization -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Cyber Caf\xE9 / Organization</td>
+                        <td width="58%" style="font-size: 13px; color: #122134; font-weight: 800; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-word;">${orgName}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 2: Operator -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Operator</td>
+                        <td width="58%" style="font-size: 13px; color: #122134; font-weight: 700; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-word;">${rawUserName}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 3: Purpose / Service -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Purpose / Service</td>
+                        <td width="58%" style="font-size: 13px; color: #122134; font-weight: 700; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-word;">${service}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 4: Order ID -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="38%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Order ID</td>
+                        <td width="62%" style="font-size: 12px; color: #122134; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-all;">${orderId}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 5: Payment Ref / Txn ID -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="38%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Payment Ref / Txn ID</td>
+                        <td width="62%" style="font-size: 12px; color: #122134; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 600; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-all;">${txnId}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 6: Payment Method -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Payment Method</td>
+                        <td width="58%" style="font-size: 13px; color: #122134; font-weight: 600; line-height: 1.4; text-align: right; vertical-align: middle;">${mode}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 7: Date & Time -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Date &amp; Time</td>
+                        <td width="58%" style="font-size: 13px; color: #122134; font-weight: 600; line-height: 1.4; text-align: right; vertical-align: middle;">${dateStr}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Nagrik Orange Signature Action Button -->
+              <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 24px;">
+                <tr>
+                  <td align="center">
+                    <a href="https://nagriksevapoint.in/dashboard" target="_blank" style="display: inline-block; background-color: #FD3820; color: #FFFFFF; font-size: 14px; font-weight: 700; text-decoration: none; padding: 13px 34px; border-radius: 12px; box-shadow: 0 4px 10px rgba(253, 56, 32, 0.25);">
+                      Open Dashboard &bull; Launch Services &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Official Website Matched Footer -->
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #CBD5E1; padding: 22px 32px; text-align: center; font-size: 12px; color: #64748B; line-height: 1.6;">
+              <div style="font-weight: 800; color: #122134; margin-bottom: 4px;">
+                Nagrik Seva Point &bull; Digital Infrastructure for Cyber Caf\xE9s &amp; CSC Desks
+              </div>
+              <div style="margin-bottom: 6px;">
+                Website: <a href="https://nagriksevapoint.in" style="color: #FD3820; text-decoration: none; font-weight: 700;">nagriksevapoint.in</a>
+                &nbsp;&bull;&nbsp;
+                Helpdesk: <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; text-decoration: none; font-weight: 700;">nagriksevapoint@gmail.com</a>
+              </div>
+              <div style="font-size: 11px; color: #94A3B8;">
+                &copy; ${(/* @__PURE__ */ new Date()).getFullYear()} Nagrik Seva Point. All rights reserved.
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+    const text = `
+NAGRIK SEVA POINT - PAYMENT SUCCESSFUL
+========================================
+${greeting}
+
+Your payment of Rs.${amountStr} for ${orgName} has been successfully processed and credited to your Nagrik Seva Point wallet.
+
+TRANSACTION DETAILS:
+- Cyber Caf\xE9 / Organization: ${orgName}
+- Operator: ${rawUserName}
+- Service / Purpose: ${service}
+- Amount: Rs.${amountStr}
+${balanceStr ? `- New Available Balance: Rs.${balanceStr}
+` : ""}- Order ID: ${orderId}
+- Transaction Reference: ${txnId}
+- Payment Method: ${mode}
+- Date & Time: ${dateStr}
+
+Open your dashboard to continue: https://nagriksevapoint.in/dashboard
+
+Regards,
+Team Nagrik Seva Point
+Website: https://nagriksevapoint.in | Helpdesk: nagriksevapoint@gmail.com
+`;
+    return { subject, html, text };
+  }
+  /**
+   * Generates production-ready, mobile-responsive HTML for Payment Failed / Unsuccessful
+   * Language: Professional English (with "Namaste {Name}" greeting)
+   */
+  generateFailedEmailHtml(params) {
+    const rawUserName = params.userName || "Operator";
+    const greeting = `Namaste ${this.formatGreetingName(rawUserName)},`;
+    const orgName = params.orgName?.trim() || (rawUserName !== "Operator" ? `${rawUserName}'s Cyber Caf\xE9` : "Cyber Caf\xE9");
+    const amountStr = Number(params.amount || 0).toFixed(2);
+    const dateStr = params.failedAt || (/* @__PURE__ */ new Date()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+    const orderId = params.orderId || "CF_ORD_PREVIEW";
+    const reason = params.errorMessage || "Transaction declined or timed out by issuing bank / UPI application.";
+    const subject = `Payment Unsuccessful (\u20B9${amountStr}) - Nagrik Seva Point`;
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${subject}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #122134;">
+  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #F8FAFC; padding: 24px 12px;">
+    <tr>
+      <td align="center">
+        <!-- Main Card Container -->
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #FFFFFF; border-radius: 16px; overflow: hidden; border: 1px solid #CBD5E1; box-shadow: 0 4px 16px rgba(18, 33, 52, 0.06);">
+          
+          <!-- Top Nagrik Orange Brand Stripe -->
+          <tr>
+            <td style="height: 5px; background: linear-gradient(90deg, #FD3820 0%, #D92D16 100%);"></td>
+          </tr>
+
+          <!-- Core Header with Official Website Logo -->
+          <tr>
+            <td style="background-color: #FFFFFF; padding: 24px 32px 20px 32px; text-align: center; border-bottom: 1px solid #E2E8F0;">
+              <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center">
+                    <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                      <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" width="220" style="display: block; border: 0; outline: none; text-decoration: none; max-width: 220px; height: auto; margin: 0 auto;" />
+                    </a>
+                    <div style="font-size: 11px; font-weight: 700; color: #FD3820; text-transform: uppercase; letter-spacing: 1.2px; margin-top: 8px;">
+                      Payment Notification Status
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Failure Alert Ribbon -->
+          <tr>
+            <td style="background-color: #FEF2F2; border-bottom: 1px solid #FEE2E2; padding: 13px 24px; text-align: center;">
+              <div style="display: inline-block; vertical-align: middle;">
+                <span style="display: inline-block; background-color: #DC2626; color: #FFFFFF; font-size: 11px; font-weight: 800; padding: 3px 10px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 8px;">
+                  \u2715 Payment Incomplete
+                </span>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Body Content -->
+          <tr>
+            <td style="padding: 28px 32px 24px 32px;">
+              <!-- Greeting with 'Namaste {Name}i' -->
+              <h1 style="margin: 0 0 10px 0; font-size: 18px; font-weight: 800; color: #122134;">
+                ${greeting}
+              </h1>
+              <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #475569;">
+                Your payment attempt of <strong style="color: #122134;">\u20B9${amountStr}</strong> for <strong style="color: #122134;">${orgName}</strong> could not be completed due to a bank decline or technical timeout.
+              </p>
+
+              <!-- Reassurance: 100% Instant Wallet Refund Guarantee -->
+              <div style="background-color: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 12px; padding: 18px 20px; margin-bottom: 22px;">
+                <div style="font-size: 13px; font-weight: 800; color: #065F46; margin-bottom: 6px;">
+                  \u{1F6E1}\uFE0F 100% Instant Wallet Refund Guarantee
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 13px; line-height: 1.6; color: #047857;">
+                  \u0905\u0917\u0930 \u0906\u092A\u0915\u0940 \u092A\u0948\u0928 \u092B\u093E\u0907\u0902\u0921 \u0928\u0939\u0940\u0902 \u0939\u094B\u0924\u0940 \u0939\u0948 \u092F\u093E \u0935\u0947\u0930\u093F\u092B\u093F\u0915\u0947\u0936\u0928 \u0905\u0938\u092B\u0932 \u0930\u0939\u0924\u093E \u0939\u0948, \u0924\u094B \u0906\u092A\u0915\u0947 \u0935\u0949\u0932\u0947\u091F \u0938\u0947 \u0915\u091F\u0940 \u0939\u0941\u0908 \u0930\u093E\u0936\u093F (<strong>\u20B9${amountStr}</strong>) <strong>100% \u0911\u091F\u094B\u092E\u0948\u091F\u093F\u0915\u0932\u0940 \u0906\u092A\u0915\u0947 \u0935\u0949\u0932\u0947\u091F \u092E\u0947\u0902 \u0924\u0941\u0930\u0902\u0924 (Instant Refund) \u0935\u093E\u092A\u0938 \u091C\u092E\u093E</strong> \u0915\u0930 \u0926\u0940 \u091C\u093E\u090F\u0917\u0940\u0964
+                </p>
+                <div style="font-size: 11.5px; color: #065F46; line-height: 1.5;">
+                  &bull; <strong>Wallet Transactions:</strong> Instant 100% credit back to your Cyber Caf\xE9 Wallet balance.<br />
+                  &bull; <strong>UPI / Gateway Attempts:</strong> If debited via bank/UPI, the bank auto-reverses to source account within 24\u201348 hours.
+                </div>
+              </div>
+
+              <!-- How to Access Transaction Details Card -->
+              <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px 20px; margin-bottom: 22px;">
+                <div style="font-size: 12px; font-weight: 800; color: #122134; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;">
+                  \u{1F4CB} How to Access Transaction &amp; Passbook Ledger
+                </div>
+                <p style="margin: 0 0 8px 0; font-size: 12px; line-height: 1.6; color: #475569;">
+                  You can verify this transaction status and check your passbook ledger history anytime from your dashboard:
+                </p>
+                <div style="font-size: 12px; line-height: 1.7; color: #122134;">
+                  1. Visit <a href="https://nagriksevapoint.in/dashboard/transactions" target="_blank" style="color: #FD3820; font-weight: 700; text-decoration: none;">Passbook &amp; Transaction History</a><br />
+                  2. Search using Order ID: <code style="font-family: monospace; background-color: #E2E8F0; padding: 2px 6px; border-radius: 4px; font-weight: 700;">${orderId}</code><br />
+                  3. Filter by <strong>Refunds (\u21BA)</strong> to view the instant wallet credit timestamp.
+                </div>
+              </div>
+
+              <!-- Failure Details Table with Proper Row Gaps for Mobile -->
+              <div style="font-size: 11px; font-weight: 800; color: #64748B; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px;">
+                Attempt Summary
+              </div>
+              <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 26px;">
+                <!-- Row 1: Cyber Caf\xE9 / Organization -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Cyber Caf\xE9 / Organization</td>
+                        <td width="58%" style="font-size: 13px; color: #122134; font-weight: 800; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-word;">${orgName}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 2: Operator -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Operator</td>
+                        <td width="58%" style="font-size: 13px; color: #122134; font-weight: 700; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-word;">${rawUserName}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 3: Attempted Amount -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Attempted Amount</td>
+                        <td width="58%" style="font-size: 14px; color: #DC2626; font-weight: 800; font-family: monospace; line-height: 1.4; text-align: right; vertical-align: middle;">\u20B9${amountStr}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 4: Order ID -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="38%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Order ID</td>
+                        <td width="62%" style="font-size: 12px; color: #122134; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-all;">${orderId}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 5: Refund Protection -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="38%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Refund Protection</td>
+                        <td width="62%" style="font-size: 12px; color: #059669; font-weight: 700; line-height: 1.4; text-align: right; vertical-align: middle;">100% Auto-Refunded to Wallet</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 6: Failure Reason -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="38%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Failure Reason</td>
+                        <td width="62%" style="font-size: 12px; color: #991B1B; font-weight: 600; line-height: 1.4; text-align: right; vertical-align: middle; word-break: break-word;">${reason}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr><td height="8" style="font-size: 8px; line-height: 8px; height: 8px;">&nbsp;</td></tr>
+
+                <!-- Row 7: Date & Time -->
+                <tr>
+                  <td style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 13px 16px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="42%" style="font-size: 13px; color: #64748B; font-weight: 600; line-height: 1.4; vertical-align: middle;">Date &amp; Time</td>
+                        <td width="58%" style="font-size: 13px; color: #122134; font-weight: 600; line-height: 1.4; text-align: right; vertical-align: middle;">${dateStr}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Dual Action Buttons: Passbook & Dashboard -->
+              <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 24px;">
+                <tr>
+                  <td align="center">
+                    <a href="https://nagriksevapoint.in/dashboard/transactions" target="_blank" style="display: inline-block; background-color: #122134; color: #FFFFFF; font-size: 13px; font-weight: 700; text-decoration: none; padding: 12px 24px; border-radius: 10px; margin-right: 8px; margin-bottom: 8px;">
+                      View Passbook &amp; Ledger &rarr;
+                    </a>
+                    <a href="https://nagriksevapoint.in/dashboard" target="_blank" style="display: inline-block; background-color: #FD3820; color: #FFFFFF; font-size: 13px; font-weight: 700; text-decoration: none; padding: 12px 24px; border-radius: 10px; margin-bottom: 8px;">
+                      Try Again in Dashboard &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Support Note -->
+              <p style="margin: 0; font-size: 12px; color: #64748B; text-align: center; line-height: 1.5;">
+                Need help with your transaction? Write directly to our support team at <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; font-weight: 700; text-decoration: none;">nagriksevapoint@gmail.com</a>.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Official Website Matched Footer -->
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #CBD5E1; padding: 22px 32px; text-align: center; font-size: 12px; color: #64748B; line-height: 1.6;">
+              <div style="font-weight: 800; color: #122134; margin-bottom: 4px;">
+                Nagrik Seva Point &bull; Digital Infrastructure for Cyber Caf\xE9s &amp; CSC Desks
+              </div>
+              <div style="margin-bottom: 6px;">
+                Website: <a href="https://nagriksevapoint.in" style="color: #FD3820; text-decoration: none; font-weight: 700;">nagriksevapoint.in</a>
+                &nbsp;&bull;&nbsp;
+                Helpdesk: <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; text-decoration: none; font-weight: 700;">nagriksevapoint@gmail.com</a>
+              </div>
+              <div style="font-size: 11px; color: #94A3B8;">
+                &copy; ${(/* @__PURE__ */ new Date()).getFullYear()} Nagrik Seva Point. All rights reserved.
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+    const text = `
+NAGRIK SEVA POINT - PAYMENT UNSUCCESSFUL
+==========================================
+${greeting}
+
+Your payment attempt of Rs.${amountStr} for ${orgName} could not be completed.
+
+REASON: ${reason}
+
+AUTOMATIC BANK REVERSAL GUARANTEE:
+If any amount was debited from your bank account or UPI app, it will be automatically reversed back to your source account within 24-48 hours as per banking regulations.
+
+TRANSACTION DETAILS:
+- Cyber Caf\xE9 / Organization: ${orgName}
+- Operator: ${rawUserName}
+- Order ID: ${orderId}
+- Date & Time: ${dateStr}
+
+To retry your payment, visit your dashboard:
+https://nagriksevapoint.in/dashboard
+
+Regards,
+Team Nagrik Seva Point
+Website: https://nagriksevapoint.in | Helpdesk: nagriksevapoint@gmail.com
+`;
+    return { subject, html, text };
+  }
+  /**
+   * Dispatches Payment Success Email to recipient.
+   */
+  async notifyPaymentSuccess(params) {
+    const { subject, html, text } = this.generateSuccessEmailHtml(params);
+    try {
+      const result = await brevoMailService.sendEmail({
+        to: [{ email: params.to, name: params.userName || params.orgName }],
+        subject,
+        htmlContent: html,
+        textContent: text
+      });
+      logger2.info(
+        `[PaymentEmail - SENT] Payment SUCCESS email sent to ${params.to} (MessageId: ${result.messageId || "ok"})`
+      );
+      return {
+        success: result.success,
+        previewOnly: false,
+        messageId: result.messageId
+      };
+    } catch (err) {
+      logger2.error(`[PaymentEmail] Error sending SUCCESS email to ${params.to}: ${err.message}`);
+      return { success: false, previewOnly: false };
+    }
+  }
+  /**
+   * Dispatches Payment Failed Email to recipient.
+   */
+  async notifyPaymentFailed(params) {
+    const { subject, html, text } = this.generateFailedEmailHtml(params);
+    try {
+      const result = await brevoMailService.sendEmail({
+        to: [{ email: params.to, name: params.userName || params.orgName }],
+        subject,
+        htmlContent: html,
+        textContent: text
+      });
+      logger2.info(
+        `[PaymentEmail - SENT] Payment FAILED email sent to ${params.to} (MessageId: ${result.messageId || "ok"})`
+      );
+      return {
+        success: result.success,
+        previewOnly: false,
+        messageId: result.messageId
+      };
+    } catch (err) {
+      logger2.error(`[PaymentEmail] Error sending FAILED email to ${params.to}: ${err.message}`);
+      return { success: false, previewOnly: false };
+    }
+  }
+};
+var paymentEmailService = new PaymentEmailService();
+
+// src/modules/payment/payment.service.ts
 function sanitizeGatewayPayload(payload) {
   if (!payload || typeof payload !== "object") return void 0;
   try {
@@ -10880,7 +11532,11 @@ var PaymentService = class {
           { serviceRequestId: identifier }
         ]
       },
-      include: { serviceRequest: true }
+      include: {
+        serviceRequest: {
+          include: { service: true }
+        }
+      }
     });
     if (!payment) {
       logger2.error(`[PaymentService] Payment not found for identifier: ${identifier}`);
@@ -10924,6 +11580,69 @@ var PaymentService = class {
     } catch (err) {
       logger2.error(`[PaymentService] Fulfillment failed for Request ${payment.serviceRequestId}:`, err);
     }
+    try {
+      let recipientEmail = "operator@nagriksevapoint.in";
+      let recipientName = "Operator";
+      let resolvedOrgName = void 0;
+      let newBalance = void 0;
+      if (payment.userId) {
+        const u = await prisma.user.findUnique({
+          where: { id: payment.userId },
+          include: {
+            members: {
+              include: {
+                organization: {
+                  include: { wallet: true }
+                }
+              },
+              orderBy: { createdAt: "asc" }
+            }
+          }
+        });
+        if (u?.email) recipientEmail = u.email;
+        if (u?.name) recipientName = u.name;
+        const primaryMember = u?.members?.[0];
+        if (primaryMember?.organization) {
+          resolvedOrgName = primaryMember.organization.name;
+          if (primaryMember.organization.wallet) {
+            newBalance = Number(primaryMember.organization.wallet.balance);
+          }
+        }
+      }
+      const orgId = payment.organizationId || payment.serviceRequest?.organizationId;
+      if (orgId) {
+        const org = await prisma.organization.findUnique({
+          where: { id: orgId },
+          include: { wallet: true }
+        });
+        if (org?.name) {
+          resolvedOrgName = org.name;
+        }
+        if (org?.wallet) {
+          newBalance = Number(org.wallet.balance);
+        }
+      }
+      if (!resolvedOrgName && payment.serviceRequest?.inputData) {
+        const input = payment.serviceRequest.inputData;
+        if (input?.orgName && typeof input.orgName === "string") {
+          resolvedOrgName = input.orgName;
+        }
+      }
+      await paymentEmailService.notifyPaymentSuccess({
+        to: recipientEmail,
+        userName: recipientName,
+        orgName: resolvedOrgName,
+        amount: Number(payment.amount),
+        newBalance,
+        orderId: payment.orderId || payment.id,
+        paymentId: String(txId),
+        bankReference: details?.bankReference,
+        paymentMode: details?.paymentMode || payment.paymentMode || "UPI",
+        serviceName: payment.serviceRequest?.service?.name || "Cyber Caf\xE9 Wallet Top-up"
+      });
+    } catch (mailErr) {
+      logger2.warn(`[PaymentService] Non-blocking payment success notification warning:`, mailErr);
+    }
   }
   async markPaymentFailed(identifier, details) {
     const payment = await prisma.payment.findFirst({
@@ -10933,6 +11652,9 @@ var PaymentService = class {
           { orderId: identifier },
           { serviceRequestId: identifier }
         ]
+      },
+      include: {
+        serviceRequest: true
       }
     });
     if (!payment) return;
@@ -10956,6 +11678,445 @@ var PaymentService = class {
         note: `Payment failed: ${safeError || "Payment declined or cancelled by gateway"}`
       }
     });
+    try {
+      let recipientEmail = "operator@nagriksevapoint.in";
+      let recipientName = "Operator";
+      let resolvedOrgName = void 0;
+      if (payment.userId) {
+        const u = await prisma.user.findUnique({
+          where: { id: payment.userId },
+          include: {
+            members: {
+              include: {
+                organization: true
+              },
+              orderBy: { createdAt: "asc" }
+            }
+          }
+        });
+        if (u?.email) recipientEmail = u.email;
+        if (u?.name) recipientName = u.name;
+        const primaryMember = u?.members?.[0];
+        if (primaryMember?.organization?.name) {
+          resolvedOrgName = primaryMember.organization.name;
+        }
+      }
+      const orgId = payment.organizationId || payment.serviceRequest?.organizationId;
+      if (orgId) {
+        const org = await prisma.organization.findUnique({
+          where: { id: orgId }
+        });
+        if (org?.name) {
+          resolvedOrgName = org.name;
+        }
+      }
+      if (!resolvedOrgName && payment.serviceRequest?.inputData) {
+        const input = payment.serviceRequest.inputData;
+        if (input?.orgName && typeof input.orgName === "string") {
+          resolvedOrgName = input.orgName;
+        }
+      }
+      await paymentEmailService.notifyPaymentFailed({
+        to: recipientEmail,
+        userName: recipientName,
+        orgName: resolvedOrgName,
+        amount: Number(payment.amount),
+        orderId: payment.orderId || payment.id,
+        errorMessage: safeError
+      });
+    } catch (mailErr) {
+      logger2.warn(`[PaymentService] Non-blocking payment failure notification warning:`, mailErr);
+    }
+  }
+  /**
+   * Get organization wallet balance
+   */
+  async getWalletBalance(organizationId) {
+    let wallet = await prisma.wallet.findUnique({
+      where: { organizationId }
+    });
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          organizationId,
+          balance: 0,
+          currency: "INR"
+        }
+      });
+    }
+    const recentTransactions = await prisma.walletTransaction.findMany({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: "desc" },
+      take: 10
+    });
+    return {
+      walletId: wallet.id,
+      balance: Number(wallet.balance),
+      currency: wallet.currency,
+      recentTransactions: recentTransactions.map((tx) => ({
+        id: tx.id,
+        amount: Number(tx.amount),
+        type: tx.type,
+        balanceAfter: Number(tx.balanceAfter),
+        description: tx.description,
+        createdAt: tx.createdAt
+      }))
+    };
+  }
+  /**
+   * Get Paginated Wallet Transactions with Filtering and Aggregations
+   */
+  async getWalletTransactions(organizationId, options) {
+    let wallet = await prisma.wallet.findUnique({
+      where: { organizationId }
+    });
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          organizationId,
+          balance: 0,
+          currency: "INR"
+        }
+      });
+    }
+    const page = Math.max(1, Number(options?.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(options?.limit || 20)));
+    const skip = (page - 1) * limit;
+    const whereClause = {
+      walletId: wallet.id
+    };
+    if (options?.type && options.type !== "ALL") {
+      const typeUpper = options.type.toUpperCase();
+      if (typeUpper === "REFUND") {
+        whereClause.type = "CREDIT";
+        whereClause.description = { contains: "refund", mode: "insensitive" };
+      } else if (typeUpper === "CREDIT") {
+        whereClause.type = "CREDIT";
+        whereClause.NOT = { description: { contains: "refund", mode: "insensitive" } };
+      } else if (typeUpper === "DEBIT") {
+        whereClause.type = "DEBIT";
+      }
+    }
+    if (options?.search?.trim()) {
+      const q = options.search.trim();
+      whereClause.OR = [
+        { description: { contains: q, mode: "insensitive" } },
+        { referenceId: { contains: q, mode: "insensitive" } }
+      ];
+    }
+    const [total, items, debitSum, refundSum, totalCreditSum] = await Promise.all([
+      prisma.walletTransaction.count({ where: whereClause }),
+      prisma.walletTransaction.findMany({
+        where: whereClause,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit
+      }),
+      prisma.walletTransaction.aggregate({
+        where: { walletId: wallet.id, type: "DEBIT" },
+        _sum: { amount: true }
+      }),
+      prisma.walletTransaction.aggregate({
+        where: {
+          walletId: wallet.id,
+          type: "CREDIT",
+          description: { contains: "refund", mode: "insensitive" }
+        },
+        _sum: { amount: true }
+      }),
+      prisma.walletTransaction.aggregate({
+        where: { walletId: wallet.id, type: "CREDIT" },
+        _sum: { amount: true }
+      })
+    ]);
+    const totalDebited = Number(debitSum._sum.amount || 0);
+    const totalRefunded = Number(refundSum._sum.amount || 0);
+    const totalCredited = Math.max(0, Number(totalCreditSum._sum.amount || 0) - totalRefunded);
+    return {
+      balance: Number(wallet.balance),
+      currency: wallet.currency,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+      stats: {
+        totalCredited,
+        totalDebited,
+        totalRefunded
+      },
+      items: items.map((tx) => {
+        const isRef = tx.type === "CREDIT" && !!tx.description?.toLowerCase().includes("refund");
+        return {
+          id: tx.id,
+          amount: Number(tx.amount),
+          type: isRef ? "REFUND" : tx.type,
+          balanceAfter: Number(tx.balanceAfter),
+          referenceId: tx.referenceId,
+          description: tx.description,
+          createdAt: tx.createdAt
+        };
+      })
+    };
+  }
+  /**
+   * Direct Wallet Payment with 100% Instant Refund Guarantee on failure
+   */
+  async payWithWallet(context, input) {
+    if (!context.organizationId || !context.userId) {
+      throw AppError.forbidden("Retailer login required to pay via wallet");
+    }
+    const service = await serviceService.getServiceByCode(input.serviceCode, context);
+    if (!service.isActive) {
+      throw AppError.badRequest("Requested service is currently disabled", "SERVICE_DISABLED");
+    }
+    const priceSnapshot = await pricingService.calculatePrice(service.id, context.pricingTier);
+    const servicePrice = Number(priceSnapshot.amount);
+    let wallet = await prisma.wallet.findUnique({
+      where: { organizationId: context.organizationId }
+    });
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          organizationId: context.organizationId,
+          balance: 0,
+          currency: "INR"
+        }
+      });
+    }
+    const currentBalance = Number(wallet.balance);
+    if (currentBalance < servicePrice) {
+      throw AppError.badRequest(
+        `\u0905\u092A\u0930\u094D\u092F\u093E\u092A\u094D\u0924 \u0935\u0949\u0932\u0947\u091F \u092C\u0948\u0932\u0947\u0902\u0938 (Insufficient Balance)\u0964 \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u092C\u0948\u0932\u0947\u0902\u0938 \u20B9${currentBalance.toFixed(2)} \u0939\u0948, \u091C\u092C\u0915\u093F \u0907\u0938 \u0938\u0947\u0935\u093E \u0915\u093E \u0936\u0941\u0932\u094D\u0915 \u20B9${servicePrice.toFixed(2)} \u0939\u0948\u0964 \u0915\u0943\u092A\u092F\u093E \u0935\u0949\u0932\u0947\u091F \u0930\u093F\u091A\u093E\u0930\u094D\u091C \u0915\u0930\u0947\u0902\u0964`,
+        "INSUFFICIENT_WALLET_BALANCE"
+      );
+    }
+    const dateStr = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10).replace(/-/g, "");
+    const randomSuffix = Math.floor(1e3 + Math.random() * 9e3);
+    const referenceNumber = `REQ-${dateStr}-${service.code}-${randomSuffix}`;
+    const rawInput = input.inputData || {};
+    const { request, balanceAfterDebit } = await prisma.$transaction(async (tx) => {
+      const updatedWallet = await tx.wallet.update({
+        where: { id: wallet.id },
+        data: { balance: { decrement: servicePrice } }
+      });
+      const newBal = Number(updatedWallet.balance);
+      const walTx = await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          amount: servicePrice,
+          type: "DEBIT",
+          balanceAfter: newBal,
+          referenceId: referenceNumber,
+          description: `Wallet Payment: ${service.name} (${referenceNumber})`
+        }
+      });
+      const newReq = await tx.serviceRequest.create({
+        data: {
+          referenceNumber,
+          serviceId: service.id,
+          accessMode: "RETAILER",
+          pricingTier: context.pricingTier || "PARTNER",
+          userId: context.userId,
+          organizationId: context.organizationId,
+          customerId: input.customerId || null,
+          amount: servicePrice,
+          currency: "INR",
+          status: "PAYMENT_CAPTURED",
+          inputData: input.inputData || {}
+        }
+      });
+      await tx.payment.create({
+        data: {
+          serviceRequestId: newReq.id,
+          organizationId: context.organizationId,
+          userId: context.userId,
+          amount: servicePrice,
+          currency: "INR",
+          method: "WALLET",
+          status: "CAPTURED",
+          paidAt: /* @__PURE__ */ new Date(),
+          paymentMode: "WALLET_DEDUCTION",
+          orderId: referenceNumber,
+          transactionId: walTx.id,
+          bankReference: `WAL-${Date.now()}`
+        }
+      });
+      await tx.serviceRequestEvent.create({
+        data: {
+          serviceRequestId: newReq.id,
+          status: "PAYMENT_CAPTURED",
+          note: `Paid \u20B9${servicePrice.toFixed(2)} directly from Organization Wallet. New Balance: \u20B9${newBal.toFixed(2)}`
+        }
+      });
+      return { request: newReq, balanceAfterDebit: newBal };
+    });
+    if (rawInput.searchToken || rawInput.pan) {
+      await ephemeralVault.stashTempSearchToken(
+        request.id,
+        String(rawInput.searchToken || rawInput.pan)
+      );
+    }
+    try {
+      await serviceDispatcher.fulfillAsync(request.id);
+      const finalReq = await prisma.serviceRequest.findUnique({
+        where: { id: request.id }
+      });
+      if (finalReq?.status === "PROVIDER_FAILED") {
+        throw new Error("Upstream government registry returned no matching record");
+      }
+      const vault = await ephemeralVault.getVaultItem(request.id);
+      return {
+        success: true,
+        serviceRequestId: request.id,
+        referenceNumber,
+        amount: servicePrice,
+        newBalance: balanceAfterDebit,
+        data: vault.data,
+        message: "Payment successful and verified record unlocked!"
+      };
+    } catch (fulfillmentErr) {
+      logger2.warn(`[PaymentService] Service execution failed for ${request.id}. Issuing instant 100% wallet refund...`);
+      const balanceAfterRefund = await prisma.$transaction(async (tx) => {
+        const refWallet = await tx.wallet.update({
+          where: { id: wallet.id },
+          data: { balance: { increment: servicePrice } }
+        });
+        const refBal = Number(refWallet.balance);
+        await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            amount: servicePrice,
+            type: "CREDIT",
+            balanceAfter: refBal,
+            referenceId: request.id,
+            description: `Instant Refund: ${service.name} failed (${referenceNumber})`
+          }
+        });
+        await tx.payment.updateMany({
+          where: { serviceRequestId: request.id },
+          data: {
+            status: "REFUNDED",
+            refundedAt: /* @__PURE__ */ new Date(),
+            errorMessage: `Auto-refunded to wallet: ${fulfillmentErr?.message || "Service failure"}`
+          }
+        });
+        await tx.serviceRequest.update({
+          where: { id: request.id },
+          data: { status: "REFUNDED" }
+        });
+        await tx.serviceRequestEvent.create({
+          data: {
+            serviceRequestId: request.id,
+            status: "REFUNDED",
+            note: `\u20B9${servicePrice.toFixed(2)} instantly refunded back to retailer wallet due to verification failure`
+          }
+        });
+        return refBal;
+      });
+      return {
+        success: false,
+        refunded: true,
+        serviceRequestId: request.id,
+        referenceNumber,
+        amount: servicePrice,
+        newBalance: balanceAfterRefund,
+        message: `\u0938\u0924\u094D\u092F\u093E\u092A\u0928 \u0905\u0938\u092B\u0932 \u0930\u0939\u093E\u0964 \u20B9${servicePrice.toFixed(2)} \u0906\u092A\u0915\u0947 \u0935\u0949\u0932\u0947\u091F \u092E\u0947\u0902 \u0924\u0941\u0930\u0902\u0924 (Instant Refund) \u0935\u093E\u092A\u0938 \u091C\u092E\u093E \u0915\u0930 \u0926\u093F\u090F \u0917\u090F \u0939\u0948\u0902\u0964 \u0906\u092A\u0915\u093E \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u0935\u0949\u0932\u0947\u091F \u092C\u0948\u0932\u0947\u0902\u0938: \u20B9${balanceAfterRefund.toFixed(2)}\u0964`
+      };
+    }
+  }
+  /**
+   * Create a Cashfree Payment Order for Retailer Organization Wallet Top-up
+   */
+  async createWalletTopupOrder(context, amount) {
+    if (!context.organizationId || !context.userId) {
+      throw AppError.forbidden("Retailer login required to top-up wallet", "AUTH_REQUIRED");
+    }
+    const numAmount = Number(amount);
+    if (!numAmount || isNaN(numAmount) || numAmount < 10) {
+      throw AppError.badRequest("\u0928\u094D\u092F\u0942\u0928\u0924\u092E \u091F\u0949\u092A-\u0905\u092A \u0930\u093E\u0936\u093F \u20B910 \u0939\u0948 (Minimum top-up amount is \u20B910)");
+    }
+    if (numAmount > 5e4) {
+      throw AppError.badRequest("\u0905\u0927\u093F\u0915\u0924\u092E \u091F\u0949\u092A-\u0905\u092A \u0930\u093E\u0936\u093F \u20B950,000 \u0939\u0948 (Maximum top-up amount is \u20B950,000)");
+    }
+    let service = await prisma.service.findUnique({
+      where: { code: "WALLET_TOPUP" }
+    });
+    if (!service) {
+      service = await prisma.service.create({
+        data: {
+          code: "WALLET_TOPUP",
+          name: "Wallet Balance Top-up",
+          description: "Instant UPI / QR recharge for retailer organization wallet",
+          isPublicAllowed: false,
+          isRetailerAllowed: true,
+          requiresCustomer: false,
+          requiresUpload: false,
+          producesDocument: false
+        }
+      });
+    }
+    const [user, org] = await Promise.all([
+      prisma.user.findUnique({ where: { id: context.userId } }),
+      prisma.organization.findUnique({ where: { id: context.organizationId } })
+    ]);
+    const customerName = user?.name || org?.name || "Cyber Caf\xE9 Retailer";
+    const customerEmail = user?.email || "retailer@nagriksevapoint.in";
+    const customerPhone = user?.phone ? user.phone.replace(/[^0-9]/g, "").slice(-10) : "9876543210";
+    const dateStr = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10).replace(/-/g, "");
+    const randomSuffix = Math.floor(1e3 + Math.random() * 9e3);
+    const referenceNumber = `REQ-${dateStr}-TOPUP-${randomSuffix}`;
+    const request = await prisma.serviceRequest.create({
+      data: {
+        referenceNumber,
+        serviceId: service.id,
+        accessMode: "RETAILER",
+        pricingTier: "PARTNER",
+        userId: context.userId,
+        organizationId: context.organizationId,
+        amount: numAmount,
+        currency: "INR",
+        status: "REQUEST_CREATED",
+        inputData: {
+          topupAmount: numAmount,
+          orgName: org?.name || "Cyber Caf\xE9"
+        }
+      }
+    });
+    await prisma.serviceRequestEvent.create({
+      data: {
+        serviceRequestId: request.id,
+        status: "REQUEST_CREATED",
+        note: `Initiated Wallet Top-up order for \u20B9${numAmount.toFixed(2)} via Cashfree UPI Gateway`
+      }
+    });
+    const orderNote = `Wallet Top-up \u20B9${numAmount.toFixed(2)} (${org?.name || "Caf\xE9"})`;
+    const paymentSession = await this.createCashfreeOrderFromRequest(
+      {
+        id: request.id,
+        amount: numAmount,
+        organizationId: context.organizationId
+      },
+      context.userId,
+      null,
+      customerName,
+      customerEmail,
+      customerPhone,
+      orderNote,
+      {
+        type: "WALLET_TOPUP",
+        organizationId: context.organizationId
+      }
+    );
+    return {
+      serviceRequestId: request.id,
+      referenceNumber,
+      amount: numAmount,
+      currency: "INR",
+      payment: paymentSession,
+      order_id: paymentSession.order_id,
+      payment_session_id: paymentSession.payment_session_id,
+      mode: paymentSession.mode
+    };
   }
 };
 var paymentService = new PaymentService();
@@ -10971,6 +12132,7 @@ var retailerPaymentSelect = {
   orderId: true,
   transactionId: true,
   paymentMode: true,
+  bankReference: true,
   errorMessage: true,
   paidAt: true,
   createdAt: true,
@@ -11912,6 +13074,127 @@ paymentRoutes.post("/cashfree/webhook", async (c) => {
   } catch (_err) {
     return c.json({ success: false, message: "Webhook processing failed" }, 400);
   }
+});
+paymentRoutes.get("/wallet/balance", async (c) => {
+  const orgId = c.get("organizationId");
+  if (!orgId) {
+    return c.json({ success: true, data: { balance: 0, currency: "INR", recentTransactions: [] } });
+  }
+  const result = await paymentService.getWalletBalance(orgId);
+  return c.json({ success: true, data: result });
+});
+paymentRoutes.get("/wallet/transactions", async (c) => {
+  const orgId = c.get("organizationId");
+  if (!orgId) {
+    return c.json({
+      success: true,
+      data: {
+        balance: 0,
+        currency: "INR",
+        total: 0,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+        stats: { totalCredited: 0, totalDebited: 0, totalRefunded: 0 },
+        items: []
+      }
+    });
+  }
+  const query = c.req.query();
+  const page = query.page ? Number(query.page) : 1;
+  const limit = query.limit ? Number(query.limit) : 20;
+  const type = query.type;
+  const search = query.search;
+  const result = await paymentService.getWalletTransactions(orgId, {
+    page,
+    limit,
+    type,
+    search
+  });
+  return c.json({ success: true, data: result });
+});
+paymentRoutes.post("/wallet/pay", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const requestContext = c.get("requestContext");
+  const orgId = c.get("organizationId");
+  const user = c.get("user");
+  const userId = user?.id;
+  if (!orgId || !userId) {
+    throw AppError.forbidden("Retailer login required to pay via wallet");
+  }
+  const { serviceCode, customerId, inputData } = body;
+  if (!serviceCode) {
+    throw AppError.badRequest("serviceCode is required");
+  }
+  const result = await paymentService.payWithWallet(requestContext, {
+    serviceCode,
+    customerId,
+    inputData
+  });
+  return c.json({ success: true, data: result });
+});
+paymentRoutes.post("/wallet/topup/create-order", async (c) => {
+  const orgId = c.get("organizationId");
+  const user = c.get("user");
+  const userId = user?.id;
+  if (!orgId || !userId) {
+    throw AppError.forbidden("Retailer login required to top-up wallet", "AUTH_REQUIRED");
+  }
+  const body = await c.req.json().catch(() => ({}));
+  const amount = Number(body.amount);
+  const result = await paymentService.createWalletTopupOrder(
+    { userId, organizationId: orgId },
+    amount
+  );
+  return c.json({ success: true, data: result });
+});
+paymentRoutes.post("/wallet/topup/confirm", async (c) => {
+  const orgId = c.get("organizationId");
+  if (!orgId) {
+    throw AppError.forbidden("Retailer login required to confirm top-up", "AUTH_REQUIRED");
+  }
+  const body = await c.req.json().catch(() => ({}));
+  const orderId = body.orderId || body.serviceRequestId;
+  const cfPaymentId = body.cfPaymentId;
+  if (!orderId) {
+    throw AppError.badRequest("orderId is required");
+  }
+  await paymentService.confirmPaymentOrder(orderId, cfPaymentId);
+  const wallet = await paymentService.getWalletBalance(orgId);
+  return c.json({
+    success: true,
+    data: {
+      newBalance: wallet.balance,
+      currency: wallet.currency,
+      message: "Wallet balance updated successfully!"
+    }
+  });
+});
+paymentRoutes.get("/email-preview/success", (c) => {
+  const preview = paymentEmailService.generateSuccessEmailHtml({
+    to: "retailer@cybercafe.in",
+    userName: "Vikash Kumar",
+    orgName: "Shree Balaji Cyber Caf\xE9",
+    amount: 500,
+    newBalance: 1250,
+    orderId: "CF_ORD_9847291834_DEMO",
+    paymentId: "CF_PAY_882947192",
+    bankReference: "UTR983471928374",
+    paymentMode: "UPI QR (Google Pay)",
+    serviceName: "Cyber Caf\xE9 Wallet Top-up"
+  });
+  return c.html(preview.html);
+});
+paymentRoutes.get("/email-preview/failed", (c) => {
+  const preview = paymentEmailService.generateFailedEmailHtml({
+    to: "retailer@cybercafe.in",
+    userName: "Vikash Kumar",
+    orgName: "Shree Balaji Cyber Caf\xE9",
+    amount: 500,
+    orderId: "CF_ORD_9847291834_DEMO",
+    errorMessage: "UPI PIN Timeout or User Cancelled on Mobile App (Bank Code: U30)"
+  });
+  return c.html(preview.html);
 });
 
 // src/modules/admin/admin.service.ts
