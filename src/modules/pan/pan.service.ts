@@ -96,7 +96,7 @@ export class PanService {
       };
     }
 
-    // 24-HOUR REDIS CACHE CHECK (Saves ₹2.50 per duplicate lookup across both guest and logged-in users)
+    // 24-HOUR REDIS CACHE CHECK (Saves ₹3.00 per duplicate lookup across both guest and logged-in users)
     const cacheKey = `cache:pan_find:aadhaar:${aadhaar.trim()}`;
     const cachedResult = await redis.getJson<PanFindOutput>(cacheKey);
     if (cachedResult && cachedResult.maskedPan && cachedResult.searchToken) {
@@ -107,11 +107,11 @@ export class PanService {
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
     logger.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
 
-    // In-flight automatic company vendor wallet deduction (₹2.50 per hit)
+    // In-flight automatic company vendor wallet deduction (₹3.00 per hit)
     vendorWalletService
       .deductApiCost({
         serviceCode: "PAN_FIND",
-        unitCost: 2.5,
+        unitCost: 3.0,
         reference: `Aadhaar ending in ${aadhaar.slice(-4)}`,
       })
       .catch((err) => {
@@ -250,11 +250,11 @@ export class PanService {
 
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
 
-    // In-flight automatic company vendor wallet deduction (₹2.00 per hit)
+    // In-flight automatic company vendor wallet deduction (₹2.50 per hit)
     vendorWalletService
       .deductApiCost({
         serviceCode: "PAN_DETAILS",
-        unitCost: 2.0,
+        unitCost: 2.5,
         reference: `PAN ending in ${cleanPan.slice(-4)}`,
       })
       .catch((err) => {

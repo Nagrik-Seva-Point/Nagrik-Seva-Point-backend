@@ -1091,8 +1091,8 @@ export class AdminService {
       });
 
       const defaultEstimatedCost: Record<string, number> = {
-        PAN_FIND: 2.5,
-        PAN_DETAILS: 2.0,
+        PAN_FIND: 3.0,
+        PAN_DETAILS: 2.5,
         KISAN_CARD: 0.0,
         KISAN_REGISTRATION_CARD: 0.0,
       };
@@ -1355,8 +1355,8 @@ export class AdminService {
 
       // PlainAPI / Upstream Vendor Unit Cost Map (Only paid vendor APIs incur cost)
       const serviceCostMap: Record<string, number> = {
-        PAN_FIND: 2.5,
-        PAN_DETAILS: 2.0,
+        PAN_FIND: 3.0,
+        PAN_DETAILS: 2.5,
         KISAN_CARD: 0.0,
         KISAN_REGISTRATION_CARD: 0.0,
       };
@@ -1537,7 +1537,7 @@ export class AdminService {
         if (claimedLogIds.has(log.id)) continue;
 
         const code = log.serviceCode;
-        const unitCost = serviceCostMap[code] ?? (code === "PAN_FIND" ? 2.5 : 2.0);
+        const unitCost = serviceCostMap[code] ?? (code === "PAN_FIND" ? 3.0 : 2.5);
 
         if (code === "PAN_FIND") panFindCalls++;
         else if (code === "PAN_DETAILS") panDetailsCalls++;
@@ -1604,13 +1604,13 @@ export class AdminService {
       // PlainAPI Wallet Burn breakdown (only paid vendor API calls burn wallet credits)
       const plainApiWalletBurn = {
         panFindCalls,
-        panFindBurn: Number((panFindCalls * 2.5).toFixed(2)),
+        panFindBurn: Number((panFindCalls * 3.0).toFixed(2)),
         panDetailsCalls,
-        panDetailsBurn: Number((panDetailsCalls * 2.0).toFixed(2)),
+        panDetailsBurn: Number((panDetailsCalls * 2.5).toFixed(2)),
         otherCalls,
         otherBurn: 0.00,
         totalCalls: panFindCalls + panDetailsCalls,
-        totalCreditBurned: Number((panFindCalls * 2.5 + panDetailsCalls * 2.0).toFixed(2)),
+        totalCreditBurned: Number((panFindCalls * 3.0 + panDetailsCalls * 2.5).toFixed(2)),
       };
 
       // Service breakdown array
