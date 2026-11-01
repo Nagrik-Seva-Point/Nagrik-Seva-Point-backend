@@ -2,6 +2,9 @@ import { ezytmPanGateway } from "../../core/integrations/ezytm/ezytm-pan.gateway
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
 import { encryptPanToken, decryptPanToken } from "../../core/security/crypto.util";
+import { redis } from "../../core/redis/redis.client";
+import { brevoMailService } from "../../core/mail/brevo.service";
+import { vendorWalletService } from "../admin/vendor-wallet.service";
 import type {
   DecryptPanTokenOutput,
   PanDetailsInput,
@@ -11,6 +14,54 @@ import type {
   PanToAadhaarVerifyOutput,
   VerifyPanDetailsOutput,
 } from "./pan.schema";
+
+function isVendorLowBalance(errorcode?: number, message?: string): boolean {
+  if (errorcode === 104) return true;
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("insufficient") ||
+    lower.includes("low balance") ||
+    lower.includes("balance low") ||
+    lower.includes("wallet balance") ||
+    lower.includes("recharge") ||
+    lower.includes("credit limit")
+  );
+}
+
+async function checkAndTriggerVendorLowBalanceAlert(params: {
+  serviceCode: string;
+  serviceName: string;
+  vendorError: string;
+}) {
+  const lockKey = `alert:vendor_low_balance_lock:${params.serviceCode}`;
+  try {
+    const isLocked = await redis.get(lockKey);
+    if (isLocked) {
+      logger.info(`[VendorBalanceAlert] Alert already throttled for ${params.serviceCode}. Skipping duplicate email.`);
+      return;
+    }
+
+    // 15-minute throttle lock (900 seconds)
+    await redis.set(lockKey, "1", 900);
+
+    // Strict safety check: only send real live alert if explicit flag is enabled
+    // Prevents any automatic email dispatch until explicitly authorized by user
+    if (process.env.ENABLE_VENDOR_BALANCE_ALERTS === "true") {
+      logger.info(`[VendorBalanceAlert] Dispatching live low balance alert to admin for ${params.serviceCode}`);
+      await brevoMailService.sendLowBalanceAdminAlert({
+        serviceCode: params.serviceCode,
+        serviceName: params.serviceName,
+        vendorError: params.vendorError,
+        rechargeUrl: "https://planapi.in",
+      });
+    } else {
+      logger.warn(`[VendorBalanceAlert] Low balance detected for ${params.serviceCode} (${params.vendorError}). Live email alert is currently in PREVIEW/TEST mode (ENABLE_VENDOR_BALANCE_ALERTS is not enabled).`);
+    }
+  } catch (err) {
+    logger.error(`[VendorBalanceAlert] Failed to handle balance alert:`, err);
+  }
+}
 
 export class PanService {
   /**
@@ -48,6 +99,17 @@ export class PanService {
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
     logger.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
 
+    // In-flight automatic company vendor wallet deduction (₹2.50 per hit)
+    vendorWalletService
+      .deductApiCost({
+        serviceCode: "PAN_FIND",
+        unitCost: 2.5,
+        reference: `Aadhaar ending in ${aadhaar.slice(-4)}`,
+      })
+      .catch((err) => {
+        logger.error("[PanService] Failed to deduct wallet balance for PAN_FIND:", err);
+      });
+
     const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
 
     if (response.Errorcode === 100) {
@@ -77,8 +139,22 @@ export class PanService {
       throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
     }
 
-    if (response.Errorcode === 101 || response.Errorcode === 104) {
-      logger.warn(`[PanService] PAN not found / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}`);
+    if (isVendorLowBalance(response.Errorcode, response.Message)) {
+      logger.error(`[PanService] Vendor balance error detected in findPanByAadhaar: ${response.Message} (Code ${response.Errorcode})`);
+      checkAndTriggerVendorLowBalanceAlert({
+        serviceCode: "PAN_FIND",
+        serviceName: "Aadhaar to PAN Find",
+        vendorError: `Errorcode ${response.Errorcode}: ${response.Message || "Insufficient balance"}`,
+      }).catch(() => {});
+
+      throw AppError.badRequest(
+        "सरकारी पैन गेटवे वर्तमान में व्यस्त या मेंटेनेंस मोड पर है। कृपया 10–15 मिनट बाद पुनः प्रयास करें।",
+        "GATEWAY_MAINTENANCE"
+      );
+    }
+
+    if (response.Errorcode === 101) {
+      logger.warn(`[PanService] PAN not found / Errorcode 101 for Aadhaar ending in ${aadhaar.slice(-4)}`);
       throw AppError.badRequest("No PAN Card record found linked with this Aadhaar number in the Income Tax registry.", "PAN_NOT_FOUND");
     }
 
@@ -150,6 +226,17 @@ export class PanService {
 
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
 
+    // In-flight automatic company vendor wallet deduction (₹2.00 per hit)
+    vendorWalletService
+      .deductApiCost({
+        serviceCode: "PAN_DETAILS",
+        unitCost: 2.0,
+        reference: `PAN ending in ${cleanPan.slice(-4)}`,
+      })
+      .catch((err) => {
+        logger.error("[PanService] Failed to deduct wallet balance for PAN_DETAILS:", err);
+      });
+
     if (response.Errorcode === 100 && response.data) {
       const d = response.data;
       return {
@@ -171,6 +258,21 @@ export class PanService {
 
     const failureReason = response.msg ||
       "Failed to retrieve PAN details from official registry.";
+
+    if (isVendorLowBalance(response.Errorcode, failureReason)) {
+      logger.error(`[PanService] Vendor balance error detected in getPanDetails: ${failureReason} (Code ${response.Errorcode})`);
+      checkAndTriggerVendorLowBalanceAlert({
+        serviceCode: "PAN_DETAILS",
+        serviceName: "Comprehensive PAN Verification",
+        vendorError: `Errorcode ${response.Errorcode}: ${failureReason}`,
+      }).catch(() => {});
+
+      throw AppError.badRequest(
+        "सरकारी गेटवे वर्तमान में व्यस्त या मेंटेनेंस मोड पर है। कृपया 10–15 मिनट बाद पुनः प्रयास करें।",
+        "GATEWAY_MAINTENANCE"
+      );
+    }
+
     logger.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
     throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
   }
@@ -307,6 +409,17 @@ export class PanService {
     console.log(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
     logger.info(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
 
+    // In-flight automatic company vendor wallet deduction (₹5.00 per hit)
+    vendorWalletService
+      .deductApiCost({
+        serviceCode: "PAN_TO_AADHAAR",
+        unitCost: 5.0,
+        reference: `PAN ending in ${formattedPan.slice(-4)}`,
+      })
+      .catch((err) => {
+        logger.error("[PanService] Failed to deduct wallet balance for PAN_TO_AADHAAR:", err);
+      });
+
     if (response.Errorcode === 100 && response.Data) {
       const d = response.Data;
       const cleanPanNumber = (d.PanNumber || formattedPan).trim().toUpperCase();
@@ -374,7 +487,21 @@ export class PanService {
       };
     }
 
-    if (response.Errorcode === 101 || response.Errorcode === 104) {
+    if (isVendorLowBalance(response.Errorcode, response.Message)) {
+      logger.error(`[PanService] Vendor balance error detected in getAdvancePanToAadhaar: ${response.Message} (Code ${response.Errorcode})`);
+      checkAndTriggerVendorLowBalanceAlert({
+        serviceCode: "PAN_TO_AADHAAR",
+        serviceName: "Advance PAN to Aadhaar",
+        vendorError: `Errorcode ${response.Errorcode}: ${response.Message || "Insufficient balance"}`,
+      }).catch(() => {});
+
+      throw AppError.badRequest(
+        "सरकारी गेटवे वर्तमान में व्यस्त या मेंटेनेंस मोड पर है। कृपया 10–15 मिनट बाद पुनः प्रयास करें।",
+        "GATEWAY_MAINTENANCE"
+      );
+    }
+
+    if (response.Errorcode === 101) {
       throw AppError.badRequest(
         response.Message || "No record found linked with this PAN in the registry.",
         "PAN_NOT_FOUND",

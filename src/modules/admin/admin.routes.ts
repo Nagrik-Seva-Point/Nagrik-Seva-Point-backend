@@ -3,6 +3,7 @@ import type { ContextVariables } from "../../app/context";
 import { requireAdmin } from "../../middleware/admin.middleware";
 import { validationMiddleware } from "../../middleware/validation.middleware";
 import { adminService } from "./admin.service";
+import { vendorWalletService } from "./vendor-wallet.service";
 import {
   walletAdjustmentSchema,
   type WalletAdjustmentInput,
@@ -16,6 +17,8 @@ import {
   type OrgStatusInput,
   tierPriceUpdateSchema,
   type TierPriceUpdateInput,
+  targetedEmailSchema,
+  type TargetedEmailInput,
 } from "./admin.schema";
 
 export const adminRouter = new Hono<ContextVariables>();
@@ -198,6 +201,26 @@ adminRouter.post(
 );
 
 /**
+ * 9b. VLE Communication & Targeted Email Studio
+ * GET /admin/communications/vles
+ * POST /admin/communications/send-targeted-email
+ */
+adminRouter.get("/communications/vles", async (c) => {
+  const vles = await adminService.getVleList();
+  return c.json({ success: true, data: vles });
+});
+
+adminRouter.post(
+  "/communications/send-targeted-email",
+  validationMiddleware(targetedEmailSchema),
+  async (c) => {
+    const data = c.get("validData") as TargetedEmailInput;
+    const result = await adminService.sendTargetedVleEmail(data);
+    return c.json(result);
+  }
+);
+
+/**
  * 10. Manual Wallet Credit/Debit Adjustment
  * POST /admin/organizations/:id/wallet/adjust
  */
@@ -301,4 +324,71 @@ adminRouter.get("/audit-logs", async (c) => {
   c.header("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
   return c.json({ success: true, data });
 });
+
+/**
+ * 17. Upstream Company Vendor Wallet & Ledger Telemetry
+ * GET /admin/vendor-wallet
+ */
+adminRouter.get("/vendor-wallet", async (c) => {
+  const data = await vendorWalletService.getWallet();
+  return c.json({ success: true, data });
+});
+
+/**
+ * 18. Top-up or Reconcile PlanAPI Vendor Wallet
+ * POST /admin/vendor-wallet/sync
+ * Body: { mode: "TOPUP" | "EXACT", amount: number, description?: string }
+ */
+adminRouter.post("/vendor-wallet/sync", async (c) => {
+  const user = c.get("user");
+  if (!user || user.role !== "SUPER_ADMIN") {
+    return c.json(
+      { success: false, message: "Only SUPER_ADMIN can sync or top-up vendor wallet." },
+      403
+    );
+  }
+
+  const body = await c.req.json();
+  const mode = (body.mode || "TOPUP") as "TOPUP" | "EXACT";
+  const amount = Number(body.amount);
+  const description = body.description as string | undefined;
+
+  if (isNaN(amount)) {
+    return c.json({ success: false, message: "Valid amount is required" }, 400);
+  }
+
+  let result;
+  if (mode === "TOPUP") {
+    result = await vendorWalletService.topupRecharge(amount, description);
+  } else {
+    result = await vendorWalletService.reconcileExactBalance(amount, description);
+  }
+
+  return c.json({ success: true, data: result });
+});
+
+/**
+ * 19. Update Vendor Wallet Low Balance Threshold
+ * PUT /admin/vendor-wallet/threshold
+ * Body: { threshold: number }
+ */
+adminRouter.put("/vendor-wallet/threshold", async (c) => {
+  const user = c.get("user");
+  if (!user || user.role !== "SUPER_ADMIN") {
+    return c.json(
+      { success: false, message: "Only SUPER_ADMIN can update alert thresholds." },
+      403
+    );
+  }
+
+  const body = await c.req.json();
+  const threshold = Number(body.threshold);
+  if (isNaN(threshold) || threshold <= 0) {
+    return c.json({ success: false, message: "Valid positive threshold is required" }, 400);
+  }
+
+  const result = await vendorWalletService.updateThreshold(threshold);
+  return c.json({ success: true, data: result });
+});
+
 

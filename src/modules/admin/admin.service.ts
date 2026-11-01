@@ -5,6 +5,7 @@ import { logger } from "../../core/logger/logger";
 import { serviceDispatcher } from "../services/service.dispatcher";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import { sanitizeDpdpData, maskEmail, maskIpAddress } from "../../core/logger/api-logger";
+import { brevoMailService } from "../../core/mail/brevo.service";
 import type { PaymentStatus, PaymentMethod, AccessMode, PricingTier } from "@prisma/client";
 import type {
   WalletAdjustmentInput,
@@ -13,6 +14,7 @@ import type {
   OrgStatusInput,
   TierPriceUpdateInput,
   AuditLogQueryInput,
+  TargetedEmailInput,
 } from "./admin.schema";
 
 export interface TransactionFilterQuery {
@@ -885,16 +887,86 @@ export class AdminService {
   }
 
   async setAnnouncement(input: AnnouncementInput) {
+    const { sendEmailToVles, testRecipientEmail, ...announcementData } = input;
     const data = {
-      ...input,
+      ...announcementData,
       updatedAt: new Date().toISOString(),
     };
 
     await redis.setJson("system:announcement", data);
     await redis.del("cache:admin:announcement").catch(() => {});
+
+    let emailBroadcastStatus: { sent: number; mode: string; testSentTo?: string } = {
+      sent: 0,
+      mode: "NONE",
+    };
+
+    // 1. SAFE DUMMY TEST: If testRecipientEmail is provided, send preview ONLY to that specific address
+    if (testRecipientEmail && testRecipientEmail.trim()) {
+      const targetTestEmail = testRecipientEmail.trim();
+      logger.info(`[AdminService] Sending test dummy announcement email to: ${targetTestEmail}`);
+      try {
+        await brevoMailService.sendVLEBroadcastEmail({
+          to: targetTestEmail,
+          vleName: "Admin Test Recipient",
+          title: data.title || "महत्वपूर्ण सूचना - नागरिक सेवा केंद्र",
+          message: data.message || "यह एक परीक्षण घोषणा है।",
+          severity: data.severity || "info",
+        });
+        emailBroadcastStatus = {
+          sent: 1,
+          mode: "TEST_SAMPLE",
+          testSentTo: targetTestEmail,
+        };
+      } catch (err) {
+        logger.error(`[AdminService] Failed to send test announcement email:`, err);
+      }
+    } else if (sendEmailToVles && data.active && data.message) {
+      // 2. LIVE BROADCAST: Strictly gated behind explicit environment authorization
+      if (process.env.ENABLE_VLE_EMAIL_BROADCAST === "true") {
+        logger.info(`[AdminService] Live VLE Email Broadcast authorized. Fetching registered VLEs...`);
+        try {
+          const users = await prisma.user.findMany({
+            where: { email: { not: "" } },
+            select: { email: true, name: true },
+          });
+
+          let broadcastCount = 0;
+          for (const u of users) {
+            if (!u.email) continue;
+            try {
+              await brevoMailService.sendVLEBroadcastEmail({
+                to: u.email,
+                vleName: u.name || "सम्मानित वीएलई बंधु",
+                title: data.title || "नागरिक सेवा केंद्र - आवश्यक सूचना",
+                message: data.message,
+                severity: data.severity || "info",
+              });
+              broadcastCount++;
+            } catch (vleErr) {
+              logger.warn(`[AdminService] Failed to deliver broadcast to ${u.email}:`, vleErr);
+            }
+          }
+          emailBroadcastStatus = {
+            sent: broadcastCount,
+            mode: "LIVE_BROADCAST",
+          };
+        } catch (dbErr) {
+          logger.error(`[AdminService] Failed to fetch users for broadcast:`, dbErr);
+        }
+      } else {
+        logger.warn(`[AdminService] sendEmailToVles requested, but live email broadcast is locked (ENABLE_VLE_EMAIL_BROADCAST != true). Main accounts protected.`);
+        emailBroadcastStatus = {
+          sent: 0,
+          mode: "SAFETY_LOCKED",
+        };
+      }
+    }
+
     return {
       success: true,
       data,
+      emailBroadcastStatus,
     };
   }
 
@@ -2115,6 +2187,143 @@ export class AdminService {
         auditTimestamp: new Date().toISOString(),
       };
     });
+  }
+
+  // ==========================================
+  // 16. DIRECT & TARGETED VLE COMMUNICATIONS
+  // ==========================================
+
+  async getVleList() {
+    return await redis.remember("cache:admin:vle_list", 60, async () => {
+      const users = await prisma.user.findMany({
+        where: { email: { not: "" } },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          members: {
+            select: {
+              organization: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                },
+              },
+            },
+            take: 1,
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      return users.map((u) => ({
+        id: u.id,
+        name: u.name || "Cyber Café Retailer",
+        email: u.email,
+        phone: u.phone || undefined,
+        orgName: u.members[0]?.organization?.name || "Cyber Café Desk",
+      }));
+    });
+  }
+
+  async sendTargetedVleEmail(input: TargetedEmailInput) {
+    const { recipientEmails, subject, title, message, severity, testEmail, language = "hi", includeButton = true } = input;
+    const isEn = language === "en";
+
+    // 1. SAFE DUMMY TEST: If testEmail is provided, dispatch ONLY 1 dummy sample to that address
+    if (testEmail && testEmail.trim()) {
+      const targetTest = testEmail.trim();
+      logger.info(`[AdminService] Sending sample targeted VLE test email (${language}, button: ${includeButton}) to: ${targetTest}`);
+      const testVleName = isEn ? "Rajesh Kumar" : "राजेश कुमार";
+
+      const res = await brevoMailService.sendVLEBroadcastEmail({
+        to: targetTest,
+        vleName: testVleName,
+        title: title || subject,
+        customSubject: `[TEST SAMPLE] ${subject}`,
+        message,
+        severity,
+        language,
+        includeButton,
+      });
+
+      return {
+        success: true,
+        mode: "TEST_SAMPLE",
+        sentCount: 1,
+        message: `Safe test preview sent successfully to ${targetTest}.`,
+        messageId: res.messageId,
+      };
+    }
+
+    // 2. LIVE TARGETED DISPATCH TO SELECTED VLES
+    logger.info(`[AdminService] Dispatching targeted email (${language}) to ${recipientEmails.length} selected VLEs.`);
+
+    // Lookup recipient user records and organizations for dynamic personalization
+    const users = await prisma.user.findMany({
+      where: { email: { in: recipientEmails } },
+      select: {
+        email: true,
+        name: true,
+        members: {
+          select: {
+            organization: {
+              select: { name: true },
+            },
+          },
+          take: 1,
+        },
+      },
+    });
+
+    const userMap = new Map(users.map((u) => [u.email.toLowerCase(), u]));
+
+    let sentCount = 0;
+    const failures: string[] = [];
+
+    for (const email of recipientEmails) {
+      if (!email) continue;
+      const lowerEmail = email.toLowerCase().trim();
+      const u = userMap.get(lowerEmail);
+      const name = u?.name?.trim();
+      const vleName = name
+        ? name
+        : isEn
+        ? "Retail Partner"
+        : "सम्मानित वीएलई बंधु";
+
+      try {
+        const res = await brevoMailService.sendVLEBroadcastEmail({
+          to: email,
+          vleName,
+          title: title || subject,
+          customSubject: subject,
+          message,
+          severity,
+          language,
+          includeButton,
+        });
+        if (res.success) {
+          sentCount++;
+        } else {
+          failures.push(email);
+        }
+      } catch (err) {
+        logger.warn(`[AdminService] Failed to deliver targeted email to ${email}:`, err);
+        failures.push(email);
+      }
+    }
+
+    return {
+      success: true,
+      mode: "LIVE_TARGETED",
+      sentCount,
+      failedCount: failures.length,
+      message: `Email successfully delivered to ${sentCount} recipient(s).`,
+      failures,
+    };
   }
 }
 

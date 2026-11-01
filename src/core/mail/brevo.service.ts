@@ -338,6 +338,301 @@ nagriksevapoint@gmail.com
       textContent,
     });
   }
+
+  /**
+   * Dispatches an Urgent Low-Balance Alert to the Platform Administrator.
+   * Protected with testRecipientEmail override for safe format verification.
+   */
+  async sendLowBalanceAdminAlert({
+    serviceCode,
+    serviceName,
+    vendorError,
+    testRecipientEmail,
+    rechargeUrl,
+  }: {
+    serviceCode: string;
+    serviceName: string;
+    vendorError: string;
+    testRecipientEmail?: string;
+    rechargeUrl?: string;
+  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const adminEmail =
+      testRecipientEmail ||
+      getEnvVar("ADMIN_ALERT_EMAIL") ||
+      "nagriksevapoint@gmail.com";
+    const istTime = new Date().toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      dateStyle: "medium",
+      timeStyle: "medium",
+    });
+    const topupUrl = rechargeUrl || "https://planapi.in";
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Urgent: Upstream API Wallet Balance Low</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1E293B;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F1F5F9; padding: 36px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 580px; background-color: #FFFFFF; border-radius: 16px; border: 1px solid #CBD5E1; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);">
+          <tr>
+            <td height="5" style="background: linear-gradient(90deg, #DC2626 0%, #EF4444 100%); line-height: 5px; font-size: 5px;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td align="center" style="background-color: #FFFFFF; border-bottom: 1px solid #F1F5F9; padding: 24px 32px; text-align: center;">
+              <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" height="44" style="height: 44px; width: auto; max-width: 220px; display: block; margin: 0 auto; border: 0;" />
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 32px 30px;">
+              <div style="display: inline-block; background-color: #FEF2F2; color: #DC2626; border: 1px solid #F87171; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 14px;">
+                🚨 URGENT VENDOR ACTION REQUIRED
+              </div>
+              <h1 style="margin: 0 0 12px 0; font-size: 22px; font-weight: 800; color: #0F172A; line-height: 1.3;">
+                अपस्ट्रीम वेंडर API वॉलेट बैलेंस समाप्त / अत्यंत कम
+              </h1>
+              <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
+                नमस्ते एडमिन, आपके अपस्ट्रीम API प्रोवाइडर (<strong>PlanAPI / EzyTM</strong>) के मुख्य वॉलेट का बैलेंस शून्य (₹0) या न्यूनतम सीमा से नीचे पहुँच गया है। तत्काल रिचार्ज की आवश्यकता है ताकि वीएलई और कस्टमर्स की सर्विसेज चालू रह सकें।
+              </p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; margin: 20px 0; padding: 16px;">
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="6" border="0" style="font-size: 13px;">
+                      <tr>
+                        <td width="35%" style="color: #64748B; font-weight: 600;">प्रभावित सर्विस:</td>
+                        <td style="color: #0F172A; font-weight: 700;">${serviceName} (${serviceCode})</td>
+                      </tr>
+                      <tr>
+                        <td style="color: #64748B; font-weight: 600;">वेंडर गेटवे:</td>
+                        <td style="color: #0F172A; font-weight: 700;">PlanAPI / EzyTM Gateway</td>
+                      </tr>
+                      <tr>
+                        <td style="color: #64748B; font-weight: 600;">वेंडर एरर रिस्पॉन्स:</td>
+                        <td style="color: #DC2626; font-weight: 700;">${vendorError}</td>
+                      </tr>
+                      <tr>
+                        <td style="color: #64748B; font-weight: 600;">डिटेक्शन समय (IST):</td>
+                        <td style="color: #0F172A; font-weight: 600;">${istTime}</td>
+                      </tr>
+                      <tr>
+                        <td style="color: #64748B; font-weight: 600;">कस्टमर सुरक्षा स्थिति:</td>
+                        <td style="color: #059669; font-weight: 700;">
+                          ✓ सक्रिय (कस्टमर को भ्रामक "PAN Not Found" की जगह मेंटेनेंस का सुरक्षित संदेश दिखाया गया है)
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 28px 0 20px 0;">
+                <tr>
+                  <td align="center">
+                    <a href="${topupUrl}" target="_blank" style="background-color: #DC2626; color: #FFFFFF !important; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 34px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);">
+                      वेंडर वॉलेट रिचार्ज करें (PlanAPI) &nbsp;&rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.5; text-align: center;">
+                *नोट: यह ईमेल एंटी-स्पैम सुरक्षा के तहत प्रत्येक 15 मिनट में अधिकतम 1 बार भेजी जाती है।
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 18px 30px; text-align: center; font-size: 11px; color: #64748B;">
+              नागरिक सेवा पॉइंट • ऑटोमेटेड प्लेटफॉर्म मॉनिटरिंग सिस्टम<br />
+              हेल्पडेस्क: <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; text-decoration: underline;">nagriksevapoint@gmail.com</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+
+    const textContent = `
+🚨 [CRITICAL ALERT] Upstream API Wallet Balance Low / Exhausted
+
+Service: ${serviceName} (${serviceCode})
+Gateway: PlanAPI / EzyTM
+Vendor Error: ${vendorError}
+Time: ${istTime}
+
+Action Required: Please recharge your upstream vendor wallet immediately:
+${topupUrl}
+
+Note: Customers are currently shown a graceful maintenance message to prevent false "PAN not found" complaints.
+`;
+
+    return this.sendEmail({
+      to: [{ email: adminEmail, name: "Platform Administrator" }],
+      subject: `🚨 [CRITICAL ALERT] Upstream API Wallet Balance Low - ${serviceName}`,
+      htmlContent,
+      textContent,
+    });
+  }
+
+  /**
+   * Dispatches a branded Broadcast Announcement Email to a VLE / Retailer.
+   * SAFETY GUARD: Requires explicit testRecipientEmail or verified broadcast list.
+   */
+  async sendVLEBroadcastEmail({
+    to,
+    vleName,
+    title,
+    message,
+    severity = "info",
+    customSubject,
+    actionUrl,
+    actionText,
+    language = "hi",
+    includeButton = true,
+  }: {
+    to: string;
+    vleName?: string;
+    title: string;
+    message: string;
+    severity?: "info" | "warning" | "urgent" | "success";
+    customSubject?: string;
+    actionUrl?: string;
+    actionText?: string;
+    language?: "hi" | "en";
+    includeButton?: boolean;
+  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const isEn = language === "en";
+    const displayName = vleName?.trim() || (isEn ? "Retail Partner" : "सम्मानित वीएलई बंधु");
+    const greetingText = isEn ? `Dear ${displayName},` : `नमस्ते ${displayName} जी,`;
+    const defaultBtnText = isEn ? "Open Retailer Dashboard &nbsp;&rarr;" : "रिटेलर डैशबोर्ड खोलें &nbsp;&rarr;";
+    const buttonText = actionText || defaultBtnText;
+
+    const emailSubject =
+      customSubject?.trim() ||
+      title?.trim() ||
+      (isEn ? "Nagrik Seva Point - Official Communication" : "नागरिक सेवा केंद्र - आधिकारिक सूचना");
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="${isEn ? "en" : "hi"}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${title} - Nagrik Seva Point</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F1F5F9; padding: 36px 16px;">
+    <tr>
+      <td align="center">
+        <!-- Main Letter Card -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #FFFFFF; border-radius: 14px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.06);">
+          
+          <!-- Top Accent Brand Bar -->
+          <tr>
+            <td height="4" style="background: linear-gradient(90deg, #FD3820 0%, #FF6B4A 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
+          </tr>
+
+          <!-- Corporate Letterhead Header (Logo Centered) -->
+          <tr>
+            <td align="center" style="background-color: #FFFFFF; border-bottom: 1px solid #F1F5F9; padding: 24px 30px; text-align: center;">
+              <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" height="42" style="height: 42px; width: auto; max-width: 220px; display: block; margin: 0 auto; border: 0;" />
+              </a>
+            </td>
+          </tr>
+
+          <!-- Main Content Body -->
+          <tr>
+            <td style="padding: 28px 28px;">
+              <!-- Official Message Body Card (Greeting INSIDE the box at the very top) -->
+              <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-left: 4px solid #FD3820; border-radius: 8px; padding: 22px 24px; margin: 0 0 24px 0;">
+                <p style="margin: 0 0 16px 0; font-size: 15px; font-weight: normal; color: #1E293B; line-height: 1.6;">
+                  ${greetingText}
+                </p>
+                <div style="font-size: 14px; color: #334155; line-height: 1.8; white-space: pre-line;">
+                  ${message}
+                </div>
+              </div>
+
+              ${
+                includeButton
+                  ? `<!-- Action CTA Button -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 26px 0 16px 0;">
+                <tr>
+                  <td align="center">
+                    <a href="${actionUrl || 'https://nagriksevapoint.in/dashboard'}" target="_blank" rel="noopener noreferrer" style="background-color: #FD3820; color: #FFFFFF !important; font-size: 14px; font-weight: 700; text-decoration: none; padding: 13px 32px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 12px rgba(253, 56, 32, 0.28); border: 1px solid #D92D16;">
+                      ${buttonText}
+                    </a>
+                  </td>
+                </tr>
+              </table>`
+                  : ""
+              }
+
+              <!-- Minimal Clean Sign-off (Normal Text) -->
+              <div style="margin-top: 26px; font-size: 14px; color: #334155; line-height: 1.6;">
+                Regards,<br />
+                <span style="color: #0F172A; font-weight: normal;">Team Nagrik Seva Point</span>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Polished Structured Footer -->
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 20px 28px; text-align: center; font-size: 12px; color: #64748B; line-height: 1.7;">
+              <div style="font-weight: 600; color: #334155; margin-bottom: 6px;">
+                ${
+                  isEn
+                    ? "Nagrik Seva Point &bull; Official Digital Platform for Cyber Cafés &amp; CSC Desks"
+                    : "नागरिक सेवा पॉइंट • भारत के समस्त साइबर कैफ़े एवं सीएससी ऑपरेटरों का आधिकारिक मंच"
+                }
+              </div>
+              <div style="margin-bottom: 6px;">
+                ${isEn ? "Website:" : "वेबसाइट:"} <a href="https://nagriksevapoint.in" target="_blank" style="color: #FD3820; font-weight: 600; text-decoration: none;">nagriksevapoint.in</a>
+                &nbsp;&bull;&nbsp;
+                ${isEn ? "Helpdesk:" : "सहायता:"} <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; font-weight: 600; text-decoration: none;">nagriksevapoint@gmail.com</a>
+              </div>
+              <div style="font-size: 11px; color: #94A3B8;">
+                &copy; ${new Date().getFullYear()} Nagrik Seva Point. ${isEn ? "All rights reserved." : "सर्वाधिकार सुरक्षित।"}
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+
+    const textContent = `
+${greetingText}
+
+${message}
+${
+  includeButton
+    ? `\n--------------------------------------------------\n${buttonText.replace(/&nbsp;/g, " ").replace(/&rarr;/g, "->")}: ${actionUrl || 'https://nagriksevapoint.in/dashboard'}\n`
+    : ""
+}
+Regards,
+Team Nagrik Seva Point
+${isEn ? "Website:" : "वेबसाइट:"} https://nagriksevapoint.in | ${isEn ? "Helpdesk:" : "सहायता:"} nagriksevapoint@gmail.com
+`;
+
+    return this.sendEmail({
+      to: [{ email: to, name: displayName }],
+      subject: emailSubject,
+      htmlContent,
+      textContent,
+    });
+  }
 }
 
 export const brevoMailService = new BrevoMailService();

@@ -6460,6 +6460,260 @@ nagriksevapoint@gmail.com
       textContent
     });
   }
+  /**
+   * Dispatches an Urgent Low-Balance Alert to the Platform Administrator.
+   * Protected with testRecipientEmail override for safe format verification.
+   */
+  async sendLowBalanceAdminAlert({
+    serviceCode,
+    serviceName,
+    vendorError,
+    testRecipientEmail,
+    rechargeUrl
+  }) {
+    const adminEmail = testRecipientEmail || getEnvVar("ADMIN_ALERT_EMAIL") || "nagriksevapoint@gmail.com";
+    const istTime = (/* @__PURE__ */ new Date()).toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      dateStyle: "medium",
+      timeStyle: "medium"
+    });
+    const topupUrl = rechargeUrl || "https://planapi.in";
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Urgent: Upstream API Wallet Balance Low</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1E293B;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F1F5F9; padding: 36px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 580px; background-color: #FFFFFF; border-radius: 16px; border: 1px solid #CBD5E1; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);">
+          <tr>
+            <td height="5" style="background: linear-gradient(90deg, #DC2626 0%, #EF4444 100%); line-height: 5px; font-size: 5px;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td align="center" style="background-color: #FFFFFF; border-bottom: 1px solid #F1F5F9; padding: 24px 32px; text-align: center;">
+              <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" height="44" style="height: 44px; width: auto; max-width: 220px; display: block; margin: 0 auto; border: 0;" />
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 32px 30px;">
+              <div style="display: inline-block; background-color: #FEF2F2; color: #DC2626; border: 1px solid #F87171; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 14px;">
+                \u{1F6A8} URGENT VENDOR ACTION REQUIRED
+              </div>
+              <h1 style="margin: 0 0 12px 0; font-size: 22px; font-weight: 800; color: #0F172A; line-height: 1.3;">
+                \u0905\u092A\u0938\u094D\u091F\u094D\u0930\u0940\u092E \u0935\u0947\u0902\u0921\u0930 API \u0935\u0949\u0932\u0947\u091F \u092C\u0948\u0932\u0947\u0902\u0938 \u0938\u092E\u093E\u092A\u094D\u0924 / \u0905\u0924\u094D\u092F\u0902\u0924 \u0915\u092E
+              </h1>
+              <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
+                \u0928\u092E\u0938\u094D\u0924\u0947 \u090F\u0921\u092E\u093F\u0928, \u0906\u092A\u0915\u0947 \u0905\u092A\u0938\u094D\u091F\u094D\u0930\u0940\u092E API \u092A\u094D\u0930\u094B\u0935\u093E\u0907\u0921\u0930 (<strong>PlanAPI / EzyTM</strong>) \u0915\u0947 \u092E\u0941\u0916\u094D\u092F \u0935\u0949\u0932\u0947\u091F \u0915\u093E \u092C\u0948\u0932\u0947\u0902\u0938 \u0936\u0942\u0928\u094D\u092F (\u20B90) \u092F\u093E \u0928\u094D\u092F\u0942\u0928\u0924\u092E \u0938\u0940\u092E\u093E \u0938\u0947 \u0928\u0940\u091A\u0947 \u092A\u0939\u0941\u0901\u091A \u0917\u092F\u093E \u0939\u0948\u0964 \u0924\u0924\u094D\u0915\u093E\u0932 \u0930\u093F\u091A\u093E\u0930\u094D\u091C \u0915\u0940 \u0906\u0935\u0936\u094D\u092F\u0915\u0924\u093E \u0939\u0948 \u0924\u093E\u0915\u093F \u0935\u0940\u090F\u0932\u0908 \u0914\u0930 \u0915\u0938\u094D\u091F\u092E\u0930\u094D\u0938 \u0915\u0940 \u0938\u0930\u094D\u0935\u093F\u0938\u0947\u091C \u091A\u093E\u0932\u0942 \u0930\u0939 \u0938\u0915\u0947\u0902\u0964
+              </p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; margin: 20px 0; padding: 16px;">
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="6" border="0" style="font-size: 13px;">
+                      <tr>
+                        <td width="35%" style="color: #64748B; font-weight: 600;">\u092A\u094D\u0930\u092D\u093E\u0935\u093F\u0924 \u0938\u0930\u094D\u0935\u093F\u0938:</td>
+                        <td style="color: #0F172A; font-weight: 700;">${serviceName} (${serviceCode})</td>
+                      </tr>
+                      <tr>
+                        <td style="color: #64748B; font-weight: 600;">\u0935\u0947\u0902\u0921\u0930 \u0917\u0947\u091F\u0935\u0947:</td>
+                        <td style="color: #0F172A; font-weight: 700;">PlanAPI / EzyTM Gateway</td>
+                      </tr>
+                      <tr>
+                        <td style="color: #64748B; font-weight: 600;">\u0935\u0947\u0902\u0921\u0930 \u090F\u0930\u0930 \u0930\u093F\u0938\u094D\u092A\u0949\u0928\u094D\u0938:</td>
+                        <td style="color: #DC2626; font-weight: 700;">${vendorError}</td>
+                      </tr>
+                      <tr>
+                        <td style="color: #64748B; font-weight: 600;">\u0921\u093F\u091F\u0947\u0915\u094D\u0936\u0928 \u0938\u092E\u092F (IST):</td>
+                        <td style="color: #0F172A; font-weight: 600;">${istTime}</td>
+                      </tr>
+                      <tr>
+                        <td style="color: #64748B; font-weight: 600;">\u0915\u0938\u094D\u091F\u092E\u0930 \u0938\u0941\u0930\u0915\u094D\u0937\u093E \u0938\u094D\u0925\u093F\u0924\u093F:</td>
+                        <td style="color: #059669; font-weight: 700;">
+                          \u2713 \u0938\u0915\u094D\u0930\u093F\u092F (\u0915\u0938\u094D\u091F\u092E\u0930 \u0915\u094B \u092D\u094D\u0930\u093E\u092E\u0915 "PAN Not Found" \u0915\u0940 \u091C\u0917\u0939 \u092E\u0947\u0902\u091F\u0947\u0928\u0947\u0902\u0938 \u0915\u093E \u0938\u0941\u0930\u0915\u094D\u0937\u093F\u0924 \u0938\u0902\u0926\u0947\u0936 \u0926\u093F\u0916\u093E\u092F\u093E \u0917\u092F\u093E \u0939\u0948)
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 28px 0 20px 0;">
+                <tr>
+                  <td align="center">
+                    <a href="${topupUrl}" target="_blank" style="background-color: #DC2626; color: #FFFFFF !important; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 34px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);">
+                      \u0935\u0947\u0902\u0921\u0930 \u0935\u0949\u0932\u0947\u091F \u0930\u093F\u091A\u093E\u0930\u094D\u091C \u0915\u0930\u0947\u0902 (PlanAPI) &nbsp;&rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.5; text-align: center;">
+                *\u0928\u094B\u091F: \u092F\u0939 \u0908\u092E\u0947\u0932 \u090F\u0902\u091F\u0940-\u0938\u094D\u092A\u0948\u092E \u0938\u0941\u0930\u0915\u094D\u0937\u093E \u0915\u0947 \u0924\u0939\u0924 \u092A\u094D\u0930\u0924\u094D\u092F\u0947\u0915 15 \u092E\u093F\u0928\u091F \u092E\u0947\u0902 \u0905\u0927\u093F\u0915\u0924\u092E 1 \u092C\u093E\u0930 \u092D\u0947\u091C\u0940 \u091C\u093E\u0924\u0940 \u0939\u0948\u0964
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 18px 30px; text-align: center; font-size: 11px; color: #64748B;">
+              \u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u092A\u0949\u0907\u0902\u091F \u2022 \u0911\u091F\u094B\u092E\u0947\u091F\u0947\u0921 \u092A\u094D\u0932\u0947\u091F\u092B\u0949\u0930\u094D\u092E \u092E\u0949\u0928\u093F\u091F\u0930\u093F\u0902\u0917 \u0938\u093F\u0938\u094D\u091F\u092E<br />
+              \u0939\u0947\u0932\u094D\u092A\u0921\u0947\u0938\u094D\u0915: <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; text-decoration: underline;">nagriksevapoint@gmail.com</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+    const textContent = `
+\u{1F6A8} [CRITICAL ALERT] Upstream API Wallet Balance Low / Exhausted
+
+Service: ${serviceName} (${serviceCode})
+Gateway: PlanAPI / EzyTM
+Vendor Error: ${vendorError}
+Time: ${istTime}
+
+Action Required: Please recharge your upstream vendor wallet immediately:
+${topupUrl}
+
+Note: Customers are currently shown a graceful maintenance message to prevent false "PAN not found" complaints.
+`;
+    return this.sendEmail({
+      to: [{ email: adminEmail, name: "Platform Administrator" }],
+      subject: `\u{1F6A8} [CRITICAL ALERT] Upstream API Wallet Balance Low - ${serviceName}`,
+      htmlContent,
+      textContent
+    });
+  }
+  /**
+   * Dispatches a branded Broadcast Announcement Email to a VLE / Retailer.
+   * SAFETY GUARD: Requires explicit testRecipientEmail or verified broadcast list.
+   */
+  async sendVLEBroadcastEmail({
+    to,
+    vleName,
+    title,
+    message,
+    severity = "info",
+    customSubject,
+    actionUrl,
+    actionText,
+    language = "hi",
+    includeButton = true
+  }) {
+    const isEn = language === "en";
+    const displayName = vleName?.trim() || (isEn ? "Retail Partner" : "\u0938\u092E\u094D\u092E\u093E\u0928\u093F\u0924 \u0935\u0940\u090F\u0932\u0908 \u092C\u0902\u0927\u0941");
+    const greetingText = isEn ? `Dear ${displayName},` : `\u0928\u092E\u0938\u094D\u0924\u0947 ${displayName} \u091C\u0940,`;
+    const defaultBtnText = isEn ? "Open Retailer Dashboard &nbsp;&rarr;" : "\u0930\u093F\u091F\u0947\u0932\u0930 \u0921\u0948\u0936\u092C\u094B\u0930\u094D\u0921 \u0916\u094B\u0932\u0947\u0902 &nbsp;&rarr;";
+    const buttonText = actionText || defaultBtnText;
+    const emailSubject = customSubject?.trim() || title?.trim() || (isEn ? "Nagrik Seva Point - Official Communication" : "\u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0915\u0947\u0902\u0926\u094D\u0930 - \u0906\u0927\u093F\u0915\u093E\u0930\u093F\u0915 \u0938\u0942\u091A\u0928\u093E");
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="${isEn ? "en" : "hi"}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${title} - Nagrik Seva Point</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F1F5F9; padding: 36px 16px;">
+    <tr>
+      <td align="center">
+        <!-- Main Letter Card -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 600px; background-color: #FFFFFF; border-radius: 14px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.06);">
+          
+          <!-- Top Accent Brand Bar -->
+          <tr>
+            <td height="4" style="background: linear-gradient(90deg, #FD3820 0%, #FF6B4A 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
+          </tr>
+
+          <!-- Corporate Letterhead Header (Logo Centered) -->
+          <tr>
+            <td align="center" style="background-color: #FFFFFF; border-bottom: 1px solid #F1F5F9; padding: 24px 30px; text-align: center;">
+              <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" height="42" style="height: 42px; width: auto; max-width: 220px; display: block; margin: 0 auto; border: 0;" />
+              </a>
+            </td>
+          </tr>
+
+          <!-- Main Content Body -->
+          <tr>
+            <td style="padding: 28px 28px;">
+              <!-- Official Message Body Card (Greeting INSIDE the box at the very top) -->
+              <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-left: 4px solid #FD3820; border-radius: 8px; padding: 22px 24px; margin: 0 0 24px 0;">
+                <p style="margin: 0 0 16px 0; font-size: 15px; font-weight: normal; color: #1E293B; line-height: 1.6;">
+                  ${greetingText}
+                </p>
+                <div style="font-size: 14px; color: #334155; line-height: 1.8; white-space: pre-line;">
+                  ${message}
+                </div>
+              </div>
+
+              ${includeButton ? `<!-- Action CTA Button -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 26px 0 16px 0;">
+                <tr>
+                  <td align="center">
+                    <a href="${actionUrl || "https://nagriksevapoint.in/dashboard"}" target="_blank" rel="noopener noreferrer" style="background-color: #FD3820; color: #FFFFFF !important; font-size: 14px; font-weight: 700; text-decoration: none; padding: 13px 32px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 12px rgba(253, 56, 32, 0.28); border: 1px solid #D92D16;">
+                      ${buttonText}
+                    </a>
+                  </td>
+                </tr>
+              </table>` : ""}
+
+              <!-- Minimal Clean Sign-off (Normal Text) -->
+              <div style="margin-top: 26px; font-size: 14px; color: #334155; line-height: 1.6;">
+                Regards,<br />
+                <span style="color: #0F172A; font-weight: normal;">Team Nagrik Seva Point</span>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Polished Structured Footer -->
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 20px 28px; text-align: center; font-size: 12px; color: #64748B; line-height: 1.7;">
+              <div style="font-weight: 600; color: #334155; margin-bottom: 6px;">
+                ${isEn ? "Nagrik Seva Point &bull; Official Digital Platform for Cyber Caf\xE9s &amp; CSC Desks" : "\u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u092A\u0949\u0907\u0902\u091F \u2022 \u092D\u093E\u0930\u0924 \u0915\u0947 \u0938\u092E\u0938\u094D\u0924 \u0938\u093E\u0907\u092C\u0930 \u0915\u0948\u092B\u093C\u0947 \u090F\u0935\u0902 \u0938\u0940\u090F\u0938\u0938\u0940 \u0911\u092A\u0930\u0947\u091F\u0930\u094B\u0902 \u0915\u093E \u0906\u0927\u093F\u0915\u093E\u0930\u093F\u0915 \u092E\u0902\u091A"}
+              </div>
+              <div style="margin-bottom: 6px;">
+                ${isEn ? "Website:" : "\u0935\u0947\u092C\u0938\u093E\u0907\u091F:"} <a href="https://nagriksevapoint.in" target="_blank" style="color: #FD3820; font-weight: 600; text-decoration: none;">nagriksevapoint.in</a>
+                &nbsp;&bull;&nbsp;
+                ${isEn ? "Helpdesk:" : "\u0938\u0939\u093E\u092F\u0924\u093E:"} <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; font-weight: 600; text-decoration: none;">nagriksevapoint@gmail.com</a>
+              </div>
+              <div style="font-size: 11px; color: #94A3B8;">
+                &copy; ${(/* @__PURE__ */ new Date()).getFullYear()} Nagrik Seva Point. ${isEn ? "All rights reserved." : "\u0938\u0930\u094D\u0935\u093E\u0927\u093F\u0915\u093E\u0930 \u0938\u0941\u0930\u0915\u094D\u0937\u093F\u0924\u0964"}
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+    const textContent = `
+${greetingText}
+
+${message}
+${includeButton ? `
+--------------------------------------------------
+${buttonText.replace(/&nbsp;/g, " ").replace(/&rarr;/g, "->")}: ${actionUrl || "https://nagriksevapoint.in/dashboard"}
+` : ""}
+Regards,
+Team Nagrik Seva Point
+${isEn ? "Website:" : "\u0935\u0947\u092C\u0938\u093E\u0907\u091F:"} https://nagriksevapoint.in | ${isEn ? "Helpdesk:" : "\u0938\u0939\u093E\u092F\u0924\u093E:"} nagriksevapoint@gmail.com
+`;
+    return this.sendEmail({
+      to: [{ email: to, name: displayName }],
+      subject: emailSubject,
+      htmlContent,
+      textContent
+    });
+  }
 };
 var brevoMailService = new BrevoMailService();
 
@@ -9394,7 +9648,272 @@ function decryptPanToken(token) {
   }
 }
 
+// src/modules/admin/vendor-wallet.service.ts
+var VendorWalletService = class {
+  VENDOR_CODE = "PLANAPI";
+  DEFAULT_THRESHOLD = 20;
+  // ₹20 threshold
+  /**
+   * Get or automatically initialize PlanAPI company vendor wallet record
+   */
+  async getWallet() {
+    let wallet = await prisma.companyVendorWallet.findUnique({
+      where: { vendorCode: this.VENDOR_CODE }
+    });
+    if (!wallet) {
+      wallet = await prisma.companyVendorWallet.create({
+        data: {
+          vendorCode: this.VENDOR_CODE,
+          vendorName: "PlanAPI / EzyTM Gateway",
+          currentBalance: 0,
+          lowBalanceThreshold: this.DEFAULT_THRESHOLD
+        }
+      });
+      logger2.info(`[VendorWallet] Initialized default company wallet for ${this.VENDOR_CODE}`);
+    }
+    const recentLogs = await prisma.companyVendorWalletLog.findMany({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: "desc" },
+      take: 20
+    });
+    const balanceNum = Number(wallet.currentBalance);
+    const thresholdNum = Number(wallet.lowBalanceThreshold);
+    let status = "SAFE";
+    if (balanceNum <= 0) {
+      status = "CRITICAL";
+    } else if (balanceNum <= thresholdNum) {
+      status = "LOW_BALANCE";
+    }
+    return {
+      id: wallet.id,
+      vendorCode: wallet.vendorCode,
+      vendorName: wallet.vendorName,
+      currentBalance: balanceNum,
+      lowBalanceThreshold: thresholdNum,
+      status,
+      lastRechargeAmount: wallet.lastRechargeAmount ? Number(wallet.lastRechargeAmount) : null,
+      lastRechargedAt: wallet.lastRechargedAt,
+      lastAlertSentAt: wallet.lastAlertSentAt,
+      updatedAt: wallet.updatedAt,
+      recentLogs: recentLogs.map((log2) => ({
+        id: log2.id,
+        type: log2.type,
+        amount: Number(log2.amount),
+        balanceAfter: Number(log2.balanceAfter),
+        serviceCode: log2.serviceCode,
+        description: log2.description,
+        createdAt: log2.createdAt
+      }))
+    };
+  }
+  /**
+   * Add a top-up recharge to the wallet (e.g. Added ₹500)
+   */
+  async topupRecharge(amount, description) {
+    if (amount <= 0) {
+      throw AppError.badRequest("Top-up recharge amount must be greater than 0");
+    }
+    const current = await this.getWallet();
+    const newBalance = Number((current.currentBalance + amount).toFixed(2));
+    const now = /* @__PURE__ */ new Date();
+    const [updatedWallet, log2] = await prisma.$transaction([
+      prisma.companyVendorWallet.update({
+        where: { vendorCode: this.VENDOR_CODE },
+        data: {
+          currentBalance: newBalance,
+          lastRechargeAmount: amount,
+          lastRechargedAt: now
+        }
+      }),
+      prisma.companyVendorWalletLog.create({
+        data: {
+          walletId: current.id,
+          type: "CREDIT",
+          amount,
+          balanceAfter: newBalance,
+          description: description || `Recharge top-up added (+\u20B9${amount.toFixed(2)})`
+        }
+      })
+    ]);
+    logger2.info(`[VendorWallet] Top-up added: +\u20B9${amount}. New balance: \u20B9${newBalance}`);
+    return {
+      currentBalance: Number(updatedWallet.currentBalance),
+      addedAmount: amount,
+      rechargedAt: now,
+      logId: log2.id
+    };
+  }
+  /**
+   * Reconcile/Set exact balance matching what admin sees on planapi.in dashboard
+   */
+  async reconcileExactBalance(exactBalance, description) {
+    if (exactBalance < 0) {
+      throw AppError.badRequest("Balance cannot be negative");
+    }
+    const current = await this.getWallet();
+    const diff = Number((exactBalance - current.currentBalance).toFixed(2));
+    const now = /* @__PURE__ */ new Date();
+    const [updatedWallet, log2] = await prisma.$transaction([
+      prisma.companyVendorWallet.update({
+        where: { vendorCode: this.VENDOR_CODE },
+        data: {
+          currentBalance: exactBalance,
+          lastRechargeAmount: diff > 0 ? diff : void 0,
+          lastRechargedAt: diff > 0 ? now : void 0
+        }
+      }),
+      prisma.companyVendorWalletLog.create({
+        data: {
+          walletId: current.id,
+          type: diff >= 0 ? "CREDIT" : "DEBIT",
+          amount: Math.abs(diff),
+          balanceAfter: exactBalance,
+          description: description || `Reconciliation sync with PlanAPI dashboard (Diff: ${diff >= 0 ? "+" : ""}${diff.toFixed(2)})`
+        }
+      })
+    ]);
+    logger2.info(
+      `[VendorWallet] Reconciled balance: \u20B9${exactBalance} (Previous: \u20B9${current.currentBalance}, Diff: ${diff})`
+    );
+    return {
+      currentBalance: Number(updatedWallet.currentBalance),
+      difference: diff,
+      reconciledAt: now,
+      logId: log2.id
+    };
+  }
+  /**
+   * Update low balance alert threshold (Default is ₹20.00)
+   */
+  async updateThreshold(threshold) {
+    if (threshold <= 0) {
+      throw AppError.badRequest("Threshold must be greater than 0");
+    }
+    const updated = await prisma.companyVendorWallet.update({
+      where: { vendorCode: this.VENDOR_CODE },
+      data: { lowBalanceThreshold: threshold }
+    });
+    return {
+      vendorCode: updated.vendorCode,
+      lowBalanceThreshold: Number(updated.lowBalanceThreshold)
+    };
+  }
+  /**
+   * Deduct unit cost when an upstream API lookup executes
+   * Checks if balance dips to or below threshold (<= ₹20) and triggers alert
+   */
+  async deductApiCost(params) {
+    try {
+      const current = await this.getWallet();
+      const newBalance = Number((current.currentBalance - params.unitCost).toFixed(2));
+      const now = /* @__PURE__ */ new Date();
+      const [updatedWallet] = await prisma.$transaction([
+        prisma.companyVendorWallet.update({
+          where: { vendorCode: this.VENDOR_CODE },
+          data: {
+            currentBalance: newBalance
+          }
+        }),
+        prisma.companyVendorWalletLog.create({
+          data: {
+            walletId: current.id,
+            type: "DEBIT",
+            amount: params.unitCost,
+            balanceAfter: newBalance,
+            serviceCode: params.serviceCode,
+            description: `API lookup deduction for ${params.serviceCode} (-\u20B9${params.unitCost.toFixed(2)})${params.reference ? ` [${params.reference}]` : ""}`
+          }
+        })
+      ]);
+      logger2.info(
+        `[VendorWallet] Deducted \u20B9${params.unitCost} for ${params.serviceCode}. New Balance: \u20B9${newBalance}`
+      );
+      const threshold = Number(updatedWallet.lowBalanceThreshold);
+      if (newBalance <= threshold) {
+        await this.checkAndTriggerThresholdAlert({
+          serviceCode: params.serviceCode,
+          currentBalance: newBalance,
+          threshold
+        });
+      }
+      return {
+        previousBalance: current.currentBalance,
+        newBalance,
+        deducted: params.unitCost
+      };
+    } catch (err) {
+      logger2.error(`[VendorWallet] Failed to deduct API cost:`, err);
+      return null;
+    }
+  }
+  /**
+   * Trigger Brevo Email Alert to Admin when balance <= ₹20
+   * 15-minute throttle lock via Redis to avoid flooding on rapid lookups
+   */
+  async checkAndTriggerThresholdAlert(params) {
+    const lockKey = `alert:vendor_wallet_threshold_lock:${this.VENDOR_CODE}`;
+    try {
+      const isLocked = await redis.get(lockKey);
+      if (isLocked) {
+        logger2.info(
+          `[VendorWalletAlert] Threshold alert throttled for ${this.VENDOR_CODE}. Current: \u20B9${params.currentBalance}. Skipping duplicate.`
+        );
+        return;
+      }
+      await redis.set(lockKey, "1", 900);
+      await prisma.companyVendorWallet.update({
+        where: { vendorCode: this.VENDOR_CODE },
+        data: { lastAlertSentAt: /* @__PURE__ */ new Date() }
+      });
+      logger2.warn(
+        `[VendorWalletAlert] Balance is at or below threshold! Current: \u20B9${params.currentBalance} <= \u20B9${params.threshold}. Dispatching Admin alert email.`
+      );
+      await brevoMailService.sendLowBalanceAdminAlert({
+        serviceCode: params.serviceCode,
+        serviceName: `PlanAPI Gateway Ledger Balance (\u20B9${params.currentBalance.toFixed(2)})`,
+        vendorError: `Ledger balance dipped to \u20B9${params.currentBalance.toFixed(
+          2
+        )} (Threshold: \u20B9${params.threshold.toFixed(2)}). Immediate recharge required to prevent downtime.`,
+        rechargeUrl: "https://planapi.in"
+      });
+    } catch (err) {
+      logger2.error(`[VendorWalletAlert] Failed to trigger threshold alert:`, err);
+    }
+  }
+};
+var vendorWalletService = new VendorWalletService();
+
 // src/modules/pan/pan.service.ts
+function isVendorLowBalance(errorcode, message) {
+  if (errorcode === 104) return true;
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return lower.includes("insufficient") || lower.includes("low balance") || lower.includes("balance low") || lower.includes("wallet balance") || lower.includes("recharge") || lower.includes("credit limit");
+}
+async function checkAndTriggerVendorLowBalanceAlert(params) {
+  const lockKey = `alert:vendor_low_balance_lock:${params.serviceCode}`;
+  try {
+    const isLocked = await redis.get(lockKey);
+    if (isLocked) {
+      logger2.info(`[VendorBalanceAlert] Alert already throttled for ${params.serviceCode}. Skipping duplicate email.`);
+      return;
+    }
+    await redis.set(lockKey, "1", 900);
+    if (process.env.ENABLE_VENDOR_BALANCE_ALERTS === "true") {
+      logger2.info(`[VendorBalanceAlert] Dispatching live low balance alert to admin for ${params.serviceCode}`);
+      await brevoMailService.sendLowBalanceAdminAlert({
+        serviceCode: params.serviceCode,
+        serviceName: params.serviceName,
+        vendorError: params.vendorError,
+        rechargeUrl: "https://planapi.in"
+      });
+    } else {
+      logger2.warn(`[VendorBalanceAlert] Low balance detected for ${params.serviceCode} (${params.vendorError}). Live email alert is currently in PREVIEW/TEST mode (ENABLE_VENDOR_BALANCE_ALERTS is not enabled).`);
+    }
+  } catch (err) {
+    logger2.error(`[VendorBalanceAlert] Failed to handle balance alert:`, err);
+  }
+}
 var PanService = class {
   /**
    * 1. Find PAN Number by 12-digit Aadhaar
@@ -9426,6 +9945,13 @@ var PanService = class {
     }
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
     logger2.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
+    vendorWalletService.deductApiCost({
+      serviceCode: "PAN_FIND",
+      unitCost: 2.5,
+      reference: `Aadhaar ending in ${aadhaar.slice(-4)}`
+    }).catch((err) => {
+      logger2.error("[PanService] Failed to deduct wallet balance for PAN_FIND:", err);
+    });
     const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
     if (response.Errorcode === 100) {
       if (panNumber) {
@@ -9449,8 +9975,21 @@ var PanService = class {
       logger2.warn(`[PanService] ${notFoundMsg}`);
       throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
     }
-    if (response.Errorcode === 101 || response.Errorcode === 104) {
-      logger2.warn(`[PanService] PAN not found / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}`);
+    if (isVendorLowBalance(response.Errorcode, response.Message)) {
+      logger2.error(`[PanService] Vendor balance error detected in findPanByAadhaar: ${response.Message} (Code ${response.Errorcode})`);
+      checkAndTriggerVendorLowBalanceAlert({
+        serviceCode: "PAN_FIND",
+        serviceName: "Aadhaar to PAN Find",
+        vendorError: `Errorcode ${response.Errorcode}: ${response.Message || "Insufficient balance"}`
+      }).catch(() => {
+      });
+      throw AppError.badRequest(
+        "\u0938\u0930\u0915\u093E\u0930\u0940 \u092A\u0948\u0928 \u0917\u0947\u091F\u0935\u0947 \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u092E\u0947\u0902 \u0935\u094D\u092F\u0938\u094D\u0924 \u092F\u093E \u092E\u0947\u0902\u091F\u0947\u0928\u0947\u0902\u0938 \u092E\u094B\u0921 \u092A\u0930 \u0939\u0948\u0964 \u0915\u0943\u092A\u092F\u093E 10\u201315 \u092E\u093F\u0928\u091F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
+        "GATEWAY_MAINTENANCE"
+      );
+    }
+    if (response.Errorcode === 101) {
+      logger2.warn(`[PanService] PAN not found / Errorcode 101 for Aadhaar ending in ${aadhaar.slice(-4)}`);
       throw AppError.badRequest("No PAN Card record found linked with this Aadhaar number in the Income Tax registry.", "PAN_NOT_FOUND");
     }
     const fallbackMsg = response.Message && response.Message !== "Data Fetch Successfully" && response.Message !== "Internal Server Error" ? response.Message : "Failed to find PAN for this Aadhaar. The upstream government registry is temporarily unreachable.";
@@ -9509,6 +10048,13 @@ var PanService = class {
       throw AppError.badRequest("Verification provider gateway timed out. Please try again.", "PAN_DETAILS_FAILED");
     }
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
+    vendorWalletService.deductApiCost({
+      serviceCode: "PAN_DETAILS",
+      unitCost: 2,
+      reference: `PAN ending in ${cleanPan.slice(-4)}`
+    }).catch((err) => {
+      logger2.error("[PanService] Failed to deduct wallet balance for PAN_DETAILS:", err);
+    });
     if (response.Errorcode === 100 && response.data) {
       const d = response.data;
       return {
@@ -9522,6 +10068,19 @@ var PanService = class {
       };
     }
     const failureReason = response.msg || "Failed to retrieve PAN details from official registry.";
+    if (isVendorLowBalance(response.Errorcode, failureReason)) {
+      logger2.error(`[PanService] Vendor balance error detected in getPanDetails: ${failureReason} (Code ${response.Errorcode})`);
+      checkAndTriggerVendorLowBalanceAlert({
+        serviceCode: "PAN_DETAILS",
+        serviceName: "Comprehensive PAN Verification",
+        vendorError: `Errorcode ${response.Errorcode}: ${failureReason}`
+      }).catch(() => {
+      });
+      throw AppError.badRequest(
+        "\u0938\u0930\u0915\u093E\u0930\u0940 \u0917\u0947\u091F\u0935\u0947 \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u092E\u0947\u0902 \u0935\u094D\u092F\u0938\u094D\u0924 \u092F\u093E \u092E\u0947\u0902\u091F\u0947\u0928\u0947\u0902\u0938 \u092E\u094B\u0921 \u092A\u0930 \u0939\u0948\u0964 \u0915\u0943\u092A\u092F\u093E 10\u201315 \u092E\u093F\u0928\u091F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
+        "GATEWAY_MAINTENANCE"
+      );
+    }
     logger2.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
     throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
   }
@@ -9639,6 +10198,13 @@ var PanService = class {
     const response = await ezytmPanGateway.getAdvancePanToAadhaar(formattedPan);
     console.log(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
     logger2.info(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
+    vendorWalletService.deductApiCost({
+      serviceCode: "PAN_TO_AADHAAR",
+      unitCost: 5,
+      reference: `PAN ending in ${formattedPan.slice(-4)}`
+    }).catch((err) => {
+      logger2.error("[PanService] Failed to deduct wallet balance for PAN_TO_AADHAAR:", err);
+    });
     if (response.Errorcode === 100 && response.Data) {
       const d = response.Data;
       const cleanPanNumber = (d.PanNumber || formattedPan).trim().toUpperCase();
@@ -9675,7 +10241,20 @@ var PanService = class {
         searchToken
       };
     }
-    if (response.Errorcode === 101 || response.Errorcode === 104) {
+    if (isVendorLowBalance(response.Errorcode, response.Message)) {
+      logger2.error(`[PanService] Vendor balance error detected in getAdvancePanToAadhaar: ${response.Message} (Code ${response.Errorcode})`);
+      checkAndTriggerVendorLowBalanceAlert({
+        serviceCode: "PAN_TO_AADHAAR",
+        serviceName: "Advance PAN to Aadhaar",
+        vendorError: `Errorcode ${response.Errorcode}: ${response.Message || "Insufficient balance"}`
+      }).catch(() => {
+      });
+      throw AppError.badRequest(
+        "\u0938\u0930\u0915\u093E\u0930\u0940 \u0917\u0947\u091F\u0935\u0947 \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u092E\u0947\u0902 \u0935\u094D\u092F\u0938\u094D\u0924 \u092F\u093E \u092E\u0947\u0902\u091F\u0947\u0928\u0947\u0902\u0938 \u092E\u094B\u0921 \u092A\u0930 \u0939\u0948\u0964 \u0915\u0943\u092A\u092F\u093E 10\u201315 \u092E\u093F\u0928\u091F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
+        "GATEWAY_MAINTENANCE"
+      );
+    }
+    if (response.Errorcode === 101) {
       throw AppError.badRequest(
         response.Message || "No record found linked with this PAN in the registry.",
         "PAN_NOT_FOUND"
@@ -12096,16 +12675,80 @@ var AdminService = class {
     });
   }
   async setAnnouncement(input) {
+    const { sendEmailToVles, testRecipientEmail, ...announcementData } = input;
     const data = {
-      ...input,
+      ...announcementData,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     await redis.setJson("system:announcement", data);
     await redis.del("cache:admin:announcement").catch(() => {
     });
+    let emailBroadcastStatus = {
+      sent: 0,
+      mode: "NONE"
+    };
+    if (testRecipientEmail && testRecipientEmail.trim()) {
+      const targetTestEmail = testRecipientEmail.trim();
+      logger2.info(`[AdminService] Sending test dummy announcement email to: ${targetTestEmail}`);
+      try {
+        await brevoMailService.sendVLEBroadcastEmail({
+          to: targetTestEmail,
+          vleName: "Admin Test Recipient",
+          title: data.title || "\u092E\u0939\u0924\u094D\u0935\u092A\u0942\u0930\u094D\u0923 \u0938\u0942\u091A\u0928\u093E - \u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0915\u0947\u0902\u0926\u094D\u0930",
+          message: data.message || "\u092F\u0939 \u090F\u0915 \u092A\u0930\u0940\u0915\u094D\u0937\u0923 \u0918\u094B\u0937\u0923\u093E \u0939\u0948\u0964",
+          severity: data.severity || "info"
+        });
+        emailBroadcastStatus = {
+          sent: 1,
+          mode: "TEST_SAMPLE",
+          testSentTo: targetTestEmail
+        };
+      } catch (err) {
+        logger2.error(`[AdminService] Failed to send test announcement email:`, err);
+      }
+    } else if (sendEmailToVles && data.active && data.message) {
+      if (process.env.ENABLE_VLE_EMAIL_BROADCAST === "true") {
+        logger2.info(`[AdminService] Live VLE Email Broadcast authorized. Fetching registered VLEs...`);
+        try {
+          const users = await prisma.user.findMany({
+            where: { email: { not: "" } },
+            select: { email: true, name: true }
+          });
+          let broadcastCount = 0;
+          for (const u of users) {
+            if (!u.email) continue;
+            try {
+              await brevoMailService.sendVLEBroadcastEmail({
+                to: u.email,
+                vleName: u.name || "\u0938\u092E\u094D\u092E\u093E\u0928\u093F\u0924 \u0935\u0940\u090F\u0932\u0908 \u092C\u0902\u0927\u0941",
+                title: data.title || "\u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0915\u0947\u0902\u0926\u094D\u0930 - \u0906\u0935\u0936\u094D\u092F\u0915 \u0938\u0942\u091A\u0928\u093E",
+                message: data.message,
+                severity: data.severity || "info"
+              });
+              broadcastCount++;
+            } catch (vleErr) {
+              logger2.warn(`[AdminService] Failed to deliver broadcast to ${u.email}:`, vleErr);
+            }
+          }
+          emailBroadcastStatus = {
+            sent: broadcastCount,
+            mode: "LIVE_BROADCAST"
+          };
+        } catch (dbErr) {
+          logger2.error(`[AdminService] Failed to fetch users for broadcast:`, dbErr);
+        }
+      } else {
+        logger2.warn(`[AdminService] sendEmailToVles requested, but live email broadcast is locked (ENABLE_VLE_EMAIL_BROADCAST != true). Main accounts protected.`);
+        emailBroadcastStatus = {
+          sent: 0,
+          mode: "SAFETY_LOCKED"
+        };
+      }
+    }
     return {
       success: true,
-      data
+      data,
+      emailBroadcastStatus
     };
   }
   // ==========================================
@@ -13080,6 +13723,122 @@ var AdminService = class {
       };
     });
   }
+  // ==========================================
+  // 16. DIRECT & TARGETED VLE COMMUNICATIONS
+  // ==========================================
+  async getVleList() {
+    return await redis.remember("cache:admin:vle_list", 60, async () => {
+      const users = await prisma.user.findMany({
+        where: { email: { not: "" } },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          members: {
+            select: {
+              organization: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true
+                }
+              }
+            },
+            take: 1
+          }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+      return users.map((u) => ({
+        id: u.id,
+        name: u.name || "Cyber Caf\xE9 Retailer",
+        email: u.email,
+        phone: u.phone || void 0,
+        orgName: u.members[0]?.organization?.name || "Cyber Caf\xE9 Desk"
+      }));
+    });
+  }
+  async sendTargetedVleEmail(input) {
+    const { recipientEmails, subject, title, message, severity, testEmail, language = "hi", includeButton = true } = input;
+    const isEn = language === "en";
+    if (testEmail && testEmail.trim()) {
+      const targetTest = testEmail.trim();
+      logger2.info(`[AdminService] Sending sample targeted VLE test email (${language}, button: ${includeButton}) to: ${targetTest}`);
+      const testVleName = isEn ? "Rajesh Kumar" : "\u0930\u093E\u091C\u0947\u0936 \u0915\u0941\u092E\u093E\u0930";
+      const res = await brevoMailService.sendVLEBroadcastEmail({
+        to: targetTest,
+        vleName: testVleName,
+        title: title || subject,
+        customSubject: `[TEST SAMPLE] ${subject}`,
+        message,
+        severity,
+        language,
+        includeButton
+      });
+      return {
+        success: true,
+        mode: "TEST_SAMPLE",
+        sentCount: 1,
+        message: `Safe test preview sent successfully to ${targetTest}.`,
+        messageId: res.messageId
+      };
+    }
+    logger2.info(`[AdminService] Dispatching targeted email (${language}) to ${recipientEmails.length} selected VLEs.`);
+    const users = await prisma.user.findMany({
+      where: { email: { in: recipientEmails } },
+      select: {
+        email: true,
+        name: true,
+        members: {
+          select: {
+            organization: {
+              select: { name: true }
+            }
+          },
+          take: 1
+        }
+      }
+    });
+    const userMap = new Map(users.map((u) => [u.email.toLowerCase(), u]));
+    let sentCount = 0;
+    const failures = [];
+    for (const email of recipientEmails) {
+      if (!email) continue;
+      const lowerEmail = email.toLowerCase().trim();
+      const u = userMap.get(lowerEmail);
+      const name = u?.name?.trim();
+      const vleName = name ? name : isEn ? "Retail Partner" : "\u0938\u092E\u094D\u092E\u093E\u0928\u093F\u0924 \u0935\u0940\u090F\u0932\u0908 \u092C\u0902\u0927\u0941";
+      try {
+        const res = await brevoMailService.sendVLEBroadcastEmail({
+          to: email,
+          vleName,
+          title: title || subject,
+          customSubject: subject,
+          message,
+          severity,
+          language,
+          includeButton
+        });
+        if (res.success) {
+          sentCount++;
+        } else {
+          failures.push(email);
+        }
+      } catch (err) {
+        logger2.warn(`[AdminService] Failed to deliver targeted email to ${email}:`, err);
+        failures.push(email);
+      }
+    }
+    return {
+      success: true,
+      mode: "LIVE_TARGETED",
+      sentCount,
+      failedCount: failures.length,
+      message: `Email successfully delivered to ${sentCount} recipient(s).`,
+      failures
+    };
+  }
 };
 var adminService = new AdminService();
 
@@ -13105,7 +13864,9 @@ var announcementSchema = external_exports.object({
   message: external_exports.string().optional().default(""),
   title: external_exports.string().optional(),
   severity: external_exports.enum(["info", "warning", "success"]).default("info"),
-  expiresAt: external_exports.string().optional()
+  expiresAt: external_exports.string().optional(),
+  sendEmailToVles: external_exports.boolean().optional().default(false),
+  testRecipientEmail: external_exports.string().email().optional().or(external_exports.literal(""))
 }).superRefine((data, ctx) => {
   if (data.active && (!data.message || !data.message.trim())) {
     ctx.addIssue({
@@ -13129,6 +13890,16 @@ var auditLogQuerySchema = external_exports.object({
   category: external_exports.enum(["ALL", "WALLET", "SERVICE", "MILESTONE", "SECURITY"]).default("ALL"),
   page: external_exports.coerce.number().min(1).default(1),
   limit: external_exports.coerce.number().min(1).max(100).default(30)
+});
+var targetedEmailSchema = external_exports.object({
+  recipientEmails: external_exports.array(external_exports.string().email()).min(1, "At least one recipient email is required"),
+  subject: external_exports.string().min(1, "Subject is required"),
+  title: external_exports.string().optional(),
+  message: external_exports.string().min(1, "Message content is required"),
+  severity: external_exports.enum(["info", "warning", "urgent", "success"]).default("info"),
+  testEmail: external_exports.string().email().optional().or(external_exports.literal("")),
+  language: external_exports.enum(["hi", "en"]).default("hi").optional(),
+  includeButton: external_exports.boolean().default(true).optional()
 });
 
 // src/modules/admin/admin.routes.ts
@@ -13239,6 +14010,19 @@ adminRouter.post(
     return c.json(result);
   }
 );
+adminRouter.get("/communications/vles", async (c) => {
+  const vles = await adminService.getVleList();
+  return c.json({ success: true, data: vles });
+});
+adminRouter.post(
+  "/communications/send-targeted-email",
+  validationMiddleware(targetedEmailSchema),
+  async (c) => {
+    const data = c.get("validData");
+    const result = await adminService.sendTargetedVleEmail(data);
+    return c.json(result);
+  }
+);
 adminRouter.post(
   "/organizations/:id/wallet/adjust",
   validationMiddleware(walletAdjustmentSchema),
@@ -13300,6 +14084,49 @@ adminRouter.get("/audit-logs", async (c) => {
   const data = await adminService.getAuditLogs(query);
   c.header("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
   return c.json({ success: true, data });
+});
+adminRouter.get("/vendor-wallet", async (c) => {
+  const data = await vendorWalletService.getWallet();
+  return c.json({ success: true, data });
+});
+adminRouter.post("/vendor-wallet/sync", async (c) => {
+  const user = c.get("user");
+  if (!user || user.role !== "SUPER_ADMIN") {
+    return c.json(
+      { success: false, message: "Only SUPER_ADMIN can sync or top-up vendor wallet." },
+      403
+    );
+  }
+  const body = await c.req.json();
+  const mode = body.mode || "TOPUP";
+  const amount = Number(body.amount);
+  const description = body.description;
+  if (isNaN(amount)) {
+    return c.json({ success: false, message: "Valid amount is required" }, 400);
+  }
+  let result;
+  if (mode === "TOPUP") {
+    result = await vendorWalletService.topupRecharge(amount, description);
+  } else {
+    result = await vendorWalletService.reconcileExactBalance(amount, description);
+  }
+  return c.json({ success: true, data: result });
+});
+adminRouter.put("/vendor-wallet/threshold", async (c) => {
+  const user = c.get("user");
+  if (!user || user.role !== "SUPER_ADMIN") {
+    return c.json(
+      { success: false, message: "Only SUPER_ADMIN can update alert thresholds." },
+      403
+    );
+  }
+  const body = await c.req.json();
+  const threshold = Number(body.threshold);
+  if (isNaN(threshold) || threshold <= 0) {
+    return c.json({ success: false, message: "Valid positive threshold is required" }, 400);
+  }
+  const result = await vendorWalletService.updateThreshold(threshold);
+  return c.json({ success: true, data: result });
 });
 
 // src/app/routes.ts
