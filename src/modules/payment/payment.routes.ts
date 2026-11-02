@@ -137,13 +137,15 @@ paymentRoutes.post("/wallet/pay", async (c) => {
     throw AppError.forbidden("Retailer login required to pay via wallet");
   }
 
-  const { serviceCode, customerId, inputData } = body;
+  const { serviceCode, customerId, inputData, stage, amount } = body;
   if (!serviceCode) {
     throw AppError.badRequest("serviceCode is required");
   }
 
   const result = await paymentService.payWithWallet(requestContext, {
     serviceCode,
+    stage,
+    amount,
     customerId,
     inputData,
   });

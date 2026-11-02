@@ -48,6 +48,25 @@ export class ServiceDispatcher {
         case "PAN_FIND": {
           const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
           const input = (request.inputData || {}) as Record<string, unknown>;
+          const stage = input?.stage;
+
+          if (stage === "DETECT") {
+            if (!input?.aadhaar) {
+              throw new Error("Missing Aadhaar number for PAN detection");
+            }
+            const panRes = await panService.findPanByAadhaar(String(input.aadhaar));
+            if (!panRes || (!panRes.searchToken && !panRes.maskedPan)) {
+              throw new Error("No PAN record returned by registry");
+            }
+            resultData = {
+              maskedPan: panRes.maskedPan,
+              searchToken: panRes.searchToken,
+              status: "MATCHED",
+              message: "PAN identified successfully",
+            };
+            break;
+          }
+
           let searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : "") || "";
           
           if (!searchToken && typeof input?.aadhaar === "string" && input.aadhaar) {

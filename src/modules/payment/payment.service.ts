@@ -657,6 +657,8 @@ export class PaymentService {
     context: RequestContext,
     input: {
       serviceCode: string;
+      stage?: "DETECT" | "UNLOCK";
+      amount?: number;
       customerId?: string;
       inputData?: any;
     }
@@ -672,7 +674,19 @@ export class PaymentService {
     }
 
     const priceSnapshot = await pricingService.calculatePrice(service.id, context.pricingTier);
-    const servicePrice = Number(priceSnapshot.amount);
+    let servicePrice = Number(priceSnapshot.amount);
+    const stage = input.stage || input.inputData?.stage;
+    let serviceName = service.name;
+
+    if (input.serviceCode === "PAN_FIND") {
+      if (stage === "DETECT" || input.amount === 5) {
+        servicePrice = 5.00;
+        serviceName = "PAN Detection & Verification";
+      } else if (stage === "UNLOCK" || input.amount === 15) {
+        servicePrice = 15.00;
+        serviceName = "Unlock Full PAN Number";
+      }
+    }
 
     // 2. Fetch or initialize wallet
     let wallet = await prisma.wallet.findUnique({
@@ -703,6 +717,10 @@ export class PaymentService {
     const referenceNumber = `REQ-${dateStr}-${service.code}-${randomSuffix}`;
 
     const rawInput = (input.inputData || {}) as Record<string, unknown>;
+    const mergedInputData = {
+      ...rawInput,
+      ...(stage ? { stage } : {}),
+    };
 
     // 4. Atomic Deduction & Request Creation
     const { request, balanceAfterDebit } = await prisma.$transaction(async (tx) => {
@@ -719,7 +737,7 @@ export class PaymentService {
           type: "DEBIT",
           balanceAfter: newBal,
           referenceId: referenceNumber,
-          description: `Wallet Payment: ${service.name} (${referenceNumber})`,
+          description: `Wallet Payment: ${serviceName} (${referenceNumber})`,
         },
       });
 
@@ -735,7 +753,7 @@ export class PaymentService {
           amount: servicePrice,
           currency: "INR",
           status: "PAYMENT_CAPTURED",
-          inputData: (input.inputData || {}) as any,
+          inputData: mergedInputData as any,
         },
       });
 
@@ -796,7 +814,9 @@ export class PaymentService {
         amount: servicePrice,
         newBalance: balanceAfterDebit,
         data: vault.data,
-        message: "Payment successful and verified record unlocked!",
+        message: stage === "DETECT"
+          ? "PAN record identified successfully!"
+          : "Payment successful and verified record unlocked!",
       };
     } catch (fulfillmentErr: any) {
       // 6. 100% AUTOMATIC INSTANT REFUND TO WALLET ON FAILURE

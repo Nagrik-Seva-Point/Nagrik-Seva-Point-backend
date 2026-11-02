@@ -2442,7 +2442,7 @@ export class AdminService {
       // Deduplicate by recipient email to get latest status per VLE
       const latestStatusPerEmail = new Map<string, typeof logs[0]>();
       for (const log of campaignLogs) {
-        if (!latestStatusPerEmail.has(log.reference)) {
+        if (log.reference && !latestStatusPerEmail.has(log.reference)) {
           latestStatusPerEmail.set(log.reference, log);
         }
       }
@@ -2452,7 +2452,9 @@ export class AdminService {
       const failedLogs = allUniqueVles.filter((l) => l.status === "FAILED");
 
       // Lookup user names for failed VLEs
-      const failedEmails = failedLogs.map((l) => l.reference);
+      const failedEmails = failedLogs
+        .map((l) => l.reference)
+        .filter((ref): ref is string => Boolean(ref));
       const failedUsers = await prisma.user.findMany({
         where: { email: { in: failedEmails } },
         select: { email: true, name: true },
@@ -2474,9 +2476,10 @@ export class AdminService {
           }
         }
 
+        const emailRef = f.reference || "";
         return {
-          email: f.reference,
-          vleName: nameMap.get(f.reference.toLowerCase()) || "Retail Partner",
+          email: emailRef,
+          vleName: emailRef ? (nameMap.get(emailRef.toLowerCase()) || "Retail Partner") : "Retail Partner",
           reason,
           failedAt: f.createdAt.toISOString(),
         };
@@ -2536,11 +2539,11 @@ export class AdminService {
       throw AppError.badRequest("No failed recipients found to resend.", "NO_FAILED_RECIPIENTS");
     }
 
-    const failedEmails = audit.failures.map((f) => f.email);
+    const failedEmails = audit.failures.map((f) => f.email).filter(Boolean);
     logger.info(`[AdminService] Resending email to ${failedEmails.length} failed recipients using chunking queue...`);
 
     // Strictly preserve original campaign language: NEVER switch or translate behind the scenes!
-    const targetLanguage: "hi" | "en" = options?.language || audit.language || "hi";
+    const targetLanguage: "hi" | "en" = options?.language || (audit.language === "en" ? "en" : "hi");
     const targetSubject = options?.subject?.trim() || audit.subject || (targetLanguage === "en" ? "Important Notification" : "महत्वपूर्ण सूचना");
     const targetMessage = options?.message?.trim() || audit.message || (targetLanguage === "en" ? "Official service advisory from Nagrik Seva Point." : "नागरिक सेवा केंद्र से आधिकारिक सूचना।");
     const targetTitle = options?.title?.trim() || targetSubject;
