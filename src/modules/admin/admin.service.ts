@@ -1428,10 +1428,6 @@ export class AdminService {
         const code = req.service.code;
         const unitCost = serviceCostMap[code] ?? 0.0;
 
-        if (code === "PAN_FIND") panFindCalls++;
-        else if (code === "PAN_DETAILS") panDetailsCalls++;
-        else otherCalls++;
-
         if (!serviceMap[code]) {
           serviceMap[code] = {
             code,
@@ -1453,8 +1449,15 @@ export class AdminService {
         const isCompleted = (req.status === "COMPLETED" || Boolean(capturedPayment)) && !isRefunded;
 
         let revenue = 0;
+        let incurredVendorCost = 0;
+
         if (isCompleted) {
           revenue = capturedPayment ? Number(capturedPayment.amount) : Number(req.amount || 0);
+          incurredVendorCost = unitCost;
+
+          if (code === "PAN_FIND") panFindCalls++;
+          else if (code === "PAN_DETAILS") panDetailsCalls++;
+          else otherCalls++;
 
           if (!isTopup) {
             completedCount++;
@@ -1472,18 +1475,22 @@ export class AdminService {
             serviceMap[code].completedRevenue += revenue;
             serviceMap[code].fulfilledCost += 0;
           }
+        } else if (isRefunded) {
+          // Upstream vendor (PlanAPI) charges ₹0.00 for unlinked PAN, not found, or failed upstream requests.
+          // User received 100% full refund immediately.
+          // Hence: incurred vendor cost = 0, revenue = 0, wasted cost = 0.
+          revenue = 0;
+          incurredVendorCost = 0.0;
+          // Do not increment panFindCalls or wastedVendorCost because zero upstream credits were burned.
         } else {
-          // Unpaid drop-offs, refunded requests, and failed API lookups
+          // Unpaid drop-offs / checkout abandons (e.g. pending gateway sessions that never completed)
           if (!isTopup) {
             abandonedCount++;
-            wastedVendorCost += unitCost;
           }
-
           serviceMap[code].abandonedCount++;
-          serviceMap[code].wastedCost += unitCost;
         }
 
-        const netProfit = revenue - unitCost;
+        const netProfit = isRefunded ? 0.0 : (revenue - incurredVendorCost);
         const targetPhone = req.customer?.phone || req.user?.phone || "";
         const cleanPhone = targetPhone.replace(/[^0-9]/g, "");
         const targetName = req.customer?.name || req.user?.name || "Customer";
@@ -1499,8 +1506,9 @@ export class AdminService {
           createdAt: req.createdAt,
           status: req.status as string,
           isPaid: isCompleted,
+          isRefunded,
           revenue,
-          incurredVendorCost: unitCost,
+          incurredVendorCost,
           netProfit,
           organization: req.organization ? { id: req.organization.id, name: req.organization.name } : null,
           user: req.user ? { name: req.user.name, phone: req.user.phone } : null,
@@ -1514,11 +1522,15 @@ export class AdminService {
         if (claimedLogIds.has(log.id)) continue;
 
         const code = log.serviceCode;
-        const unitCost = serviceCostMap[code] ?? (code === "PAN_FIND" ? 3.0 : 2.5);
+        // Upstream vendor only burns credit on successful responses
+        const isSuccess = log.status === "SUCCESS";
+        const unitCost = isSuccess ? (serviceCostMap[code] ?? (code === "PAN_FIND" ? 3.0 : 2.5)) : 0.0;
 
-        if (code === "PAN_FIND") panFindCalls++;
-        else if (code === "PAN_DETAILS") panDetailsCalls++;
-        else otherCalls++;
+        if (unitCost > 0) {
+          if (code === "PAN_FIND") panFindCalls++;
+          else if (code === "PAN_DETAILS") panDetailsCalls++;
+          else otherCalls++;
+        }
 
         const sName = code === "PAN_FIND" ? "Instant PAN Find by Aadhaar" : "PAN Details Verification";
 
@@ -1558,6 +1570,7 @@ export class AdminService {
           createdAt: log.createdAt,
           status: "UNPAID_DROP_OFF",
           isPaid: false,
+          isRefunded: false,
           revenue: 0,
           incurredVendorCost: unitCost,
           netProfit,

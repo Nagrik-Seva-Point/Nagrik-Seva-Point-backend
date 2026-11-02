@@ -14474,9 +14474,6 @@ var AdminService = class {
       const detailedLedger = allRequests.map((req) => {
         const code = req.service.code;
         const unitCost = serviceCostMap[code] ?? 0;
-        if (code === "PAN_FIND") panFindCalls++;
-        else if (code === "PAN_DETAILS") panDetailsCalls++;
-        else otherCalls++;
         if (!serviceMap[code]) {
           serviceMap[code] = {
             code,
@@ -14496,8 +14493,13 @@ var AdminService = class {
         const isRefunded = req.status === "REFUNDED" || req.payments.some((p) => p.status === "REFUNDED");
         const isCompleted = (req.status === "COMPLETED" || Boolean(capturedPayment)) && !isRefunded;
         let revenue = 0;
+        let incurredVendorCost = 0;
         if (isCompleted) {
           revenue = capturedPayment ? Number(capturedPayment.amount) : Number(req.amount || 0);
+          incurredVendorCost = unitCost;
+          if (code === "PAN_FIND") panFindCalls++;
+          else if (code === "PAN_DETAILS") panDetailsCalls++;
+          else otherCalls++;
           if (!isTopup) {
             completedCount++;
             totalGrossRevenue += revenue;
@@ -14510,15 +14512,16 @@ var AdminService = class {
             serviceMap[code].completedRevenue += revenue;
             serviceMap[code].fulfilledCost += 0;
           }
+        } else if (isRefunded) {
+          revenue = 0;
+          incurredVendorCost = 0;
         } else {
           if (!isTopup) {
             abandonedCount++;
-            wastedVendorCost += unitCost;
           }
           serviceMap[code].abandonedCount++;
-          serviceMap[code].wastedCost += unitCost;
         }
-        const netProfit = revenue - unitCost;
+        const netProfit = isRefunded ? 0 : revenue - incurredVendorCost;
         const targetPhone = req.customer?.phone || req.user?.phone || "";
         const cleanPhone = targetPhone.replace(/[^0-9]/g, "");
         const targetName = req.customer?.name || req.user?.name || "Customer";
@@ -14531,8 +14534,9 @@ var AdminService = class {
           createdAt: req.createdAt,
           status: req.status,
           isPaid: isCompleted,
+          isRefunded,
           revenue,
-          incurredVendorCost: unitCost,
+          incurredVendorCost,
           netProfit,
           organization: req.organization ? { id: req.organization.id, name: req.organization.name } : null,
           user: req.user ? { name: req.user.name, phone: req.user.phone } : null,
@@ -14543,10 +14547,13 @@ var AdminService = class {
       for (const log2 of upstreamApiLogs) {
         if (claimedLogIds.has(log2.id)) continue;
         const code = log2.serviceCode;
-        const unitCost = serviceCostMap[code] ?? (code === "PAN_FIND" ? 3 : 2.5);
-        if (code === "PAN_FIND") panFindCalls++;
-        else if (code === "PAN_DETAILS") panDetailsCalls++;
-        else otherCalls++;
+        const isSuccess = log2.status === "SUCCESS";
+        const unitCost = isSuccess ? serviceCostMap[code] ?? (code === "PAN_FIND" ? 3 : 2.5) : 0;
+        if (unitCost > 0) {
+          if (code === "PAN_FIND") panFindCalls++;
+          else if (code === "PAN_DETAILS") panDetailsCalls++;
+          else otherCalls++;
+        }
         const sName = code === "PAN_FIND" ? "Instant PAN Find by Aadhaar" : "PAN Details Verification";
         if (!serviceMap[code]) {
           serviceMap[code] = {
@@ -14579,6 +14586,7 @@ var AdminService = class {
           createdAt: log2.createdAt,
           status: "UNPAID_DROP_OFF",
           isPaid: false,
+          isRefunded: false,
           revenue: 0,
           incurredVendorCost: unitCost,
           netProfit,
