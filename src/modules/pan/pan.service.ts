@@ -16,7 +16,6 @@ import type {
 } from "./pan.schema";
 
 function isVendorLowBalance(errorcode?: number, message?: string): boolean {
-  if (errorcode === 104) return true;
   if (!message) return false;
   const lower = message.toLowerCase();
   return (
@@ -155,6 +154,20 @@ export class PanService {
       throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
     }
 
+    // Specific Handling for "No PAN linked with this Aadhaar" (Errorcode 104 or 101)
+    if (
+      response.Errorcode === 104 ||
+      response.Errorcode === 101 ||
+      response.Message?.toLowerCase().includes("no pan") ||
+      response.Message?.toLowerCase().includes("not linked")
+    ) {
+      logger.warn(`[PanService] No PAN linked / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}: ${response.Message}`);
+      throw AppError.badRequest(
+        "इस आधार नंबर से कोई भी पैन कार्ड लिंक नहीं है (No PAN is linked with this Aadhaar number).",
+        "PAN_NOT_FOUND"
+      );
+    }
+
     if (isVendorLowBalance(response.Errorcode, response.Message)) {
       logger.error(`[PanService] Vendor balance error detected in findPanByAadhaar: ${response.Message} (Code ${response.Errorcode})`);
       checkAndTriggerVendorLowBalanceAlert({
@@ -164,19 +177,14 @@ export class PanService {
       }).catch(() => {});
 
       throw AppError.badRequest(
-        "सरकारी पैन गेटवे वर्तमान में व्यस्त या मेंटेनेंस मोड पर है। कृपया 10–15 मिनट बाद पुनः प्रयास करें।",
-        "GATEWAY_MAINTENANCE"
+        "अनुरोध संसाधित नहीं हो सका। कृपया पुनः प्रयास करें।",
+        "GATEWAY_ERROR"
       );
-    }
-
-    if (response.Errorcode === 101) {
-      logger.warn(`[PanService] PAN not found / Errorcode 101 for Aadhaar ending in ${aadhaar.slice(-4)}`);
-      throw AppError.badRequest("No PAN Card record found linked with this Aadhaar number in the Income Tax registry.", "PAN_NOT_FOUND");
     }
 
     const fallbackMsg = (response.Message && response.Message !== "Data Fetch Successfully" && response.Message !== "Internal Server Error")
       ? response.Message
-      : "Failed to find PAN for this Aadhaar. The upstream government registry is temporarily unreachable.";
+      : "इस आधार नंबर का पैन रिकॉर्ड प्राप्त नहीं हो सका। कृपया विवरण जांचें।";
 
     logger.warn(`[PanService] Find PAN failed: ${fallbackMsg}`);
     throw AppError.badRequest(fallbackMsg, "PAN_FIND_FAILED");
@@ -299,8 +307,8 @@ export class PanService {
       }).catch(() => {});
 
       throw AppError.badRequest(
-        "सरकारी गेटवे वर्तमान में व्यस्त या मेंटेनेंस मोड पर है। कृपया 10–15 मिनट बाद पुनः प्रयास करें।",
-        "GATEWAY_MAINTENANCE"
+        "अनुरोध संसाधित नहीं हो सका। कृपया कुछ समय बाद पुनः प्रयास करें।",
+        "GATEWAY_ERROR"
       );
     }
 
@@ -527,8 +535,8 @@ export class PanService {
       }).catch(() => {});
 
       throw AppError.badRequest(
-        "सरकारी गेटवे वर्तमान में व्यस्त या मेंटेनेंस मोड पर है। कृपया 10–15 मिनट बाद पुनः प्रयास करें।",
-        "GATEWAY_MAINTENANCE"
+        "अनुरोध संसाधित नहीं हो सका। कृपया कुछ समय बाद पुनः प्रयास करें।",
+        "GATEWAY_ERROR"
       );
     }
 

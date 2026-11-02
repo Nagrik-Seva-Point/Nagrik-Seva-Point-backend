@@ -9898,7 +9898,6 @@ var vendorWalletService = new VendorWalletService();
 
 // src/modules/pan/pan.service.ts
 function isVendorLowBalance(errorcode, message) {
-  if (errorcode === 104) return true;
   if (!message) return false;
   const lower = message.toLowerCase();
   return lower.includes("insufficient") || lower.includes("low balance") || lower.includes("balance low") || lower.includes("wallet balance") || lower.includes("recharge") || lower.includes("credit limit");
@@ -9998,6 +9997,13 @@ var PanService = class {
       logger2.warn(`[PanService] ${notFoundMsg}`);
       throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
     }
+    if (response.Errorcode === 104 || response.Errorcode === 101 || response.Message?.toLowerCase().includes("no pan") || response.Message?.toLowerCase().includes("not linked")) {
+      logger2.warn(`[PanService] No PAN linked / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}: ${response.Message}`);
+      throw AppError.badRequest(
+        "\u0907\u0938 \u0906\u0927\u093E\u0930 \u0928\u0902\u092C\u0930 \u0938\u0947 \u0915\u094B\u0908 \u092D\u0940 \u092A\u0948\u0928 \u0915\u093E\u0930\u094D\u0921 \u0932\u093F\u0902\u0915 \u0928\u0939\u0940\u0902 \u0939\u0948 (No PAN is linked with this Aadhaar number).",
+        "PAN_NOT_FOUND"
+      );
+    }
     if (isVendorLowBalance(response.Errorcode, response.Message)) {
       logger2.error(`[PanService] Vendor balance error detected in findPanByAadhaar: ${response.Message} (Code ${response.Errorcode})`);
       checkAndTriggerVendorLowBalanceAlert({
@@ -10007,15 +10013,11 @@ var PanService = class {
       }).catch(() => {
       });
       throw AppError.badRequest(
-        "\u0938\u0930\u0915\u093E\u0930\u0940 \u092A\u0948\u0928 \u0917\u0947\u091F\u0935\u0947 \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u092E\u0947\u0902 \u0935\u094D\u092F\u0938\u094D\u0924 \u092F\u093E \u092E\u0947\u0902\u091F\u0947\u0928\u0947\u0902\u0938 \u092E\u094B\u0921 \u092A\u0930 \u0939\u0948\u0964 \u0915\u0943\u092A\u092F\u093E 10\u201315 \u092E\u093F\u0928\u091F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
-        "GATEWAY_MAINTENANCE"
+        "\u0905\u0928\u0941\u0930\u094B\u0927 \u0938\u0902\u0938\u093E\u0927\u093F\u0924 \u0928\u0939\u0940\u0902 \u0939\u094B \u0938\u0915\u093E\u0964 \u0915\u0943\u092A\u092F\u093E \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
+        "GATEWAY_ERROR"
       );
     }
-    if (response.Errorcode === 101) {
-      logger2.warn(`[PanService] PAN not found / Errorcode 101 for Aadhaar ending in ${aadhaar.slice(-4)}`);
-      throw AppError.badRequest("No PAN Card record found linked with this Aadhaar number in the Income Tax registry.", "PAN_NOT_FOUND");
-    }
-    const fallbackMsg = response.Message && response.Message !== "Data Fetch Successfully" && response.Message !== "Internal Server Error" ? response.Message : "Failed to find PAN for this Aadhaar. The upstream government registry is temporarily unreachable.";
+    const fallbackMsg = response.Message && response.Message !== "Data Fetch Successfully" && response.Message !== "Internal Server Error" ? response.Message : "\u0907\u0938 \u0906\u0927\u093E\u0930 \u0928\u0902\u092C\u0930 \u0915\u093E \u092A\u0948\u0928 \u0930\u093F\u0915\u0949\u0930\u094D\u0921 \u092A\u094D\u0930\u093E\u092A\u094D\u0924 \u0928\u0939\u0940\u0902 \u0939\u094B \u0938\u0915\u093E\u0964 \u0915\u0943\u092A\u092F\u093E \u0935\u093F\u0935\u0930\u0923 \u091C\u093E\u0902\u091A\u0947\u0902\u0964";
     logger2.warn(`[PanService] Find PAN failed: ${fallbackMsg}`);
     throw AppError.badRequest(fallbackMsg, "PAN_FIND_FAILED");
   }
@@ -10110,8 +10112,8 @@ var PanService = class {
       }).catch(() => {
       });
       throw AppError.badRequest(
-        "\u0938\u0930\u0915\u093E\u0930\u0940 \u0917\u0947\u091F\u0935\u0947 \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u092E\u0947\u0902 \u0935\u094D\u092F\u0938\u094D\u0924 \u092F\u093E \u092E\u0947\u0902\u091F\u0947\u0928\u0947\u0902\u0938 \u092E\u094B\u0921 \u092A\u0930 \u0939\u0948\u0964 \u0915\u0943\u092A\u092F\u093E 10\u201315 \u092E\u093F\u0928\u091F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
-        "GATEWAY_MAINTENANCE"
+        "\u0905\u0928\u0941\u0930\u094B\u0927 \u0938\u0902\u0938\u093E\u0927\u093F\u0924 \u0928\u0939\u0940\u0902 \u0939\u094B \u0938\u0915\u093E\u0964 \u0915\u0943\u092A\u092F\u093E \u0915\u0941\u091B \u0938\u092E\u092F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
+        "GATEWAY_ERROR"
       );
     }
     logger2.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
@@ -10283,8 +10285,8 @@ var PanService = class {
       }).catch(() => {
       });
       throw AppError.badRequest(
-        "\u0938\u0930\u0915\u093E\u0930\u0940 \u0917\u0947\u091F\u0935\u0947 \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u092E\u0947\u0902 \u0935\u094D\u092F\u0938\u094D\u0924 \u092F\u093E \u092E\u0947\u0902\u091F\u0947\u0928\u0947\u0902\u0938 \u092E\u094B\u0921 \u092A\u0930 \u0939\u0948\u0964 \u0915\u0943\u092A\u092F\u093E 10\u201315 \u092E\u093F\u0928\u091F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
-        "GATEWAY_MAINTENANCE"
+        "\u0905\u0928\u0941\u0930\u094B\u0927 \u0938\u0902\u0938\u093E\u0927\u093F\u0924 \u0928\u0939\u0940\u0902 \u0939\u094B \u0938\u0915\u093E\u0964 \u0915\u0943\u092A\u092F\u093E \u0915\u0941\u091B \u0938\u092E\u092F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
+        "GATEWAY_ERROR"
       );
     }
     if (response.Errorcode === 101) {
@@ -10586,6 +10588,23 @@ var ServiceDispatcher = class {
         case "PAN_FIND": {
           const tempToken = await ephemeralVault.getTempSearchToken(serviceRequestId);
           const input = request.inputData || {};
+          const stage = input?.stage;
+          if (stage === "DETECT") {
+            if (!input?.aadhaar) {
+              throw new Error("Missing Aadhaar number for PAN detection");
+            }
+            const panRes = await panService.findPanByAadhaar(String(input.aadhaar));
+            if (!panRes || !panRes.searchToken && !panRes.maskedPan) {
+              throw new Error("No PAN record returned by registry");
+            }
+            resultData = {
+              maskedPan: panRes.maskedPan,
+              searchToken: panRes.searchToken,
+              status: "MATCHED",
+              message: "PAN identified successfully"
+            };
+            break;
+          }
           let searchToken = tempToken || (typeof input?.searchToken === "string" ? input.searchToken : "") || "";
           if (!searchToken && typeof input?.aadhaar === "string" && input.aadhaar) {
             const panRes = await panService.findPanByAadhaar(String(input.aadhaar));
@@ -11883,7 +11902,18 @@ var PaymentService = class {
       throw AppError.badRequest("Requested service is currently disabled", "SERVICE_DISABLED");
     }
     const priceSnapshot = await pricingService.calculatePrice(service.id, context.pricingTier);
-    const servicePrice = Number(priceSnapshot.amount);
+    let servicePrice = Number(priceSnapshot.amount);
+    const stage = input.stage || input.inputData?.stage;
+    let serviceName = service.name;
+    if (input.serviceCode === "PAN_FIND") {
+      if (stage === "DETECT" || input.amount === 5) {
+        servicePrice = 5;
+        serviceName = "PAN Detection & Verification";
+      } else if (stage === "UNLOCK" || input.amount === 15) {
+        servicePrice = 15;
+        serviceName = "Unlock Full PAN Number";
+      }
+    }
     let wallet = await prisma.wallet.findUnique({
       where: { organizationId: context.organizationId }
     });
@@ -11907,6 +11937,10 @@ var PaymentService = class {
     const randomSuffix = Math.floor(1e3 + Math.random() * 9e3);
     const referenceNumber = `REQ-${dateStr}-${service.code}-${randomSuffix}`;
     const rawInput = input.inputData || {};
+    const mergedInputData = {
+      ...rawInput,
+      ...stage ? { stage } : {}
+    };
     const { request, balanceAfterDebit } = await prisma.$transaction(async (tx) => {
       const updatedWallet = await tx.wallet.update({
         where: { id: wallet.id },
@@ -11920,7 +11954,7 @@ var PaymentService = class {
           type: "DEBIT",
           balanceAfter: newBal,
           referenceId: referenceNumber,
-          description: `Wallet Payment: ${service.name} (${referenceNumber})`
+          description: `Wallet Payment: ${serviceName} (${referenceNumber})`
         }
       });
       const newReq = await tx.serviceRequest.create({
@@ -11935,7 +11969,7 @@ var PaymentService = class {
           amount: servicePrice,
           currency: "INR",
           status: "PAYMENT_CAPTURED",
-          inputData: input.inputData || {}
+          inputData: mergedInputData
         }
       });
       await tx.payment.create({
@@ -11985,7 +12019,7 @@ var PaymentService = class {
         amount: servicePrice,
         newBalance: balanceAfterDebit,
         data: vault.data,
-        message: "Payment successful and verified record unlocked!"
+        message: stage === "DETECT" ? "PAN record identified successfully!" : "Payment successful and verified record unlocked!"
       };
     } catch (fulfillmentErr) {
       logger2.warn(`[PaymentService] Service execution failed for ${request.id}. Issuing instant 100% wallet refund...`);
@@ -13135,12 +13169,14 @@ paymentRoutes.post("/wallet/pay", async (c) => {
   if (!orgId || !userId) {
     throw AppError.forbidden("Retailer login required to pay via wallet");
   }
-  const { serviceCode, customerId, inputData } = body;
+  const { serviceCode, customerId, inputData, stage, amount } = body;
   if (!serviceCode) {
     throw AppError.badRequest("serviceCode is required");
   }
   const result = await paymentService.payWithWallet(requestContext, {
     serviceCode,
+    stage,
+    amount,
     customerId,
     inputData
   });
@@ -13408,37 +13444,57 @@ var AdminService = class {
   async getOrganizations(query) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
-    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}`;
-    return await redis.remember(cacheKey, 60, async () => {
+    const sortBy = query.sortBy || "default";
+    const hasBalance = query.hasBalance === true || String(query.hasBalance) === "true";
+    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}:${sortBy}:${hasBalance}`;
+    return await redis.remember(cacheKey, 15, async () => {
       const skip = (page - 1) * limit;
       const where = {};
-      if (query.search && query.search.trim()) {
-        const s = query.search.trim();
-        where.OR = [
-          { name: { contains: s, mode: "insensitive" } },
-          { slug: { contains: s, mode: "insensitive" } },
-          {
-            members: {
-              some: {
-                user: {
-                  OR: [
-                    { name: { contains: s, mode: "insensitive" } },
-                    { email: { contains: s, mode: "insensitive" } },
-                    { phone: { contains: s, mode: "insensitive" } }
-                  ]
-                }
+      const searchConditions = query.search && query.search.trim() ? [
+        { name: { contains: query.search.trim(), mode: "insensitive" } },
+        { slug: { contains: query.search.trim(), mode: "insensitive" } },
+        {
+          members: {
+            some: {
+              user: {
+                OR: [
+                  { name: { contains: query.search.trim(), mode: "insensitive" } },
+                  { email: { contains: query.search.trim(), mode: "insensitive" } },
+                  { phone: { contains: query.search.trim(), mode: "insensitive" } }
+                ]
               }
             }
           }
+        }
+      ] : null;
+      if (hasBalance && searchConditions) {
+        where.AND = [
+          { wallet: { balance: { gt: 0 } } },
+          { OR: searchConditions }
         ];
+      } else if (hasBalance) {
+        where.wallet = { balance: { gt: 0 } };
+      } else if (searchConditions) {
+        where.OR = searchConditions;
       }
-      const [total, items, totalWalletSum] = await Promise.all([
+      let orderBy = [
+        { wallet: { balance: "desc" } },
+        { createdAt: "desc" }
+      ];
+      if (sortBy === "createdAt") {
+        orderBy = { createdAt: "desc" };
+      } else if (sortBy === "walletBalance") {
+        orderBy = { wallet: { balance: "desc" } };
+      } else if (sortBy === "name") {
+        orderBy = { name: "asc" };
+      }
+      const [total, items, totalWalletSum, countWithBalance] = await Promise.all([
         prisma.organization.count({ where }),
         prisma.organization.findMany({
           where,
           skip,
           take: limit,
-          orderBy: { createdAt: "desc" },
+          orderBy,
           include: {
             wallet: true,
             members: {
@@ -13501,6 +13557,9 @@ var AdminService = class {
         }),
         prisma.wallet.aggregate({
           _sum: { balance: true }
+        }),
+        prisma.organization.count({
+          where: { wallet: { balance: { gt: 0 } } }
         })
       ]);
       const enhancedItems = items.map((org) => {
@@ -13535,7 +13594,8 @@ var AdminService = class {
         },
         summary: {
           totalOrganizations: total,
-          totalWalletBalance: Number(totalWalletSum._sum.balance || 0)
+          totalWalletBalance: Number(totalWalletSum._sum.balance || 0),
+          orgsWithBalanceCount: countWithBalance
         }
       };
     });
@@ -14418,21 +14478,30 @@ var AdminService = class {
           };
         }
         serviceMap[code].totalInvocations++;
+        const isTopup = code === "WALLET_TOPUP";
         const capturedPayment = req.payments.find((p) => p.status === "CAPTURED");
-        const isCompleted = req.status === "COMPLETED" || Boolean(capturedPayment);
-        const isAbandoned = !isCompleted && ["REQUEST_CREATED", "PRICE_LOCKED", "PAYMENT_PENDING"].includes(req.status);
+        const isRefunded = req.status === "REFUNDED" || req.payments.some((p) => p.status === "REFUNDED");
+        const isCompleted = (req.status === "COMPLETED" || Boolean(capturedPayment)) && !isRefunded;
         let revenue = 0;
         if (isCompleted) {
-          completedCount++;
           revenue = capturedPayment ? Number(capturedPayment.amount) : Number(req.amount || 0);
-          totalGrossRevenue += revenue;
-          completedVendorCost += unitCost;
-          serviceMap[code].completedCount++;
-          serviceMap[code].completedRevenue += revenue;
-          serviceMap[code].fulfilledCost += unitCost;
-        } else if (isAbandoned) {
-          abandonedCount++;
-          wastedVendorCost += unitCost;
+          if (!isTopup) {
+            completedCount++;
+            totalGrossRevenue += revenue;
+            completedVendorCost += unitCost;
+            serviceMap[code].completedCount++;
+            serviceMap[code].completedRevenue += revenue;
+            serviceMap[code].fulfilledCost += unitCost;
+          } else {
+            serviceMap[code].completedCount++;
+            serviceMap[code].completedRevenue += revenue;
+            serviceMap[code].fulfilledCost += 0;
+          }
+        } else {
+          if (!isTopup) {
+            abandonedCount++;
+            wastedVendorCost += unitCost;
+          }
           serviceMap[code].abandonedCount++;
           serviceMap[code].wastedCost += unitCost;
         }
@@ -15213,14 +15282,14 @@ var AdminService = class {
       }
       const latestStatusPerEmail = /* @__PURE__ */ new Map();
       for (const log2 of campaignLogs) {
-        if (!latestStatusPerEmail.has(log2.reference)) {
+        if (log2.reference && !latestStatusPerEmail.has(log2.reference)) {
           latestStatusPerEmail.set(log2.reference, log2);
         }
       }
       const allUniqueVles = Array.from(latestStatusPerEmail.values());
       const successLogs = allUniqueVles.filter((l) => l.status === "SUCCESS");
       const failedLogs = allUniqueVles.filter((l) => l.status === "FAILED");
-      const failedEmails = failedLogs.map((l) => l.reference);
+      const failedEmails = failedLogs.map((l) => l.reference).filter((ref) => Boolean(ref));
       const failedUsers = await prisma.user.findMany({
         where: { email: { in: failedEmails } },
         select: { email: true, name: true }
@@ -15240,9 +15309,10 @@ var AdminService = class {
             }
           }
         }
+        const emailRef = f.reference || "";
         return {
-          email: f.reference,
-          vleName: nameMap.get(f.reference.toLowerCase()) || "Retail Partner",
+          email: emailRef,
+          vleName: emailRef ? nameMap.get(emailRef.toLowerCase()) || "Retail Partner" : "Retail Partner",
           reason,
           failedAt: f.createdAt.toISOString()
         };
@@ -15292,9 +15362,9 @@ var AdminService = class {
     if (audit.failures.length === 0) {
       throw AppError.badRequest("No failed recipients found to resend.", "NO_FAILED_RECIPIENTS");
     }
-    const failedEmails = audit.failures.map((f) => f.email);
+    const failedEmails = audit.failures.map((f) => f.email).filter(Boolean);
     logger2.info(`[AdminService] Resending email to ${failedEmails.length} failed recipients using chunking queue...`);
-    const targetLanguage = options?.language || audit.language || "hi";
+    const targetLanguage = options?.language || (audit.language === "en" ? "en" : "hi");
     const targetSubject = options?.subject?.trim() || audit.subject || (targetLanguage === "en" ? "Important Notification" : "\u092E\u0939\u0924\u094D\u0935\u092A\u0942\u0930\u094D\u0923 \u0938\u0942\u091A\u0928\u093E");
     const targetMessage = options?.message?.trim() || audit.message || (targetLanguage === "en" ? "Official service advisory from Nagrik Seva Point." : "\u0928\u093E\u0917\u0930\u093F\u0915 \u0938\u0947\u0935\u093E \u0915\u0947\u0902\u0926\u094D\u0930 \u0938\u0947 \u0906\u0927\u093F\u0915\u093E\u0930\u093F\u0915 \u0938\u0942\u091A\u0928\u093E\u0964");
     const targetTitle = options?.title?.trim() || targetSubject;
@@ -15433,7 +15503,9 @@ adminRouter.get("/organizations", async (c) => {
   const result = await adminService.getOrganizations({
     search: query.search,
     page: query.page ? parseInt(query.page, 10) : void 0,
-    limit: query.limit ? parseInt(query.limit, 10) : void 0
+    limit: query.limit ? parseInt(query.limit, 10) : void 0,
+    sortBy: query.sortBy,
+    hasBalance: query.hasBalance === "true" || query.hasBalance === "1" ? true : void 0
   });
   return c.json({ success: true, data: result.items, pagination: result.pagination, summary: result.summary });
 });

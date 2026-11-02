@@ -34,6 +34,8 @@ export interface OrganizationFilterQuery {
   search?: string;
   page?: number;
   limit?: number;
+  sortBy?: "walletBalance" | "createdAt" | "requests" | "name" | "default";
+  hasBalance?: boolean;
 }
 
 export class AdminService {
@@ -247,146 +249,172 @@ export class AdminService {
   async getOrganizations(query: OrganizationFilterQuery) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
-    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}`;
+    const sortBy = query.sortBy || "default";
+    const hasBalance = query.hasBalance === true || String(query.hasBalance) === "true";
+    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}:${sortBy}:${hasBalance}`;
 
-    return await redis.remember(cacheKey, 60, async () => {
+    return await redis.remember(cacheKey, 15, async () => {
       const skip = (page - 1) * limit;
 
-      const where: Record<string, unknown> = {};
-    if (query.search && query.search.trim()) {
-      const s = query.search.trim();
-      where.OR = [
-        { name: { contains: s, mode: "insensitive" } },
-        { slug: { contains: s, mode: "insensitive" } },
+      const where: any = {};
+      const searchConditions = query.search && query.search.trim() ? [
+        { name: { contains: query.search.trim(), mode: "insensitive" } },
+        { slug: { contains: query.search.trim(), mode: "insensitive" } },
         {
           members: {
             some: {
               user: {
                 OR: [
-                  { name: { contains: s, mode: "insensitive" } },
-                  { email: { contains: s, mode: "insensitive" } },
-                  { phone: { contains: s, mode: "insensitive" } },
+                  { name: { contains: query.search.trim(), mode: "insensitive" } },
+                  { email: { contains: query.search.trim(), mode: "insensitive" } },
+                  { phone: { contains: query.search.trim(), mode: "insensitive" } },
                 ],
               },
             },
           },
         },
-      ];
-    }
+      ] : null;
 
-    const [total, items, totalWalletSum] = await Promise.all([
-      prisma.organization.count({ where }),
-      prisma.organization.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        include: {
-          wallet: true,
-          members: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  phone: true,
-                  role: true,
-                  updatedAt: true,
-                  sessions: {
-                    orderBy: { updatedAt: "desc" },
-                    take: 1,
-                    select: {
-                      updatedAt: true,
-                      createdAt: true,
+      if (hasBalance && searchConditions) {
+        where.AND = [
+          { wallet: { balance: { gt: 0 } } },
+          { OR: searchConditions },
+        ];
+      } else if (hasBalance) {
+        where.wallet = { balance: { gt: 0 } };
+      } else if (searchConditions) {
+        where.OR = searchConditions;
+      }
+
+      let orderBy: any = [
+        { wallet: { balance: "desc" } },
+        { createdAt: "desc" },
+      ];
+      if (sortBy === "createdAt") {
+        orderBy = { createdAt: "desc" };
+      } else if (sortBy === "walletBalance") {
+        orderBy = { wallet: { balance: "desc" } };
+      } else if (sortBy === "name") {
+        orderBy = { name: "asc" };
+      }
+
+      const [total, items, totalWalletSum, countWithBalance] = await Promise.all([
+        prisma.organization.count({ where }),
+        prisma.organization.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy,
+          include: {
+            wallet: true,
+            members: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    phone: true,
+                    role: true,
+                    updatedAt: true,
+                    sessions: {
+                      orderBy: { updatedAt: "desc" },
+                      take: 1,
+                      select: {
+                        updatedAt: true,
+                        createdAt: true,
+                      },
                     },
                   },
                 },
               },
             },
-          },
-          payments: {
-            where: {
-              status: "CAPTURED",
+            payments: {
+              where: {
+                status: "CAPTURED",
+              },
+              select: {
+                id: true,
+                amount: true,
+                paidAt: true,
+                createdAt: true,
+              },
             },
-            select: {
-              id: true,
-              amount: true,
-              paidAt: true,
-              createdAt: true,
+            requests: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                createdAt: true,
+              },
+            },
+            apiLogs: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                createdAt: true,
+              },
+            },
+            _count: {
+              select: {
+                members: true,
+                customers: true,
+                requests: true,
+                payments: true,
+                apiLogs: true,
+              },
             },
           },
-          requests: {
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: {
-              createdAt: true,
-            },
-          },
-          apiLogs: {
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: {
-              createdAt: true,
-            },
-          },
+        }),
+        prisma.wallet.aggregate({
+          _sum: { balance: true },
+        }),
+        prisma.organization.count({
+          where: { wallet: { balance: { gt: 0 } } },
+        }),
+      ]);
+
+      const enhancedItems = items.map((org) => {
+        const ownerUser = org.members[0]?.user;
+        const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
+        const lastRequestDate = org.requests?.[0]?.createdAt;
+        const lastApiLogDate = org.apiLogs?.[0]?.createdAt;
+        const allTimestamps = [lastSessionDate, ownerUser?.updatedAt, lastRequestDate, lastApiLogDate, org.createdAt]
+          .filter(Boolean)
+          .map((d) => new Date(d!).getTime())
+          .filter((t) => !isNaN(t));
+        const lastLogin = allTimestamps.length > 0 ? new Date(Math.max(...allTimestamps)).toISOString() : org.createdAt;
+
+        const completedPayments = org.payments || [];
+        const completedPaymentsCount = completedPayments.length;
+        const completedPaymentsAmount = completedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        const totalRequests = Math.max(org._count?.requests || 0, org._count?.apiLogs || 0);
+
+        return {
+          ...org,
           _count: {
-            select: {
-              members: true,
-              customers: true,
-              requests: true,
-              payments: true,
-              apiLogs: true,
-            },
+            ...org._count,
+            requests: totalRequests,
           },
-        },
-      }),
-      prisma.wallet.aggregate({
-        _sum: { balance: true },
-      }),
-    ]);
-
-    const enhancedItems = items.map((org) => {
-      const ownerUser = org.members[0]?.user;
-      const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
-      const lastRequestDate = org.requests?.[0]?.createdAt;
-      const lastApiLogDate = org.apiLogs?.[0]?.createdAt;
-      const allTimestamps = [lastSessionDate, ownerUser?.updatedAt, lastRequestDate, lastApiLogDate, org.createdAt]
-        .filter(Boolean)
-        .map((d) => new Date(d!).getTime())
-        .filter((t) => !isNaN(t));
-      const lastLogin = allTimestamps.length > 0 ? new Date(Math.max(...allTimestamps)).toISOString() : org.createdAt;
-
-      const completedPayments = org.payments || [];
-      const completedPaymentsCount = completedPayments.length;
-      const completedPaymentsAmount = completedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-      const totalRequests = Math.max(org._count?.requests || 0, org._count?.apiLogs || 0);
+          lastLogin,
+          completedPaymentsCount,
+          completedPaymentsAmount,
+        };
+      });
 
       return {
-        ...org,
-        _count: {
-          ...org._count,
-          requests: totalRequests,
+        items: enhancedItems,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit) || 1,
         },
-        lastLogin,
-        completedPaymentsCount,
-        completedPaymentsAmount,
+        summary: {
+          totalOrganizations: total,
+          totalWalletBalance: Number(totalWalletSum._sum.balance || 0),
+          orgsWithBalanceCount: countWithBalance,
+        },
       };
-    });
-
-    return {
-      items: enhancedItems,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit) || 1,
-      },
-      summary: {
-        totalOrganizations: total,
-        totalWalletBalance: Number(totalWalletSum._sum.balance || 0),
-      },
-    };
     });
   }
 
@@ -1419,23 +1447,37 @@ export class AdminService {
         }
         serviceMap[code].totalInvocations++;
 
+        const isTopup = code === "WALLET_TOPUP";
         const capturedPayment = req.payments.find((p) => p.status === "CAPTURED");
-        const isCompleted = req.status === "COMPLETED" || Boolean(capturedPayment);
-        const isAbandoned = !isCompleted && ["REQUEST_CREATED", "PRICE_LOCKED", "PAYMENT_PENDING"].includes(req.status);
+        const isRefunded = req.status === "REFUNDED" || req.payments.some((p) => p.status === "REFUNDED");
+        const isCompleted = (req.status === "COMPLETED" || Boolean(capturedPayment)) && !isRefunded;
 
         let revenue = 0;
         if (isCompleted) {
-          completedCount++;
           revenue = capturedPayment ? Number(capturedPayment.amount) : Number(req.amount || 0);
-          totalGrossRevenue += revenue;
-          completedVendorCost += unitCost;
 
-          serviceMap[code].completedCount++;
-          serviceMap[code].completedRevenue += revenue;
-          serviceMap[code].fulfilledCost += unitCost;
-        } else if (isAbandoned) {
-          abandonedCount++;
-          wastedVendorCost += unitCost;
+          if (!isTopup) {
+            completedCount++;
+            totalGrossRevenue += revenue;
+            completedVendorCost += unitCost;
+
+            serviceMap[code].completedCount++;
+            serviceMap[code].completedRevenue += revenue;
+            serviceMap[code].fulfilledCost += unitCost;
+          } else {
+            // WALLET_TOPUP:
+            // Displayed in Service Economics breakdown and Operational Ledger as top-up deposit collected,
+            // but excluded from platform gross revenue and platform completed orders count at the top.
+            serviceMap[code].completedCount++;
+            serviceMap[code].completedRevenue += revenue;
+            serviceMap[code].fulfilledCost += 0;
+          }
+        } else {
+          // Unpaid drop-offs, refunded requests, and failed API lookups
+          if (!isTopup) {
+            abandonedCount++;
+            wastedVendorCost += unitCost;
+          }
 
           serviceMap[code].abandonedCount++;
           serviceMap[code].wastedCost += unitCost;
