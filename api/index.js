@@ -9961,18 +9961,27 @@ var PanService = class {
       logger2.info(`[PanService] \u26A1 Cache HIT for Aadhaar ending in ${aadhaar.slice(-4)}. Served from 24h Redis cache (\u20B90 API burn).`);
       return cachedResult;
     }
+    const negativeCacheKey = `cache:pan_find:unlinked:${aadhaar.trim()}`;
+    const isUnlinkedCached = await redis.get(negativeCacheKey);
+    if (isUnlinkedCached) {
+      logger2.info(`[PanService] \u26A1 Negative Cache HIT for unlinked Aadhaar ending in ${aadhaar.slice(-4)} (15m rate-limit shield, \u20B90 API burn).`);
+      throw AppError.badRequest(
+        "\u0907\u0938 \u0906\u0927\u093E\u0930 \u0928\u0902\u092C\u0930 \u0938\u0947 \u0915\u094B\u0908 \u092D\u0940 \u092A\u0948\u0928 \u0915\u093E\u0930\u094D\u0921 \u0932\u093F\u0902\u0915 \u0928\u0939\u0940\u0902 \u0939\u0948 (No PAN is linked with this Aadhaar number).",
+        "PAN_NOT_FOUND"
+      );
+    }
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
     logger2.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
-    vendorWalletService.deductApiCost({
-      serviceCode: "PAN_FIND",
-      unitCost: 3,
-      reference: `Aadhaar ending in ${aadhaar.slice(-4)}`
-    }).catch((err) => {
-      logger2.error("[PanService] Failed to deduct wallet balance for PAN_FIND:", err);
-    });
     const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
     if (response.Errorcode === 100) {
       if (panNumber) {
+        vendorWalletService.deductApiCost({
+          serviceCode: "PAN_FIND",
+          unitCost: 3,
+          reference: `Aadhaar ending in ${aadhaar.slice(-4)}`
+        }).catch((err) => {
+          logger2.error("[PanService] Failed to deduct wallet balance for PAN_FIND:", err);
+        });
         const maskedPan = `XXXXX${panNumber.substring(5, 9)}${panNumber.substring(9)}`;
         const searchToken = encryptPanToken({
           pan: panNumber,
@@ -9990,15 +9999,17 @@ var PanService = class {
       }
       if (response.Data?.Message?.toLowerCase() === "linked") {
         const linkedMsg = "PAN is linked with this Aadhaar number, but PAN number were not found. Please try again later.";
-        logger2.warn(`[PanService] ${linkedMsg}`);
+        logger2.warn(`[PanService] ${linkedMsg} (\u20B90 Vendor burn)`);
         throw AppError.badRequest(linkedMsg, "PAN_LINKED_NO_DATA");
       }
       const notFoundMsg = "PAN is linked but data not found. Please try again later.";
-      logger2.warn(`[PanService] ${notFoundMsg}`);
+      logger2.warn(`[PanService] ${notFoundMsg} (\u20B90 Vendor burn)`);
       throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
     }
     if (response.Errorcode === 104 || response.Errorcode === 101 || response.Message?.toLowerCase().includes("no pan") || response.Message?.toLowerCase().includes("not linked")) {
-      logger2.warn(`[PanService] No PAN linked / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}: ${response.Message}`);
+      logger2.warn(`[PanService] No PAN linked / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}: ${response.Message} (\u20B90 Vendor burn)`);
+      await redis.set(negativeCacheKey, "1", 900).catch(() => {
+      });
       throw AppError.badRequest(
         "\u0907\u0938 \u0906\u0927\u093E\u0930 \u0928\u0902\u092C\u0930 \u0938\u0947 \u0915\u094B\u0908 \u092D\u0940 \u092A\u0948\u0928 \u0915\u093E\u0930\u094D\u0921 \u0932\u093F\u0902\u0915 \u0928\u0939\u0940\u0902 \u0939\u0948 (No PAN is linked with this Aadhaar number).",
         "PAN_NOT_FOUND"
@@ -10014,11 +10025,11 @@ var PanService = class {
       });
       throw AppError.badRequest(
         "\u0905\u0928\u0941\u0930\u094B\u0927 \u0938\u0902\u0938\u093E\u0927\u093F\u0924 \u0928\u0939\u0940\u0902 \u0939\u094B \u0938\u0915\u093E\u0964 \u0915\u0943\u092A\u092F\u093E \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
-        "GATEWAY_ERROR"
+        "REQUEST_FAILED"
       );
     }
     const fallbackMsg = response.Message && response.Message !== "Data Fetch Successfully" && response.Message !== "Internal Server Error" ? response.Message : "\u0907\u0938 \u0906\u0927\u093E\u0930 \u0928\u0902\u092C\u0930 \u0915\u093E \u092A\u0948\u0928 \u0930\u093F\u0915\u0949\u0930\u094D\u0921 \u092A\u094D\u0930\u093E\u092A\u094D\u0924 \u0928\u0939\u0940\u0902 \u0939\u094B \u0938\u0915\u093E\u0964 \u0915\u0943\u092A\u092F\u093E \u0935\u093F\u0935\u0930\u0923 \u091C\u093E\u0902\u091A\u0947\u0902\u0964";
-    logger2.warn(`[PanService] Find PAN failed: ${fallbackMsg}`);
+    logger2.warn(`[PanService] Find PAN failed: ${fallbackMsg} (\u20B90 Vendor burn)`);
     throw AppError.badRequest(fallbackMsg, "PAN_FIND_FAILED");
   }
   /**
@@ -10079,14 +10090,14 @@ var PanService = class {
       return cachedDetails;
     }
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
-    vendorWalletService.deductApiCost({
-      serviceCode: "PAN_DETAILS",
-      unitCost: 2.5,
-      reference: `PAN ending in ${cleanPan.slice(-4)}`
-    }).catch((err) => {
-      logger2.error("[PanService] Failed to deduct wallet balance for PAN_DETAILS:", err);
-    });
     if (response.Errorcode === 100 && response.data) {
+      vendorWalletService.deductApiCost({
+        serviceCode: "PAN_DETAILS",
+        unitCost: 2.5,
+        reference: `PAN ending in ${cleanPan.slice(-4)}`
+      }).catch((err) => {
+        logger2.error("[PanService] Failed to deduct wallet balance for PAN_DETAILS:", err);
+      });
       const d = response.data;
       const detailsResult = {
         pan: d.pan_number || cleanPan,
@@ -10113,10 +10124,10 @@ var PanService = class {
       });
       throw AppError.badRequest(
         "\u0905\u0928\u0941\u0930\u094B\u0927 \u0938\u0902\u0938\u093E\u0927\u093F\u0924 \u0928\u0939\u0940\u0902 \u0939\u094B \u0938\u0915\u093E\u0964 \u0915\u0943\u092A\u092F\u093E \u0915\u0941\u091B \u0938\u092E\u092F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
-        "GATEWAY_ERROR"
+        "REQUEST_FAILED"
       );
     }
-    logger2.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
+    logger2.warn(`[PanService] Fetch PAN details failed: ${failureReason} (\u20B90 Vendor burn)`);
     throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
   }
   /**
@@ -10233,13 +10244,6 @@ var PanService = class {
     const response = await ezytmPanGateway.getAdvancePanToAadhaar(formattedPan);
     console.log(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
     logger2.info(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
-    vendorWalletService.deductApiCost({
-      serviceCode: "PAN_TO_AADHAAR",
-      unitCost: 5,
-      reference: `PAN ending in ${formattedPan.slice(-4)}`
-    }).catch((err) => {
-      logger2.error("[PanService] Failed to deduct wallet balance for PAN_TO_AADHAAR:", err);
-    });
     if (response.Errorcode === 100 && response.Data) {
       const d = response.Data;
       const cleanPanNumber = (d.PanNumber || formattedPan).trim().toUpperCase();
@@ -10257,12 +10261,19 @@ var PanService = class {
         maskedAadhaar && maskedAadhaar !== "" && maskedAadhaar.toLowerCase() !== "null" || rawAadhaar && rawAadhaar !== "" && rawAadhaar.toLowerCase() !== "null"
       );
       if (!hasAadhaarData || d.AadhaarLinked === false) {
-        logger2.warn(`[PanService] Advance PAN to Aadhaar returned no linked Aadhaar for PAN ${formattedPan}. AadhaarLinked: ${d.AadhaarLinked}, MaskedAadhaar: ${d.MaskedAadhaar}`);
+        logger2.warn(`[PanService] Advance PAN to Aadhaar returned no linked Aadhaar for PAN ${formattedPan}. AadhaarLinked: ${d.AadhaarLinked}, MaskedAadhaar: ${d.MaskedAadhaar} (\u20B90 Vendor burn)`);
         throw AppError.badRequest(
           "No Aadhaar record found linked with this PAN card in the Income Tax database.",
           "PAN_NOT_FOUND"
         );
       }
+      vendorWalletService.deductApiCost({
+        serviceCode: "PAN_TO_AADHAAR",
+        unitCost: 5,
+        reference: `PAN ending in ${formattedPan.slice(-4)}`
+      }).catch((err) => {
+        logger2.error("[PanService] Failed to deduct wallet balance for PAN_TO_AADHAAR:", err);
+      });
       const searchToken = encryptPanToken({
         pan: cleanPanNumber,
         aadharNumber: rawAadhaar || maskedAadhaar,
@@ -10286,16 +10297,18 @@ var PanService = class {
       });
       throw AppError.badRequest(
         "\u0905\u0928\u0941\u0930\u094B\u0927 \u0938\u0902\u0938\u093E\u0927\u093F\u0924 \u0928\u0939\u0940\u0902 \u0939\u094B \u0938\u0915\u093E\u0964 \u0915\u0943\u092A\u092F\u093E \u0915\u0941\u091B \u0938\u092E\u092F \u092C\u093E\u0926 \u092A\u0941\u0928\u0903 \u092A\u094D\u0930\u092F\u093E\u0938 \u0915\u0930\u0947\u0902\u0964",
-        "GATEWAY_ERROR"
+        "REQUEST_FAILED"
       );
     }
-    if (response.Errorcode === 101) {
+    if (response.Errorcode === 101 || response.Errorcode === 104) {
+      logger2.warn(`[PanService] Advance PAN to Aadhaar returned Errorcode ${response.Errorcode} for PAN ${formattedPan} (\u20B90 Vendor burn)`);
       throw AppError.badRequest(
         response.Message || "No record found linked with this PAN in the registry.",
         "PAN_NOT_FOUND"
       );
     }
     const fallbackMsg = response.Message || "Failed to retrieve Aadhaar details linked with this PAN. Please check the PAN number.";
+    logger2.warn(`[PanService] Advance PAN to Aadhaar failed: ${fallbackMsg} (\u20B90 Vendor burn)`);
     throw AppError.badRequest(fallbackMsg, "PAN_TO_AADHAAR_FAILED");
   }
   /**

@@ -103,24 +103,35 @@ export class PanService {
       return cachedResult;
     }
 
+    // Short-lived negative cache (15m) for previously verified unlinked Aadhaar numbers
+    const negativeCacheKey = `cache:pan_find:unlinked:${aadhaar.trim()}`;
+    const isUnlinkedCached = await redis.get(negativeCacheKey);
+    if (isUnlinkedCached) {
+      logger.info(`[PanService] ⚡ Negative Cache HIT for unlinked Aadhaar ending in ${aadhaar.slice(-4)} (15m rate-limit shield, ₹0 API burn).`);
+      throw AppError.badRequest(
+        "इस आधार नंबर से कोई भी पैन कार्ड लिंक नहीं है (No PAN is linked with this Aadhaar number).",
+        "PAN_NOT_FOUND"
+      );
+    }
+
     const response = await ezytmPanGateway.findPanByAadhaar(aadhaar);
     logger.info(`[PanService] Raw response received: ${JSON.stringify(response)}`);
-
-    // In-flight automatic company vendor wallet deduction (₹3.00 per hit)
-    vendorWalletService
-      .deductApiCost({
-        serviceCode: "PAN_FIND",
-        unitCost: 3.0,
-        reference: `Aadhaar ending in ${aadhaar.slice(-4)}`,
-      })
-      .catch((err) => {
-        logger.error("[PanService] Failed to deduct wallet balance for PAN_FIND:", err);
-      });
 
     const panNumber = response.Data?.PanNumber?.trim()?.toUpperCase();
 
     if (response.Errorcode === 100) {
       if (panNumber) {
+        // Gated Vendor Wallet Deduction: ONLY runs on confirmed success (₹3.00 per hit)
+        vendorWalletService
+          .deductApiCost({
+            serviceCode: "PAN_FIND",
+            unitCost: 3.0,
+            reference: `Aadhaar ending in ${aadhaar.slice(-4)}`,
+          })
+          .catch((err) => {
+            logger.error("[PanService] Failed to deduct wallet balance for PAN_FIND:", err);
+          });
+
         const maskedPan = `XXXXX${panNumber.substring(5, 9)}${panNumber.substring(9)}`;
         const searchToken = encryptPanToken({
           pan: panNumber,
@@ -145,23 +156,25 @@ export class PanService {
       // Handled case: PAN is linked according to official API, but PAN number is not exposed/found in this response
       if (response.Data?.Message?.toLowerCase() === "linked") {
         const linkedMsg = "PAN is linked with this Aadhaar number, but PAN number were not found. Please try again later.";
-        logger.warn(`[PanService] ${linkedMsg}`);
+        logger.warn(`[PanService] ${linkedMsg} (₹0 Vendor burn)`);
         throw AppError.badRequest(linkedMsg, "PAN_LINKED_NO_DATA");
       }
 
       const notFoundMsg = "PAN is linked but data not found. Please try again later.";
-      logger.warn(`[PanService] ${notFoundMsg}`);
+      logger.warn(`[PanService] ${notFoundMsg} (₹0 Vendor burn)`);
       throw AppError.badRequest(notFoundMsg, "PAN_NOT_FOUND");
     }
 
-    // Specific Handling for "No PAN linked with this Aadhaar" (Errorcode 104 or 101)
+    // Specific Handling for "No PAN linked with this Aadhaar" (Errorcode 104 or 101) -> ₹0 Vendor burn
     if (
       response.Errorcode === 104 ||
       response.Errorcode === 101 ||
       response.Message?.toLowerCase().includes("no pan") ||
       response.Message?.toLowerCase().includes("not linked")
     ) {
-      logger.warn(`[PanService] No PAN linked / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}: ${response.Message}`);
+      logger.warn(`[PanService] No PAN linked / Errorcode ${response.Errorcode} for Aadhaar ending in ${aadhaar.slice(-4)}: ${response.Message} (₹0 Vendor burn)`);
+      // Cache unlinked result in Redis for 15 minutes (900s) to protect from repeated clicks
+      await redis.set(negativeCacheKey, "1", 900).catch(() => {});
       throw AppError.badRequest(
         "इस आधार नंबर से कोई भी पैन कार्ड लिंक नहीं है (No PAN is linked with this Aadhaar number).",
         "PAN_NOT_FOUND"
@@ -178,7 +191,7 @@ export class PanService {
 
       throw AppError.badRequest(
         "अनुरोध संसाधित नहीं हो सका। कृपया पुनः प्रयास करें।",
-        "GATEWAY_ERROR"
+        "REQUEST_FAILED"
       );
     }
 
@@ -186,7 +199,7 @@ export class PanService {
       ? response.Message
       : "इस आधार नंबर का पैन रिकॉर्ड प्राप्त नहीं हो सका। कृपया विवरण जांचें।";
 
-    logger.warn(`[PanService] Find PAN failed: ${fallbackMsg}`);
+    logger.warn(`[PanService] Find PAN failed: ${fallbackMsg} (₹0 Vendor burn)`);
     throw AppError.badRequest(fallbackMsg, "PAN_FIND_FAILED");
   }
 
@@ -258,18 +271,18 @@ export class PanService {
 
     const response = await ezytmPanGateway.getPanDetails(cleanPan);
 
-    // In-flight automatic company vendor wallet deduction (₹2.50 per hit)
-    vendorWalletService
-      .deductApiCost({
-        serviceCode: "PAN_DETAILS",
-        unitCost: 2.5,
-        reference: `PAN ending in ${cleanPan.slice(-4)}`,
-      })
-      .catch((err) => {
-        logger.error("[PanService] Failed to deduct wallet balance for PAN_DETAILS:", err);
-      });
-
     if (response.Errorcode === 100 && response.data) {
+      // Gated Vendor Wallet Deduction: ONLY runs on confirmed success (₹2.50 per hit)
+      vendorWalletService
+        .deductApiCost({
+          serviceCode: "PAN_DETAILS",
+          unitCost: 2.5,
+          reference: `PAN ending in ${cleanPan.slice(-4)}`,
+        })
+        .catch((err) => {
+          logger.error("[PanService] Failed to deduct wallet balance for PAN_DETAILS:", err);
+        });
+
       const d = response.data;
       const detailsResult: PanDetailsOutput = {
         pan: d.pan_number || cleanPan,
@@ -308,11 +321,11 @@ export class PanService {
 
       throw AppError.badRequest(
         "अनुरोध संसाधित नहीं हो सका। कृपया कुछ समय बाद पुनः प्रयास करें।",
-        "GATEWAY_ERROR"
+        "REQUEST_FAILED"
       );
     }
 
-    logger.warn(`[PanService] Fetch PAN details failed: ${failureReason}`);
+    logger.warn(`[PanService] Fetch PAN details failed: ${failureReason} (₹0 Vendor burn)`);
     throw AppError.badRequest(failureReason, "PAN_DETAILS_FAILED");
   }
 
@@ -448,17 +461,6 @@ export class PanService {
     console.log(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
     logger.info(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
 
-    // In-flight automatic company vendor wallet deduction (₹5.00 per hit)
-    vendorWalletService
-      .deductApiCost({
-        serviceCode: "PAN_TO_AADHAAR",
-        unitCost: 5.0,
-        reference: `PAN ending in ${formattedPan.slice(-4)}`,
-      })
-      .catch((err) => {
-        logger.error("[PanService] Failed to deduct wallet balance for PAN_TO_AADHAAR:", err);
-      });
-
     if (response.Errorcode === 100 && response.Data) {
       const d = response.Data;
       const cleanPanNumber = (d.PanNumber || formattedPan).trim().toUpperCase();
@@ -502,12 +504,23 @@ export class PanService {
       );
 
       if (!hasAadhaarData || d.AadhaarLinked === false) {
-        logger.warn(`[PanService] Advance PAN to Aadhaar returned no linked Aadhaar for PAN ${formattedPan}. AadhaarLinked: ${d.AadhaarLinked}, MaskedAadhaar: ${d.MaskedAadhaar}`);
+        logger.warn(`[PanService] Advance PAN to Aadhaar returned no linked Aadhaar for PAN ${formattedPan}. AadhaarLinked: ${d.AadhaarLinked}, MaskedAadhaar: ${d.MaskedAadhaar} (₹0 Vendor burn)`);
         throw AppError.badRequest(
           "No Aadhaar record found linked with this PAN card in the Income Tax database.",
           "PAN_NOT_FOUND",
         );
       }
+
+      // Gated Vendor Wallet Deduction: ONLY runs on confirmed linked record (₹5.00 per hit)
+      vendorWalletService
+        .deductApiCost({
+          serviceCode: "PAN_TO_AADHAAR",
+          unitCost: 5.0,
+          reference: `PAN ending in ${formattedPan.slice(-4)}`,
+        })
+        .catch((err) => {
+          logger.error("[PanService] Failed to deduct wallet balance for PAN_TO_AADHAAR:", err);
+        });
 
       // Encrypt full demographic data into token
       const searchToken = encryptPanToken({
@@ -536,11 +549,12 @@ export class PanService {
 
       throw AppError.badRequest(
         "अनुरोध संसाधित नहीं हो सका। कृपया कुछ समय बाद पुनः प्रयास करें।",
-        "GATEWAY_ERROR"
+        "REQUEST_FAILED"
       );
     }
 
-    if (response.Errorcode === 101) {
+    if (response.Errorcode === 101 || response.Errorcode === 104) {
+      logger.warn(`[PanService] Advance PAN to Aadhaar returned Errorcode ${response.Errorcode} for PAN ${formattedPan} (₹0 Vendor burn)`);
       throw AppError.badRequest(
         response.Message || "No record found linked with this PAN in the registry.",
         "PAN_NOT_FOUND",
@@ -548,6 +562,7 @@ export class PanService {
     }
 
     const fallbackMsg = response.Message || "Failed to retrieve Aadhaar details linked with this PAN. Please check the PAN number.";
+    logger.warn(`[PanService] Advance PAN to Aadhaar failed: ${fallbackMsg} (₹0 Vendor burn)`);
     throw AppError.badRequest(fallbackMsg, "PAN_TO_AADHAAR_FAILED");
   }
 
