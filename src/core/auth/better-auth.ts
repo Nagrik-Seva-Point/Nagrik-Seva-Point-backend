@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "../db/prisma";
-import { bearer, organization } from "better-auth/plugins";
+import { bearer, emailOTP, organization } from "better-auth/plugins";
 import { env } from "../config/env";
 import { getEnvVar } from "../config/env-helper";
 import { logger } from "../logger/logger";
@@ -102,8 +102,12 @@ export const auth = betterAuth({
     : undefined,
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
-      // 1. Phone number lookup for /sign-in/email (Support Email OR 10-Digit Mobile Number + Password)
-      if (ctx.path === "/sign-in/email") {
+      // 1. Phone number lookup for /sign-in/email, /email-otp/send-verification-otp, and /sign-in/email-otp
+      if (
+        ctx.path === "/sign-in/email" ||
+        ctx.path === "/email-otp/send-verification-otp" ||
+        ctx.path === "/sign-in/email-otp"
+      ) {
         const body = ctx.body as Record<string, unknown> | undefined;
         if (body && typeof body.email === "string") {
           const rawIdentifier = body.email.trim();
@@ -123,15 +127,34 @@ export const auth = betterAuth({
             });
 
             if (!user) {
-              throw new APIError("UNAUTHORIZED", {
-                message: "Invalid email, mobile number or password",
-                code: "INVALID_EMAIL_OR_PASSWORD",
+              throw new APIError("NOT_FOUND", {
+                message: "No account found with this 10-digit mobile number. Please register first.",
+                code: "ACCOUNT_NOT_FOUND",
               });
             }
 
             body.email = user.email;
           } else {
-            body.email = rawIdentifier.toLowerCase();
+            const cleanEmail = rawIdentifier.toLowerCase();
+
+            // Strictly require account existence before sending or verifying login OTP
+            if (
+              ctx.path === "/email-otp/send-verification-otp" ||
+              ctx.path === "/sign-in/email-otp"
+            ) {
+              const user = await prisma.user.findFirst({
+                where: { email: cleanEmail },
+              });
+
+              if (!user) {
+                throw new APIError("NOT_FOUND", {
+                  message: "No account found with this email address. Please register first.",
+                  code: "ACCOUNT_NOT_FOUND",
+                });
+              }
+            }
+
+            body.email = cleanEmail;
           }
         }
       }
@@ -176,6 +199,30 @@ export const auth = betterAuth({
   plugins: [
     organization(), // Better Auth multi-tenant organization support
     bearer(), // Enables Authorization: Bearer <token>
+    emailOTP({
+      async sendVerificationOTP({ email, otp, type }) {
+        if (type === "sign-in") {
+          const user = await prisma.user.findUnique({
+            where: { email },
+            select: { name: true },
+          }).catch(() => null);
+
+          // Absolute guard: never send login OTP to an unregistered user
+          if (!user) {
+            return;
+          }
+
+          await brevoMailService.sendLoginOtpEmail({
+            to: email,
+            name: user?.name,
+            otp,
+          });
+        }
+      },
+      otpLength: 6,
+      expiresIn: 300,
+      disableSignUp: true,
+    }),
   ],
 });
 

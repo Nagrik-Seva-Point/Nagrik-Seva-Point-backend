@@ -6197,7 +6197,7 @@ if (!globalCtx.__prismaClient) {
 var prisma = globalCtx.__prismaClient;
 
 // src/core/auth/better-auth.ts
-import { bearer, organization } from "better-auth/plugins";
+import { bearer, emailOTP, organization } from "better-auth/plugins";
 
 // src/core/mail/brevo.service.ts
 import { ProxyAgent, fetch as undiciFetch } from "undici";
@@ -6607,6 +6607,121 @@ nagriksevapoint@gmail.com
     });
   }
   /**
+   * Dispatches a branded Login Verification OTP Email with a prominent 6-digit code.
+   */
+  async sendLoginOtpEmail({
+    to,
+    name,
+    otp
+  }) {
+    const displayName = name?.trim() || "Partner";
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login Verification OTP - Nagrik Seva Point</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F1F5F9; padding: 40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px; background-color: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);">
+          <tr>
+            <td height="4" style="background: linear-gradient(90deg, #FD3820 0%, #FF6B4A 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td align="center" style="background-color: #FFFFFF; border-bottom: 1px solid #F1F5F9; padding: 26px 32px 22px 32px; text-align: center;">
+              <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" height="44" style="height: 44px; width: auto; max-width: 220px; display: block; margin: 0 auto; border: 0;" />
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 32px 32px 24px 32px;">
+              <h1 style="margin: 0 0 8px 0; font-size: 22px; font-weight: 800; color: #0F172A; letter-spacing: -0.4px;">
+                Instant Login Verification
+              </h1>
+              <p style="margin: 0 0 20px 0; font-size: 14px; color: #64748B; line-height: 1.5;">
+                Use the one-time verification code below to securely log into your workspace.
+              </p>
+              <p style="margin: 0 0 14px 0; font-size: 15px; color: #334155; line-height: 1.6;">
+                Namaste <strong>${displayName}</strong>,
+              </p>
+              <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
+                We received a request to log into your Nagrik Seva Point account linked with <strong style="color: #0F172A;">${to}</strong>. Enter this 6-digit OTP in the verification box to sign in:
+              </p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 24px 0;">
+                <tr>
+                  <td align="center" style="background-color: #FFF7F5; border: 2px dashed #FD3820; border-radius: 14px; padding: 22px 20px;">
+                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #D92D16; margin-bottom: 8px;">
+                      Your Login OTP Code
+                    </div>
+                    <div style="font-family: 'Courier New', Courier, monospace, sans-serif; font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #FD3820; margin: 4px 0;">
+                      ${otp}
+                    </div>
+                    <div style="font-size: 12px; font-weight: 600; color: #64748B; margin-top: 8px;">
+                      Valid for 5 minutes &bull; Single-use only
+                    </div>
+                  </td>
+                </tr>
+              </table>
+              <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px 16px; margin: 20px 0; font-size: 12px; color: #475569; line-height: 1.6;">
+                <strong style="color: #0F172A;">Security Tip:</strong> Never share this OTP with anyone. Nagrik Seva Point team members will never ask for your OTP.
+              </div>
+              <p style="margin: 20px 0 0 0; font-size: 12px; color: #94A3B8; line-height: 1.6; border-top: 1px dashed #E2E8F0; padding-top: 16px;">
+                If you did not request this login attempt, please check your account security or contact support immediately.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 22px 32px; text-align: center;">
+              <p style="margin: 0 0 6px 0; font-size: 12px; font-weight: 700; color: #334155;">
+                Nagrik Seva Point &bull; Cyber Caf\xE9 Partner Support
+              </p>
+              <p style="margin: 0 0 10px 0; font-size: 11px; color: #64748B;">
+                Need help? Contact <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; text-decoration: none; font-weight: 600;">nagriksevapoint@gmail.com</a>
+              </p>
+              <p style="margin: 0; font-size: 11px; color: #94A3B8;">
+                &copy; 2026 Nagrik Seva Point. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+    const textContent = `
+Namaste ${displayName},
+
+Your One-Time Password (OTP) to log into your Nagrik Seva Point account is:
+
+${otp}
+
+This code is valid for 5 minutes. Enter it to complete your login.
+Do not share this OTP with anyone.
+
+\u2014 Nagrik Seva Point Support
+nagriksevapoint@gmail.com
+`;
+    return this.sendEmail({
+      to: [{ email: to, name: displayName }],
+      subject: `${otp} is your Nagrik Seva Point Login OTP`,
+      params: {
+        NAME: displayName,
+        EMAIL: to,
+        OTP: otp,
+        EXPIRY_MINUTES: "5"
+      },
+      htmlContent,
+      textContent
+    });
+  }
+  /**
    * Dispatches an Urgent Low-Balance Alert to the Platform Administrator.
    * Protected with testRecipientEmail override for safe format verification.
    */
@@ -6950,7 +7065,7 @@ var auth = betterAuth({
   } : void 0,
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
-      if (ctx.path === "/sign-in/email") {
+      if (ctx.path === "/sign-in/email" || ctx.path === "/email-otp/send-verification-otp" || ctx.path === "/sign-in/email-otp") {
         const body = ctx.body;
         if (body && typeof body.email === "string") {
           const rawIdentifier = body.email.trim();
@@ -6966,14 +7081,26 @@ var auth = betterAuth({
               where: { phone: cleanPhone }
             });
             if (!user) {
-              throw new APIError("UNAUTHORIZED", {
-                message: "Invalid email, mobile number or password",
-                code: "INVALID_EMAIL_OR_PASSWORD"
+              throw new APIError("NOT_FOUND", {
+                message: "No account found with this 10-digit mobile number. Please register first.",
+                code: "ACCOUNT_NOT_FOUND"
               });
             }
             body.email = user.email;
           } else {
-            body.email = rawIdentifier.toLowerCase();
+            const cleanEmail = rawIdentifier.toLowerCase();
+            if (ctx.path === "/email-otp/send-verification-otp" || ctx.path === "/sign-in/email-otp") {
+              const user = await prisma.user.findFirst({
+                where: { email: cleanEmail }
+              });
+              if (!user) {
+                throw new APIError("NOT_FOUND", {
+                  message: "No account found with this email address. Please register first.",
+                  code: "ACCOUNT_NOT_FOUND"
+                });
+              }
+            }
+            body.email = cleanEmail;
           }
         }
       }
@@ -7011,8 +7138,29 @@ var auth = betterAuth({
   plugins: [
     organization(),
     // Better Auth multi-tenant organization support
-    bearer()
+    bearer(),
     // Enables Authorization: Bearer <token>
+    emailOTP({
+      async sendVerificationOTP({ email, otp, type }) {
+        if (type === "sign-in") {
+          const user = await prisma.user.findUnique({
+            where: { email },
+            select: { name: true }
+          }).catch(() => null);
+          if (!user) {
+            return;
+          }
+          await brevoMailService.sendLoginOtpEmail({
+            to: email,
+            name: user?.name,
+            otp
+          });
+        }
+      },
+      otpLength: 6,
+      expiresIn: 300,
+      disableSignUp: true
+    })
   ]
 });
 
