@@ -653,30 +653,44 @@ export class AuthService {
       throw AppError.notFound("Account not found. Please try again.", "ACCOUNT_NOT_FOUND");
     }
 
-    // Retrieve OTP from DB
-    const record = await prisma.verification.findFirst({
-      where: { identifier: `password-reset-otp:${targetUser.id}` },
-    }).catch(() => null);
-
-    if (!record || new Date() > record.expiresAt) {
-      throw AppError.badRequest(
-        "Verification code has expired or is invalid. Please request a new OTP.",
-        "OTP_EXPIRED",
-      );
-    }
+    // 1. Fast L1 Redis Check first (< 1ms vs ~250ms DB roundtrip)
+    const cachedOtpData = await redis.getJson<{ otp: string; attempts: number }>(
+      `otp:reset:${targetUser.id}`,
+    ).catch(() => null);
 
     let stored: { otp: string; attempts: number } = { otp: "", attempts: 0 };
-    try {
-      stored = JSON.parse(record.value);
-    } catch {
-      stored = { otp: record.value, attempts: 0 };
+    let recordId: string | null = null;
+
+    if (cachedOtpData) {
+      stored = cachedOtpData;
+    } else {
+      // Fallback to database only if Redis cache was evicted
+      const record = await prisma.verification.findFirst({
+        where: { identifier: `password-reset-otp:${targetUser.id}` },
+      }).catch(() => null);
+
+      if (!record || new Date() > record.expiresAt) {
+        throw AppError.badRequest(
+          "Verification code has expired or is invalid. Please request a new OTP.",
+          "OTP_EXPIRED",
+        );
+      }
+
+      try {
+        stored = JSON.parse(record.value);
+      } catch {
+        stored = { otp: record.value, attempts: 0 };
+      }
+      recordId = record.id;
     }
 
     if (stored.attempts >= 5) {
-      await prisma.verification.deleteMany({
-        where: { identifier: `password-reset-otp:${targetUser.id}` },
-      }).catch(() => {});
-      await redis.del(`otp:reset:${targetUser.id}`).catch(() => {});
+      await Promise.all([
+        prisma.verification.deleteMany({
+          where: { identifier: `password-reset-otp:${targetUser.id}` },
+        }).catch(() => {}),
+        redis.del(`otp:reset:${targetUser.id}`).catch(() => {}),
+      ]);
       throw AppError.badRequest(
         "Too many incorrect attempts. Please request a new OTP.",
         "OTP_MAX_ATTEMPTS",
@@ -685,11 +699,15 @@ export class AuthService {
 
     if (stored.otp !== cleanOtp) {
       stored.attempts += 1;
-      await prisma.verification.update({
-        where: { id: record.id },
-        data: { value: JSON.stringify(stored) },
-      }).catch(() => {});
-      await redis.setJson(`otp:reset:${targetUser.id}`, stored, 600).catch(() => {});
+      await Promise.all([
+        recordId
+          ? prisma.verification.update({
+              where: { id: recordId },
+              data: { value: JSON.stringify(stored) },
+            }).catch(() => {})
+          : Promise.resolve(),
+        redis.setJson(`otp:reset:${targetUser.id}`, stored, 600).catch(() => {}),
+      ]);
 
       throw AppError.badRequest(
         "Incorrect OTP code. Please enter the valid 6-digit code sent to your email.",
@@ -697,30 +715,30 @@ export class AuthService {
       );
     }
 
-    // OTP is valid! Delete the OTP
-    await prisma.verification.deleteMany({
-      where: { identifier: `password-reset-otp:${targetUser.id}` },
-    }).catch(() => {});
-    await redis.del(`otp:reset:${targetUser.id}`).catch(() => {});
-
     // Generate secure single-use reset token
     const resetToken = randomBytes(32).toString("hex");
     const tokenExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-    await prisma.verification.create({
-      data: {
-        id: randomUUID(),
-        identifier: `password-reset-token:${resetToken}`,
-        value: targetUser.id,
-        expiresAt: tokenExpiry,
-      },
-    });
-
-    await redis.setJson(
-      `reset_token:${resetToken}`,
-      { userId: targetUser.id, email: targetUser.email },
-      900,
-    ).catch(() => {});
+    // Execute token creation, OTP cleanup in Redis & Prisma concurrently (saves multiple roundtrips)
+    await Promise.all([
+      redis.setJson(
+        `reset_token:${resetToken}`,
+        { userId: targetUser.id, email: targetUser.email },
+        900,
+      ).catch(() => {}),
+      redis.del(`otp:reset:${targetUser.id}`).catch(() => {}),
+      prisma.verification.create({
+        data: {
+          id: randomUUID(),
+          identifier: `password-reset-token:${resetToken}`,
+          value: targetUser.id,
+          expiresAt: tokenExpiry,
+        },
+      }),
+      prisma.verification.deleteMany({
+        where: { identifier: `password-reset-otp:${targetUser.id}` },
+      }).catch(() => {}),
+    ]);
 
     logApiExecution({
       userId: targetUser.id,

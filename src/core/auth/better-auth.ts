@@ -137,11 +137,8 @@ export const auth = betterAuth({
           } else {
             const cleanEmail = rawIdentifier.toLowerCase();
 
-            // Strictly require account existence before sending or verifying login OTP
-            if (
-              ctx.path === "/email-otp/send-verification-otp" ||
-              ctx.path === "/sign-in/email-otp"
-            ) {
+            // Strictly require account existence before sending login OTP
+            if (ctx.path === "/email-otp/send-verification-otp") {
               const user = await prisma.user.findFirst({
                 where: { email: cleanEmail },
               });

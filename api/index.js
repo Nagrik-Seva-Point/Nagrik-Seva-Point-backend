@@ -7089,7 +7089,7 @@ var auth = betterAuth({
             body.email = user.email;
           } else {
             const cleanEmail = rawIdentifier.toLowerCase();
-            if (ctx.path === "/email-otp/send-verification-otp" || ctx.path === "/sign-in/email-otp") {
+            if (ctx.path === "/email-otp/send-verification-otp") {
               const user = await prisma.user.findFirst({
                 where: { email: cleanEmail }
               });
@@ -8210,28 +8210,39 @@ var AuthService = class {
     if (!targetUser) {
       throw AppError.notFound("Account not found. Please try again.", "ACCOUNT_NOT_FOUND");
     }
-    const record = await prisma.verification.findFirst({
-      where: { identifier: `password-reset-otp:${targetUser.id}` }
-    }).catch(() => null);
-    if (!record || /* @__PURE__ */ new Date() > record.expiresAt) {
-      throw AppError.badRequest(
-        "Verification code has expired or is invalid. Please request a new OTP.",
-        "OTP_EXPIRED"
-      );
-    }
+    const cachedOtpData = await redis.getJson(
+      `otp:reset:${targetUser.id}`
+    ).catch(() => null);
     let stored = { otp: "", attempts: 0 };
-    try {
-      stored = JSON.parse(record.value);
-    } catch {
-      stored = { otp: record.value, attempts: 0 };
+    let recordId = null;
+    if (cachedOtpData) {
+      stored = cachedOtpData;
+    } else {
+      const record = await prisma.verification.findFirst({
+        where: { identifier: `password-reset-otp:${targetUser.id}` }
+      }).catch(() => null);
+      if (!record || /* @__PURE__ */ new Date() > record.expiresAt) {
+        throw AppError.badRequest(
+          "Verification code has expired or is invalid. Please request a new OTP.",
+          "OTP_EXPIRED"
+        );
+      }
+      try {
+        stored = JSON.parse(record.value);
+      } catch {
+        stored = { otp: record.value, attempts: 0 };
+      }
+      recordId = record.id;
     }
     if (stored.attempts >= 5) {
-      await prisma.verification.deleteMany({
-        where: { identifier: `password-reset-otp:${targetUser.id}` }
-      }).catch(() => {
-      });
-      await redis.del(`otp:reset:${targetUser.id}`).catch(() => {
-      });
+      await Promise.all([
+        prisma.verification.deleteMany({
+          where: { identifier: `password-reset-otp:${targetUser.id}` }
+        }).catch(() => {
+        }),
+        redis.del(`otp:reset:${targetUser.id}`).catch(() => {
+        })
+      ]);
       throw AppError.badRequest(
         "Too many incorrect attempts. Please request a new OTP.",
         "OTP_MAX_ATTEMPTS"
@@ -8239,40 +8250,44 @@ var AuthService = class {
     }
     if (stored.otp !== cleanOtp) {
       stored.attempts += 1;
-      await prisma.verification.update({
-        where: { id: record.id },
-        data: { value: JSON.stringify(stored) }
-      }).catch(() => {
-      });
-      await redis.setJson(`otp:reset:${targetUser.id}`, stored, 600).catch(() => {
-      });
+      await Promise.all([
+        recordId ? prisma.verification.update({
+          where: { id: recordId },
+          data: { value: JSON.stringify(stored) }
+        }).catch(() => {
+        }) : Promise.resolve(),
+        redis.setJson(`otp:reset:${targetUser.id}`, stored, 600).catch(() => {
+        })
+      ]);
       throw AppError.badRequest(
         "Incorrect OTP code. Please enter the valid 6-digit code sent to your email.",
         "INVALID_OTP"
       );
     }
-    await prisma.verification.deleteMany({
-      where: { identifier: `password-reset-otp:${targetUser.id}` }
-    }).catch(() => {
-    });
-    await redis.del(`otp:reset:${targetUser.id}`).catch(() => {
-    });
     const resetToken = randomBytes(32).toString("hex");
     const tokenExpiry = new Date(Date.now() + 15 * 60 * 1e3);
-    await prisma.verification.create({
-      data: {
-        id: randomUUID(),
-        identifier: `password-reset-token:${resetToken}`,
-        value: targetUser.id,
-        expiresAt: tokenExpiry
-      }
-    });
-    await redis.setJson(
-      `reset_token:${resetToken}`,
-      { userId: targetUser.id, email: targetUser.email },
-      900
-    ).catch(() => {
-    });
+    await Promise.all([
+      redis.setJson(
+        `reset_token:${resetToken}`,
+        { userId: targetUser.id, email: targetUser.email },
+        900
+      ).catch(() => {
+      }),
+      redis.del(`otp:reset:${targetUser.id}`).catch(() => {
+      }),
+      prisma.verification.create({
+        data: {
+          id: randomUUID(),
+          identifier: `password-reset-token:${resetToken}`,
+          value: targetUser.id,
+          expiresAt: tokenExpiry
+        }
+      }),
+      prisma.verification.deleteMany({
+        where: { identifier: `password-reset-otp:${targetUser.id}` }
+      }).catch(() => {
+      })
+    ]);
     logApiExecution({
       userId: targetUser.id,
       serviceCode: "AUTH",
@@ -16384,80 +16399,93 @@ app.all("/api/auth/*", async (c) => {
     } catch {
     }
   }
-  if ((isSignIn || isSignUp) && res.status >= 200 && res.status < 400) {
+  const runBackgroundAudit = async () => {
     try {
-      let loggedUser = null;
-      let sessionToken = "";
-      try {
-        const clonedRes = res.clone();
-        const resJson = await clonedRes.json().catch(() => null);
-        if (resJson?.user) {
-          loggedUser = resJson.user;
-          sessionToken = resJson.token || resJson.session?.token || "";
+      if ((isSignIn || isSignUp) && res.status >= 200 && res.status < 400) {
+        let loggedUser = null;
+        let sessionToken = "";
+        try {
+          const clonedRes = res.clone();
+          const resJson = await clonedRes.json().catch(() => null);
+          if (resJson?.user) {
+            loggedUser = resJson.user;
+            sessionToken = resJson.token || resJson.session?.token || "";
+          }
+        } catch {
         }
-      } catch {
-      }
-      if (!loggedUser) {
-        const setCookie = res.headers.get("set-cookie") || "";
-        const match2 = setCookie.match(/better-auth\.session_token=([^;]+)/) || setCookie.match(/better-auth=([^;]+)/);
-        if (match2) {
-          sessionToken = decodeURIComponent(match2[1]).split(".")[0];
-          const sessionRecord = await prisma.session.findFirst({
-            where: {
-              OR: [
-                { token: sessionToken },
-                { token: { startsWith: sessionToken } }
-              ]
-            },
-            include: { user: true }
-          });
-          if (sessionRecord) {
-            loggedUser = sessionRecord.user;
+        if (!loggedUser) {
+          const setCookie = res.headers.get("set-cookie") || "";
+          const match2 = setCookie.match(/better-auth\.session_token=([^;]+)/) || setCookie.match(/better-auth=([^;]+)/);
+          if (match2) {
+            sessionToken = decodeURIComponent(match2[1]).split(".")[0];
+            const sessionRecord = await prisma.session.findFirst({
+              where: {
+                OR: [
+                  { token: sessionToken },
+                  { token: { startsWith: sessionToken } }
+                ]
+              },
+              include: { user: true }
+            });
+            if (sessionRecord) {
+              loggedUser = sessionRecord.user;
+            }
           }
         }
-      }
-      if (!loggedUser && reqEmail) {
-        loggedUser = await prisma.user.findUnique({ where: { email: reqEmail } });
-      }
-      if (loggedUser) {
-        const membership = await prisma.member.findFirst({
-          where: { userId: loggedUser.id },
-          select: { organizationId: true }
-        });
-        const orgId = membership?.organizationId;
+        if (!loggedUser && reqEmail) {
+          loggedUser = await prisma.user.findUnique({ where: { email: reqEmail } });
+        }
+        if (loggedUser) {
+          const membership = await prisma.member.findFirst({
+            where: { userId: loggedUser.id },
+            select: { organizationId: true }
+          });
+          const orgId = membership?.organizationId;
+          if (sessionToken && orgId) {
+            prisma.session.updateMany({
+              where: {
+                OR: [
+                  { token: sessionToken },
+                  { token: { startsWith: sessionToken } }
+                ],
+                activeOrganizationId: null
+              },
+              data: { activeOrganizationId: orgId }
+            }).catch(() => {
+            });
+          }
+          await logApiExecution({
+            organizationId: orgId || null,
+            userId: loggedUser.id,
+            serviceCode: "AUTH",
+            action: isSignUp ? "New Retailer Registered & Session Started" : "Operator Login & Session Started",
+            endpoint: c.req.path,
+            reference: `AUTH-${loggedUser.id.slice(0, 8).toUpperCase()}`,
+            status: "SUCCESS",
+            statusCode: res.status,
+            ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+            note: `Operator (${maskEmail(loggedUser.email)}) authenticated to Cyber Caf\xE9 workspace.`
+          });
+        }
+      } else if (isSignIn && res.status >= 400) {
         await logApiExecution({
-          organizationId: orgId || null,
-          userId: loggedUser.id,
+          organizationId: null,
+          userId: null,
           serviceCode: "AUTH",
-          action: isSignUp ? "New Retailer Registered & Session Started" : "Operator Login & Session Started",
+          action: "Failed Operator Login Attempt",
           endpoint: c.req.path,
-          reference: `AUTH-${loggedUser.id.slice(0, 8).toUpperCase()}`,
-          status: "SUCCESS",
+          reference: "AUTH-FAIL",
+          status: "FAILED",
           statusCode: res.status,
           ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-          note: `Operator (${maskEmail(loggedUser.email)}) authenticated to Cyber Caf\xE9 workspace.`
+          note: reqEmail ? `Failed authentication attempt for ${maskEmail(reqEmail)}. Invalid credentials or unauthorized.` : "Failed authentication attempt. Invalid credentials."
         });
       }
     } catch {
     }
-  }
-  if (isSignIn && res.status >= 400) {
-    try {
-      await logApiExecution({
-        organizationId: null,
-        userId: null,
-        serviceCode: "AUTH",
-        action: "Failed Operator Login Attempt",
-        endpoint: c.req.path,
-        reference: "AUTH-FAIL",
-        status: "FAILED",
-        statusCode: res.status,
-        ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-        note: reqEmail ? `Failed authentication attempt for ${maskEmail(reqEmail)}. Invalid credentials or unauthorized.` : "Failed authentication attempt. Invalid credentials."
-      });
-    } catch {
-    }
-  }
+  };
+  runBackgroundAudit().catch(() => {
+  });
   const allowedOrigin = getAllowedCorsOrigin(c.req.header("Origin"));
   const corsHeaders = new Headers(res.headers);
   if (allowedOrigin) {

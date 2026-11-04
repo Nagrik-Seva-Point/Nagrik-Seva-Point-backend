@@ -135,103 +135,115 @@ app.all("/api/auth/*", async (c) => {
     }
   }
 
-  // 4. Log Successful Sign-In or Sign-Up
-  if ((isSignIn || isSignUp) && res.status >= 200 && res.status < 400) {
+  // 4 & 5. Non-blocking Background Audit Trail & Session Org Backfilling
+  // Executed asynchronously without blocking or delaying the client response
+  const runBackgroundAudit = async () => {
     try {
-      let loggedUser: { id: string; email: string; name?: string | null } | null = null;
-      let sessionToken = "";
+      if ((isSignIn || isSignUp) && res.status >= 200 && res.status < 400) {
+        let loggedUser: { id: string; email: string; name?: string | null } | null = null;
+        let sessionToken = "";
 
-      // Try reading JSON body from cloned response
-      try {
-        const clonedRes = res.clone();
-        const resJson = (await clonedRes.json().catch(() => null)) as {
-          user?: { id: string; email: string; name?: string | null };
-          token?: string;
-          session?: { token?: string };
-        } | null;
-        if (resJson?.user) {
-          loggedUser = resJson.user;
-          sessionToken = resJson.token || resJson.session?.token || "";
+        // Try reading JSON body from cloned response
+        try {
+          const clonedRes = res.clone();
+          const resJson = (await clonedRes.json().catch(() => null)) as {
+            user?: { id: string; email: string; name?: string | null };
+            token?: string;
+            session?: { token?: string };
+          } | null;
+          if (resJson?.user) {
+            loggedUser = resJson.user;
+            sessionToken = resJson.token || resJson.session?.token || "";
+          }
+        } catch {
+          // Response may be redirect or non-json
         }
-      } catch {
-        // Response may be redirect or non-json
-      }
 
-      // If OAuth redirect or no user in body, check Set-Cookie header
-      if (!loggedUser) {
-        const setCookie = res.headers.get("set-cookie") || "";
-        const match = setCookie.match(/better-auth\.session_token=([^;]+)/) ||
-                      setCookie.match(/better-auth=([^;]+)/);
-        if (match) {
-          sessionToken = decodeURIComponent(match[1]).split(".")[0];
-          const sessionRecord = await prisma.session.findFirst({
-            where: {
-              OR: [
-                { token: sessionToken },
-                { token: { startsWith: sessionToken } },
-              ],
-            },
-            include: { user: true },
-          });
-          if (sessionRecord) {
-            loggedUser = sessionRecord.user;
+        // If OAuth redirect or no user in body, check Set-Cookie header
+        if (!loggedUser) {
+          const setCookie = res.headers.get("set-cookie") || "";
+          const match = setCookie.match(/better-auth\.session_token=([^;]+)/) ||
+                        setCookie.match(/better-auth=([^;]+)/);
+          if (match) {
+            sessionToken = decodeURIComponent(match[1]).split(".")[0];
+            const sessionRecord = await prisma.session.findFirst({
+              where: {
+                OR: [
+                  { token: sessionToken },
+                  { token: { startsWith: sessionToken } },
+                ],
+              },
+              include: { user: true },
+            });
+            if (sessionRecord) {
+              loggedUser = sessionRecord.user;
+            }
           }
         }
-      }
 
-      // Fallback: Lookup by attempt email
-      if (!loggedUser && reqEmail) {
-        loggedUser = await prisma.user.findUnique({ where: { email: reqEmail } });
-      }
+        // Fallback: Lookup by attempt email
+        if (!loggedUser && reqEmail) {
+          loggedUser = await prisma.user.findUnique({ where: { email: reqEmail } });
+        }
 
-      if (loggedUser) {
-        const membership = await prisma.member.findFirst({
-          where: { userId: loggedUser.id },
-          select: { organizationId: true },
-        });
-        const orgId = membership?.organizationId;
+        if (loggedUser) {
+          const membership = await prisma.member.findFirst({
+            where: { userId: loggedUser.id },
+            select: { organizationId: true },
+          });
+          const orgId = membership?.organizationId;
 
+          // Backfill activeOrganizationId on newly created session so frontend resolves it instantly
+          if (sessionToken && orgId) {
+            prisma.session.updateMany({
+              where: {
+                OR: [
+                  { token: sessionToken },
+                  { token: { startsWith: sessionToken } },
+                ],
+                activeOrganizationId: null,
+              },
+              data: { activeOrganizationId: orgId },
+            }).catch(() => {});
+          }
+
+          await logApiExecution({
+            organizationId: orgId || null,
+            userId: loggedUser.id,
+            serviceCode: "AUTH",
+            action: isSignUp
+              ? "New Retailer Registered & Session Started"
+              : "Operator Login & Session Started",
+            endpoint: c.req.path,
+            reference: `AUTH-${loggedUser.id.slice(0, 8).toUpperCase()}`,
+            status: "SUCCESS",
+            statusCode: res.status,
+            ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
+            note: `Operator (${maskEmail(loggedUser.email)}) authenticated to Cyber Café workspace.`,
+          });
+        }
+      } else if (isSignIn && res.status >= 400) {
         await logApiExecution({
-          organizationId: orgId || null,
-          userId: loggedUser.id,
+          organizationId: null,
+          userId: null,
           serviceCode: "AUTH",
-          action: isSignUp
-            ? "New Retailer Registered & Session Started"
-            : "Operator Login & Session Started",
+          action: "Failed Operator Login Attempt",
           endpoint: c.req.path,
-          reference: `AUTH-${loggedUser.id.slice(0, 8).toUpperCase()}`,
-          status: "SUCCESS",
+          reference: "AUTH-FAIL",
+          status: "FAILED",
           statusCode: res.status,
           ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-          note: `Operator (${maskEmail(loggedUser.email)}) authenticated to Cyber Café workspace.`,
+          note: reqEmail
+            ? `Failed authentication attempt for ${maskEmail(reqEmail)}. Invalid credentials or unauthorized.`
+            : "Failed authentication attempt. Invalid credentials.",
         });
       }
     } catch {
-      // Non-blocking
+      // Non-blocking background log
     }
-  }
+  };
 
-  // 5. Log Failed Sign-In Attempt (Security Checkpoint)
-  if (isSignIn && res.status >= 400) {
-    try {
-      await logApiExecution({
-        organizationId: null,
-        userId: null,
-        serviceCode: "AUTH",
-        action: "Failed Operator Login Attempt",
-        endpoint: c.req.path,
-        reference: "AUTH-FAIL",
-        status: "FAILED",
-        statusCode: res.status,
-        ipAddress: c.req.header("x-forwarded-for") || "127.0.0.1",
-        note: reqEmail
-          ? `Failed authentication attempt for ${maskEmail(reqEmail)}. Invalid credentials or unauthorized.`
-          : "Failed authentication attempt. Invalid credentials.",
-      });
-    } catch {
-      // Non-blocking
-    }
-  }
+  runBackgroundAudit().catch(() => {});
 
   const allowedOrigin = getAllowedCorsOrigin(c.req.header("Origin"));
 
