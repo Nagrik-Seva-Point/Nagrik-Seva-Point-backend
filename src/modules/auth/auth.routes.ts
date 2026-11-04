@@ -6,6 +6,8 @@ import {
   checkAvailabilitySchema,
   type ForgotPasswordInput,
   forgotPasswordSchema,
+  type VerifyResetOtpInput,
+  verifyResetOtpSchema,
   type LoginInput,
   loginSchema,
   type RegisterRetailerInput,
@@ -110,7 +112,7 @@ authRoutes.patch(
   },
 );
 
-// 6. Request Password Reset Link (Email or 10-Digit Mobile Number)
+// 6. Request Password Reset OTP (Email or 10-Digit Mobile Number)
 authRoutes.post(
   "/forgot-password",
   validationMiddleware(forgotPasswordSchema),
@@ -121,7 +123,18 @@ authRoutes.post(
   },
 );
 
-// 7. Reset Password via Secure One-Time Token
+// 7. Verify 6-digit Password Reset OTP
+authRoutes.post(
+  "/verify-reset-otp",
+  validationMiddleware(verifyResetOtpSchema),
+  async (c) => {
+    const data = c.get("validData") as VerifyResetOtpInput;
+    const result = await authService.verifyResetOtp(data, c.req.raw.headers);
+    return c.json(result);
+  },
+);
+
+// 8. Reset Password via Secure One-Time Token
 authRoutes.post(
   "/reset-password",
   validationMiddleware(resetPasswordSchema),

@@ -102,7 +102,41 @@ export const auth = betterAuth({
     : undefined,
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
-      // 1. Check phone number uniqueness on /sign-up/email before database insertion
+      // 1. Phone number lookup for /sign-in/email (Support Email OR 10-Digit Mobile Number + Password)
+      if (ctx.path === "/sign-in/email") {
+        const body = ctx.body as Record<string, unknown> | undefined;
+        if (body && typeof body.email === "string") {
+          const rawIdentifier = body.email.trim();
+          if (!rawIdentifier.includes("@")) {
+            // It's a phone number (must be strictly 10 digits)
+            const cleanPhone = rawIdentifier.replace(/\D/g, "");
+
+            if (cleanPhone.length !== 10) {
+              throw new APIError("BAD_REQUEST", {
+                message: "Mobile number must be exactly 10 digits",
+                code: "INVALID_PHONE",
+              });
+            }
+
+            const user = await prisma.user.findFirst({
+              where: { phone: cleanPhone },
+            });
+
+            if (!user) {
+              throw new APIError("UNAUTHORIZED", {
+                message: "Invalid email, mobile number or password",
+                code: "INVALID_EMAIL_OR_PASSWORD",
+              });
+            }
+
+            body.email = user.email;
+          } else {
+            body.email = rawIdentifier.toLowerCase();
+          }
+        }
+      }
+
+      // 2. Check phone number uniqueness on /sign-up/email before database insertion
       if (ctx.path === "/sign-up/email") {
         const body = ctx.body as Record<string, unknown> | undefined;
         if (body && typeof body.phone === "string" && body.phone.trim()) {

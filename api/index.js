@@ -6473,6 +6473,140 @@ nagriksevapoint@gmail.com
     });
   }
   /**
+   * Dispatches a branded Password Reset OTP Email with a prominent 6-digit code.
+   */
+  async sendPasswordResetOtpEmail({
+    to,
+    name,
+    otp
+  }) {
+    const displayName = name?.trim() || "Partner";
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Password Reset OTP - Nagrik Seva Point</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #F1F5F9; padding: 40px 16px;">
+    <tr>
+      <td align="center">
+        <!-- Main Card Container -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px; background-color: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);">
+          
+          <!-- Top Accent Color Bar -->
+          <tr>
+            <td height="4" style="background: linear-gradient(90deg, #FD3820 0%, #FF6B4A 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
+          </tr>
+
+          <!-- Header with Official Full Logo -->
+          <tr>
+            <td align="center" style="background-color: #FFFFFF; border-bottom: 1px solid #F1F5F9; padding: 26px 32px 22px 32px; text-align: center;">
+              <a href="https://nagriksevapoint.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                <img src="https://nagriksevapoint.in/logo.png" alt="Nagrik Seva Point" height="44" style="height: 44px; width: auto; max-width: 220px; display: block; margin: 0 auto; border: 0;" />
+              </a>
+            </td>
+          </tr>
+
+          <!-- Main Content Body -->
+          <tr>
+            <td style="padding: 32px 32px 24px 32px;">
+              <!-- Title -->
+              <h1 style="margin: 0 0 8px 0; font-size: 22px; font-weight: 800; color: #0F172A; letter-spacing: -0.4px;">
+                Password Reset Verification
+              </h1>
+              <p style="margin: 0 0 20px 0; font-size: 14px; color: #64748B; line-height: 1.5;">
+                Use the one-time verification code below to reset your password.
+              </p>
+
+              <!-- Greeting -->
+              <p style="margin: 0 0 14px 0; font-size: 15px; color: #334155; line-height: 1.6;">
+                Namaste <strong>${displayName}</strong>,
+              </p>
+              <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
+                We received a request to reset your password for the Nagrik Seva Point account linked with <strong style="color: #0F172A;">${to}</strong>. Enter this 6-digit OTP in the verification box to proceed:
+              </p>
+
+              <!-- Prominent OTP Highlight Box -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 24px 0;">
+                <tr>
+                  <td align="center" style="background-color: #FFF7F5; border: 2px dashed #FD3820; border-radius: 14px; padding: 22px 20px;">
+                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #D92D16; margin-bottom: 8px;">
+                      Your One-Time Password (OTP)
+                    </div>
+                    <div style="font-family: 'Courier New', Courier, monospace, sans-serif; font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #FD3820; margin: 4px 0;">
+                      ${otp}
+                    </div>
+                    <div style="font-size: 12px; font-weight: 600; color: #64748B; margin-top: 8px;">
+                      Valid for 10 minutes &bull; Single-use only
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Security Information Note -->
+              <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px 16px; margin: 20px 0; font-size: 12px; color: #475569; line-height: 1.6;">
+                <strong style="color: #0F172A;">Security Tip:</strong> Never share this OTP with anyone, including members of the Nagrik Seva Point team. We will never ask for your OTP.
+              </div>
+
+              <!-- Fallback Context -->
+              <p style="margin: 20px 0 0 0; font-size: 12px; color: #94A3B8; line-height: 1.6; border-top: 1px dashed #E2E8F0; padding-top: 16px;">
+                If you did not request this password reset, please ignore this email. Your current password remains secure and unchanged.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 22px 32px; text-align: center;">
+              <p style="margin: 0 0 6px 0; font-size: 12px; font-weight: 700; color: #334155;">
+                Nagrik Seva Point &bull; Cyber Caf\xE9 Partner Support
+              </p>
+              <p style="margin: 0 0 10px 0; font-size: 11px; color: #64748B;">
+                Need help? Contact <a href="mailto:nagriksevapoint@gmail.com" style="color: #FD3820; text-decoration: none; font-weight: 600;">nagriksevapoint@gmail.com</a>
+              </p>
+              <p style="margin: 0; font-size: 11px; color: #94A3B8;">
+                &copy; 2026 Nagrik Seva Point. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+    const textContent = `
+Namaste ${displayName},
+
+Your One-Time Password (OTP) to reset your Nagrik Seva Point account password is:
+
+${otp}
+
+This code is valid for 10 minutes. Enter it in the password reset page to update your password.
+
+Do not share this OTP with anyone. If you did not request this, please ignore this message.
+
+\u2014 Nagrik Seva Point Support
+nagriksevapoint@gmail.com
+`;
+    return this.sendEmail({
+      to: [{ email: to, name: displayName }],
+      subject: `${otp} is your Nagrik Seva Point Password Reset OTP`,
+      params: {
+        NAME: displayName,
+        EMAIL: to,
+        OTP: otp,
+        EXPIRY_MINUTES: "10"
+      },
+      htmlContent,
+      textContent
+    });
+  }
+  /**
    * Dispatches an Urgent Low-Balance Alert to the Platform Administrator.
    * Protected with testRecipientEmail override for safe format verification.
    */
@@ -6816,6 +6950,33 @@ var auth = betterAuth({
   } : void 0,
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/sign-in/email") {
+        const body = ctx.body;
+        if (body && typeof body.email === "string") {
+          const rawIdentifier = body.email.trim();
+          if (!rawIdentifier.includes("@")) {
+            const cleanPhone = rawIdentifier.replace(/\D/g, "");
+            if (cleanPhone.length !== 10) {
+              throw new APIError("BAD_REQUEST", {
+                message: "Mobile number must be exactly 10 digits",
+                code: "INVALID_PHONE"
+              });
+            }
+            const user = await prisma.user.findFirst({
+              where: { phone: cleanPhone }
+            });
+            if (!user) {
+              throw new APIError("UNAUTHORIZED", {
+                message: "Invalid email, mobile number or password",
+                code: "INVALID_EMAIL_OR_PASSWORD"
+              });
+            }
+            body.email = user.email;
+          } else {
+            body.email = rawIdentifier.toLowerCase();
+          }
+        }
+      }
       if (ctx.path === "/sign-up/email") {
         const body = ctx.body;
         if (body && typeof body.phone === "string" && body.phone.trim()) {
@@ -7377,6 +7538,8 @@ var validationMiddleware = (schema, target = "json") => {
 };
 
 // src/modules/auth/auth.service.ts
+import { randomInt, randomBytes, randomUUID } from "node:crypto";
+import { hashPassword } from "better-auth/crypto";
 var AuthService = class {
   /**
    * Checks if an email or phone is already registered before moving to next step.
@@ -7523,12 +7686,19 @@ var AuthService = class {
     const rawIdentifier = data.identifier.trim();
     let targetEmail = rawIdentifier.toLowerCase();
     if (!rawIdentifier.includes("@")) {
-      const user = await prisma.user.findUnique({
-        where: { phone: rawIdentifier }
+      const cleanPhone = rawIdentifier.replace(/\D/g, "");
+      if (cleanPhone.length !== 10) {
+        throw AppError.badRequest(
+          "Mobile number must be exactly 10 digits",
+          "INVALID_PHONE"
+        );
+      }
+      const user = await prisma.user.findFirst({
+        where: { phone: cleanPhone }
       });
       if (!user) {
         throw AppError.unauthorized(
-          "Invalid mobile number or password",
+          "Invalid email, mobile number or password",
           "AUTH_FAILED"
         );
       }
@@ -7766,15 +7936,22 @@ var AuthService = class {
     return this.getProfile(userId, requestedOrgId);
   }
   /**
-   * Dispatches password reset instructions via registered Email OR 10-Digit Mobile Number.
+   * Dispatches a 6-digit verification OTP to the user's registered email address.
    */
   async forgotPassword(data, headers) {
     const rawIdentifier = data.identifier.trim();
     const clientIp = headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || "127.0.0.1";
     let targetUser = null;
     if (!rawIdentifier.includes("@")) {
+      const cleanPhone = rawIdentifier.replace(/\D/g, "");
+      if (cleanPhone.length !== 10) {
+        throw AppError.badRequest(
+          "Mobile number must be exactly 10 digits",
+          "INVALID_PHONE"
+        );
+      }
       targetUser = await prisma.user.findFirst({
-        where: { phone: rawIdentifier },
+        where: { phone: cleanPhone },
         select: { id: true, email: true, name: true, phone: true }
       });
     } else {
@@ -7800,17 +7977,38 @@ var AuthService = class {
         "ACCOUNT_NOT_FOUND"
       );
     }
-    try {
-      await auth.api.requestPasswordReset({
-        body: {
-          email: targetUser.email,
-          redirectTo: data.redirectTo
-        },
-        headers
-      });
-    } catch (err) {
-      logger2.error(`Error requesting password reset for user ${targetUser.id}:`, err);
+    const cooldownKey = `otp:cooldown:${targetUser.id}`;
+    const isInCooldown = await redis.get(cooldownKey).catch(() => null);
+    if (isInCooldown) {
+      throw AppError.badRequest(
+        "Please wait a few seconds before requesting another OTP.",
+        "OTP_COOLDOWN"
+      );
     }
+    const otp = randomInt(1e5, 999999).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
+    await prisma.verification.deleteMany({
+      where: { identifier: `password-reset-otp:${targetUser.id}` }
+    }).catch(() => {
+    });
+    await prisma.verification.create({
+      data: {
+        id: randomUUID(),
+        identifier: `password-reset-otp:${targetUser.id}`,
+        value: JSON.stringify({ otp, attempts: 0 }),
+        expiresAt
+      }
+    });
+    await Promise.all([
+      redis.setJson(`otp:reset:${targetUser.id}`, { otp, attempts: 0 }, 600),
+      redis.set(cooldownKey, "1", 30)
+    ]).catch(() => {
+    });
+    await brevoMailService.sendPasswordResetOtpEmail({
+      to: targetUser.email,
+      name: targetUser.name,
+      otp
+    });
     const maskedEmail = maskEmail(targetUser.email);
     const userOrg = await prisma.member.findFirst({
       where: { userId: targetUser.id },
@@ -7820,40 +8018,190 @@ var AuthService = class {
       userId: targetUser.id,
       organizationId: userOrg?.organizationId || null,
       serviceCode: "AUTH",
-      action: "Password Reset Requested",
+      action: "Password Reset OTP Dispatched",
       endpoint: "/api/auth/forgot-password",
       reference: maskedEmail,
       status: "SUCCESS",
       statusCode: 200,
       ipAddress: clientIp,
-      note: `Password reset link dispatched via email to ${maskedEmail} (requested using ${rawIdentifier.includes("@") ? "email" : "mobile"})`
+      note: `6-digit reset OTP dispatched via email to ${maskedEmail}`
     }).catch(() => {
     });
     return {
       success: true,
       maskedEmail,
-      message: "Password reset instructions have been dispatched."
+      message: "A 6-digit verification OTP has been sent to your registered email address."
     };
   }
   /**
-   * Resets the user's password using the one-time verification token.
+   * Verifies the 6-digit OTP and generates a single-use reset token.
+   */
+  async verifyResetOtp(data, headers) {
+    const rawIdentifier = data.identifier.trim();
+    const cleanOtp = data.otp.trim();
+    const clientIp = headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || "127.0.0.1";
+    let targetUser = null;
+    if (!rawIdentifier.includes("@")) {
+      const cleanPhone = rawIdentifier.replace(/\D/g, "");
+      if (cleanPhone.length !== 10) {
+        throw AppError.badRequest(
+          "Mobile number must be exactly 10 digits",
+          "INVALID_PHONE"
+        );
+      }
+      targetUser = await prisma.user.findFirst({
+        where: { phone: cleanPhone },
+        select: { id: true, email: true, name: true }
+      });
+    } else {
+      targetUser = await prisma.user.findFirst({
+        where: { email: rawIdentifier.toLowerCase() },
+        select: { id: true, email: true, name: true }
+      });
+    }
+    if (!targetUser) {
+      throw AppError.notFound("Account not found. Please try again.", "ACCOUNT_NOT_FOUND");
+    }
+    const record = await prisma.verification.findFirst({
+      where: { identifier: `password-reset-otp:${targetUser.id}` }
+    }).catch(() => null);
+    if (!record || /* @__PURE__ */ new Date() > record.expiresAt) {
+      throw AppError.badRequest(
+        "Verification code has expired or is invalid. Please request a new OTP.",
+        "OTP_EXPIRED"
+      );
+    }
+    let stored = { otp: "", attempts: 0 };
+    try {
+      stored = JSON.parse(record.value);
+    } catch {
+      stored = { otp: record.value, attempts: 0 };
+    }
+    if (stored.attempts >= 5) {
+      await prisma.verification.deleteMany({
+        where: { identifier: `password-reset-otp:${targetUser.id}` }
+      }).catch(() => {
+      });
+      await redis.del(`otp:reset:${targetUser.id}`).catch(() => {
+      });
+      throw AppError.badRequest(
+        "Too many incorrect attempts. Please request a new OTP.",
+        "OTP_MAX_ATTEMPTS"
+      );
+    }
+    if (stored.otp !== cleanOtp) {
+      stored.attempts += 1;
+      await prisma.verification.update({
+        where: { id: record.id },
+        data: { value: JSON.stringify(stored) }
+      }).catch(() => {
+      });
+      await redis.setJson(`otp:reset:${targetUser.id}`, stored, 600).catch(() => {
+      });
+      throw AppError.badRequest(
+        "Incorrect OTP code. Please enter the valid 6-digit code sent to your email.",
+        "INVALID_OTP"
+      );
+    }
+    await prisma.verification.deleteMany({
+      where: { identifier: `password-reset-otp:${targetUser.id}` }
+    }).catch(() => {
+    });
+    await redis.del(`otp:reset:${targetUser.id}`).catch(() => {
+    });
+    const resetToken = randomBytes(32).toString("hex");
+    const tokenExpiry = new Date(Date.now() + 15 * 60 * 1e3);
+    await prisma.verification.create({
+      data: {
+        id: randomUUID(),
+        identifier: `password-reset-token:${resetToken}`,
+        value: targetUser.id,
+        expiresAt: tokenExpiry
+      }
+    });
+    await redis.setJson(
+      `reset_token:${resetToken}`,
+      { userId: targetUser.id, email: targetUser.email },
+      900
+    ).catch(() => {
+    });
+    logApiExecution({
+      userId: targetUser.id,
+      serviceCode: "AUTH",
+      action: "Password Reset OTP Verified",
+      endpoint: "/api/auth/verify-reset-otp",
+      reference: maskEmail(targetUser.email),
+      status: "SUCCESS",
+      statusCode: 200,
+      ipAddress: clientIp,
+      note: "OTP successfully verified. Reset token issued for password update."
+    }).catch(() => {
+    });
+    return {
+      success: true,
+      resetToken,
+      message: "OTP verified successfully. You can now set your new password."
+    };
+  }
+  /**
+   * Resets the user's password using the verified one-time reset token.
    */
   async resetPassword(data, headers) {
     const clientIp = headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || "127.0.0.1";
-    const verificationRecord = await prisma.verification.findFirst({
-      where: { value: data.token }
+    const tokenKey = `password-reset-token:${data.token}`;
+    const tokenRecord = await prisma.verification.findFirst({
+      where: { identifier: tokenKey }
     }).catch(() => null);
-    let targetUser = null;
-    if (verificationRecord?.identifier) {
-      targetUser = await prisma.user.findFirst({
-        where: { email: verificationRecord.identifier.toLowerCase() },
+    if (tokenRecord && /* @__PURE__ */ new Date() <= tokenRecord.expiresAt) {
+      const userId = tokenRecord.value;
+      const targetUser = await prisma.user.findUnique({
+        where: { id: userId },
         select: { id: true, email: true, name: true }
-      }).catch(() => null);
+      });
+      if (!targetUser) {
+        throw AppError.notFound("User account not found.", "USER_NOT_FOUND");
+      }
+      const hashedPassword = await hashPassword(data.newPassword);
+      await prisma.account.updateMany({
+        where: {
+          userId: targetUser.id,
+          providerId: "credential"
+        },
+        data: {
+          password: hashedPassword,
+          updatedAt: /* @__PURE__ */ new Date()
+        }
+      });
+      await prisma.session.deleteMany({
+        where: { userId: targetUser.id }
+      }).catch(() => {
+      });
+      await Promise.all([
+        prisma.verification.deleteMany({ where: { identifier: tokenKey } }),
+        redis.del(`reset_token:${data.token}`),
+        redis.delPattern(`cache:profile:${targetUser.id}:*`),
+        redis.del(`cache:user_primary_org:${targetUser.id}`),
+        redis.delPattern(`cache:user_org_membership:${targetUser.id}:*`)
+      ]).catch(() => {
+      });
+      invalidateAuthContext();
+      logApiExecution({
+        userId: targetUser.id,
+        serviceCode: "AUTH",
+        action: "Password Reset Completed",
+        endpoint: "/api/auth/reset-password",
+        reference: maskEmail(targetUser.email),
+        status: "SUCCESS",
+        statusCode: 200,
+        ipAddress: clientIp,
+        note: `Password successfully updated via OTP verification for ${maskEmail(targetUser.email)}`
+      }).catch(() => {
+      });
+      return {
+        success: true,
+        message: "Password reset successfully. You can now sign in with your new password."
+      };
     }
-    const userOrg = targetUser ? await prisma.member.findFirst({
-      where: { userId: targetUser.id },
-      select: { organizationId: true }
-    }).catch(() => null) : null;
     try {
       await auth.api.resetPassword({
         body: {
@@ -7862,39 +8210,13 @@ var AuthService = class {
         },
         headers
       });
-      logApiExecution({
-        userId: targetUser?.id || null,
-        organizationId: userOrg?.organizationId || null,
-        serviceCode: "AUTH",
-        action: "Password Reset Completed",
-        endpoint: "/api/auth/reset-password",
-        reference: targetUser ? maskEmail(targetUser.email) : "TOKEN-VERIFIED",
-        status: "SUCCESS",
-        statusCode: 200,
-        ipAddress: clientIp,
-        note: targetUser ? `Password successfully updated and session credentials rotated for ${maskEmail(targetUser.email)}` : "Password successfully updated via valid one-time token"
-      }).catch(() => {
-      });
       return {
         success: true,
         message: "Password reset successfully. You can now sign in with your new password."
       };
     } catch (err) {
       logger2.error("Failed to reset password:", err);
-      logApiExecution({
-        userId: targetUser?.id || null,
-        organizationId: userOrg?.organizationId || null,
-        serviceCode: "AUTH",
-        action: "Password Reset Failed",
-        endpoint: "/api/auth/reset-password",
-        reference: targetUser ? maskEmail(targetUser.email) : "INVALID-TOKEN",
-        status: "FAILED",
-        statusCode: 400,
-        ipAddress: clientIp,
-        note: `Password reset attempt failed: ${err?.body?.message || err?.message || "Invalid or expired token"}`
-      }).catch(() => {
-      });
-      const msg = err?.body?.message || err?.message || "Invalid or expired reset token. Please request a new link.";
+      const msg = err?.body?.message || err?.message || "Invalid or expired reset token. Please request a new OTP.";
       throw AppError.badRequest(msg, "INVALID_TOKEN");
     }
   }
@@ -7920,7 +8242,14 @@ var registerRetailerSchema = external_exports.object({
   cyberCafeName: external_exports.string().min(3, "Cyber Caf\xE9 / Shop name must be at least 3 characters").max(120)
 });
 var loginSchema = external_exports.object({
-  identifier: external_exports.string().min(3, "Please enter your Email or 10-digit Mobile Number"),
+  identifier: external_exports.string().min(3, "Please enter your Email or 10-digit Mobile Number").refine((val) => {
+    const clean = val.trim();
+    if (clean.includes("@")) {
+      return external_exports.string().email().safeParse(clean).success;
+    }
+    const digits = clean.replace(/\D/g, "");
+    return digits.length === 10;
+  }, "Please enter a valid email address or 10-digit mobile number"),
   password: external_exports.string().min(1, "Password is required")
 });
 var updateProfileSchema = external_exports.object({
@@ -7932,8 +8261,26 @@ var updateProfileSchema = external_exports.object({
   cyberCafeName: external_exports.string().min(3, "Cyber Caf\xE9 / Shop name must be at least 3 characters").max(120).optional()
 });
 var forgotPasswordSchema = external_exports.object({
-  identifier: external_exports.string().min(3, "Please enter your registered Email or 10-digit Mobile Number").max(120),
+  identifier: external_exports.string().min(3, "Please enter your registered Email or 10-digit Mobile Number").max(120).refine((val) => {
+    const clean = val.trim();
+    if (clean.includes("@")) {
+      return external_exports.string().email().safeParse(clean).success;
+    }
+    const digits = clean.replace(/\D/g, "");
+    return digits.length === 10;
+  }, "Please enter a valid email address or 10-digit mobile number"),
   redirectTo: external_exports.string().optional()
+});
+var verifyResetOtpSchema = external_exports.object({
+  identifier: external_exports.string().min(3, "Please enter your registered Email or 10-digit Mobile Number").max(120).refine((val) => {
+    const clean = val.trim();
+    if (clean.includes("@")) {
+      return external_exports.string().email().safeParse(clean).success;
+    }
+    const digits = clean.replace(/\D/g, "");
+    return digits.length === 10;
+  }, "Please enter a valid email address or 10-digit mobile number"),
+  otp: external_exports.string().length(6, "OTP must be a 6-digit numeric code").regex(/^\d{6}$/, "OTP must contain digits only")
 });
 var resetPasswordSchema = external_exports.object({
   token: external_exports.string().min(1, "Reset token is required"),
@@ -8023,6 +8370,15 @@ authRoutes.post(
   async (c) => {
     const data = c.get("validData");
     const result = await authService.forgotPassword(data, c.req.raw.headers);
+    return c.json(result);
+  }
+);
+authRoutes.post(
+  "/verify-reset-otp",
+  validationMiddleware(verifyResetOtpSchema),
+  async (c) => {
+    const data = c.get("validData");
+    const result = await authService.verifyResetOtp(data, c.req.raw.headers);
     return c.json(result);
   }
 );
@@ -10792,7 +11148,7 @@ var ServiceDispatcher = class {
 var serviceDispatcher = new ServiceDispatcher();
 
 // src/modules/payment/payment.service.ts
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 
 // src/core/mail/payment-email.service.ts
 var PaymentEmailService = class {
@@ -11418,7 +11774,7 @@ var PaymentService = class {
   async createCashfreeOrderFromRequest(serviceRequest, userId, guestSessionId, customerName, customerEmail, customerPhone, orderNote, orderTags) {
     const amount = Number(serviceRequest.amount);
     const organizationId = serviceRequest.organizationId || null;
-    const generatedOrderId = `CF_ORD_${Date.now()}_${randomUUID().slice(0, 6).toUpperCase()}`;
+    const generatedOrderId = `CF_ORD_${Date.now()}_${randomUUID2().slice(0, 6).toUpperCase()}`;
     const payment = await prisma.payment.create({
       data: {
         serviceRequestId: serviceRequest.id,
@@ -11431,7 +11787,7 @@ var PaymentService = class {
         orderId: generatedOrderId
       }
     });
-    const rawCustomerId = userId || guestSessionId || `GUEST_${randomUUID().slice(0, 8)}`;
+    const rawCustomerId = userId || guestSessionId || `GUEST_${randomUUID2().slice(0, 8)}`;
     const cfCustomerId = rawCustomerId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 45);
     try {
       const orderData = await cashfreeGateway.createOrder({

@@ -1,6 +1,9 @@
+import { randomInt, randomBytes, randomUUID } from "node:crypto";
+import { hashPassword } from "better-auth/crypto";
 import { prisma } from "../../core/db/prisma";
 import { auth } from "../../core/auth/better-auth";
 import { redis } from "../../core/redis/redis.client";
+import { brevoMailService } from "../../core/mail/brevo.service";
 import { invalidateAuthContext } from "../../middleware/request-context.middleware";
 import { AppError } from "../../core/errors/AppError";
 import { logger } from "../../core/logger/logger";
@@ -12,6 +15,7 @@ import {
 import type {
   CheckAvailabilityInput,
   ForgotPasswordInput,
+  VerifyResetOtpInput,
   LoginInput,
   RegisterRetailerInput,
   ResetPasswordInput,
@@ -189,13 +193,22 @@ export class AuthService {
 
     // 1. If identifier is a phone number (does not contain @)
     if (!rawIdentifier.includes("@")) {
-      const user = await prisma.user.findUnique({
-        where: { phone: rawIdentifier },
+      const cleanPhone = rawIdentifier.replace(/\D/g, "");
+
+      if (cleanPhone.length !== 10) {
+        throw AppError.badRequest(
+          "Mobile number must be exactly 10 digits",
+          "INVALID_PHONE",
+        );
+      }
+
+      const user = await prisma.user.findFirst({
+        where: { phone: cleanPhone },
       });
 
       if (!user) {
         throw AppError.unauthorized(
-          "Invalid mobile number or password",
+          "Invalid email, mobile number or password",
           "AUTH_FAILED",
         );
       }
@@ -482,7 +495,7 @@ export class AuthService {
   }
 
   /**
-   * Dispatches password reset instructions via registered Email OR 10-Digit Mobile Number.
+   * Dispatches a 6-digit verification OTP to the user's registered email address.
    */
   async forgotPassword(data: ForgotPasswordInput, headers: Headers) {
     const rawIdentifier = data.identifier.trim();
@@ -494,9 +507,16 @@ export class AuthService {
     let targetUser: { id: string; email: string; name: string; phone: string | null } | null = null;
 
     if (!rawIdentifier.includes("@")) {
-      // 1. Mobile number lookup (10 digits)
+      // 1. Mobile number lookup (strictly 10 digits)
+      const cleanPhone = rawIdentifier.replace(/\D/g, "");
+      if (cleanPhone.length !== 10) {
+        throw AppError.badRequest(
+          "Mobile number must be exactly 10 digits",
+          "INVALID_PHONE",
+        );
+      }
       targetUser = await prisma.user.findFirst({
-        where: { phone: rawIdentifier },
+        where: { phone: cleanPhone },
         select: { id: true, email: true, name: true, phone: true },
       });
     } else {
@@ -528,18 +548,46 @@ export class AuthService {
       );
     }
 
-    // Trigger Better-Auth requestPasswordReset
-    try {
-      await auth.api.requestPasswordReset({
-        body: {
-          email: targetUser.email,
-          redirectTo: data.redirectTo,
-        },
-        headers,
-      });
-    } catch (err) {
-      logger.error(`Error requesting password reset for user ${targetUser.id}:`, err);
+    // Rate-limit resend check: minimum 30s cooldown
+    const cooldownKey = `otp:cooldown:${targetUser.id}`;
+    const isInCooldown = await redis.get(cooldownKey).catch(() => null);
+    if (isInCooldown) {
+      throw AppError.badRequest(
+        "Please wait a few seconds before requesting another OTP.",
+        "OTP_COOLDOWN",
+      );
     }
+
+    // Generate cryptographically secure 6-digit OTP
+    const otp = randomInt(100000, 999999).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Store in Prisma Verification table (persistent across serverless instances)
+    await prisma.verification.deleteMany({
+      where: { identifier: `password-reset-otp:${targetUser.id}` },
+    }).catch(() => {});
+
+    await prisma.verification.create({
+      data: {
+        id: randomUUID(),
+        identifier: `password-reset-otp:${targetUser.id}`,
+        value: JSON.stringify({ otp, attempts: 0 }),
+        expiresAt,
+      },
+    });
+
+    // Also store in Redis with 10-minute TTL and 30-second cooldown
+    await Promise.all([
+      redis.setJson(`otp:reset:${targetUser.id}`, { otp, attempts: 0 }, 600),
+      redis.set(cooldownKey, "1", 30),
+    ]).catch(() => {});
+
+    // Dispatch via Brevo Mail Service
+    await brevoMailService.sendPasswordResetOtpEmail({
+      to: targetUser.email,
+      name: targetUser.name,
+      otp,
+    });
 
     const maskedEmail = maskEmail(targetUser.email);
 
@@ -554,24 +602,147 @@ export class AuthService {
       userId: targetUser.id,
       organizationId: userOrg?.organizationId || null,
       serviceCode: "AUTH",
-      action: "Password Reset Requested",
+      action: "Password Reset OTP Dispatched",
       endpoint: "/api/auth/forgot-password",
       reference: maskedEmail,
       status: "SUCCESS",
       statusCode: 200,
       ipAddress: clientIp,
-      note: `Password reset link dispatched via email to ${maskedEmail} (requested using ${rawIdentifier.includes("@") ? "email" : "mobile"})`,
+      note: `6-digit reset OTP dispatched via email to ${maskedEmail}`,
     }).catch(() => {});
 
     return {
       success: true,
       maskedEmail,
-      message: "Password reset instructions have been dispatched.",
+      message: "A 6-digit verification OTP has been sent to your registered email address.",
     };
   }
 
   /**
-   * Resets the user's password using the one-time verification token.
+   * Verifies the 6-digit OTP and generates a single-use reset token.
+   */
+  async verifyResetOtp(data: VerifyResetOtpInput, headers: Headers) {
+    const rawIdentifier = data.identifier.trim();
+    const cleanOtp = data.otp.trim();
+    const clientIp =
+      headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      headers.get("x-real-ip") ||
+      "127.0.0.1";
+
+    let targetUser: { id: string; email: string; name: string } | null = null;
+    if (!rawIdentifier.includes("@")) {
+      const cleanPhone = rawIdentifier.replace(/\D/g, "");
+      if (cleanPhone.length !== 10) {
+        throw AppError.badRequest(
+          "Mobile number must be exactly 10 digits",
+          "INVALID_PHONE",
+        );
+      }
+      targetUser = await prisma.user.findFirst({
+        where: { phone: cleanPhone },
+        select: { id: true, email: true, name: true },
+      });
+    } else {
+      targetUser = await prisma.user.findFirst({
+        where: { email: rawIdentifier.toLowerCase() },
+        select: { id: true, email: true, name: true },
+      });
+    }
+
+    if (!targetUser) {
+      throw AppError.notFound("Account not found. Please try again.", "ACCOUNT_NOT_FOUND");
+    }
+
+    // Retrieve OTP from DB
+    const record = await prisma.verification.findFirst({
+      where: { identifier: `password-reset-otp:${targetUser.id}` },
+    }).catch(() => null);
+
+    if (!record || new Date() > record.expiresAt) {
+      throw AppError.badRequest(
+        "Verification code has expired or is invalid. Please request a new OTP.",
+        "OTP_EXPIRED",
+      );
+    }
+
+    let stored: { otp: string; attempts: number } = { otp: "", attempts: 0 };
+    try {
+      stored = JSON.parse(record.value);
+    } catch {
+      stored = { otp: record.value, attempts: 0 };
+    }
+
+    if (stored.attempts >= 5) {
+      await prisma.verification.deleteMany({
+        where: { identifier: `password-reset-otp:${targetUser.id}` },
+      }).catch(() => {});
+      await redis.del(`otp:reset:${targetUser.id}`).catch(() => {});
+      throw AppError.badRequest(
+        "Too many incorrect attempts. Please request a new OTP.",
+        "OTP_MAX_ATTEMPTS",
+      );
+    }
+
+    if (stored.otp !== cleanOtp) {
+      stored.attempts += 1;
+      await prisma.verification.update({
+        where: { id: record.id },
+        data: { value: JSON.stringify(stored) },
+      }).catch(() => {});
+      await redis.setJson(`otp:reset:${targetUser.id}`, stored, 600).catch(() => {});
+
+      throw AppError.badRequest(
+        "Incorrect OTP code. Please enter the valid 6-digit code sent to your email.",
+        "INVALID_OTP",
+      );
+    }
+
+    // OTP is valid! Delete the OTP
+    await prisma.verification.deleteMany({
+      where: { identifier: `password-reset-otp:${targetUser.id}` },
+    }).catch(() => {});
+    await redis.del(`otp:reset:${targetUser.id}`).catch(() => {});
+
+    // Generate secure single-use reset token
+    const resetToken = randomBytes(32).toString("hex");
+    const tokenExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    await prisma.verification.create({
+      data: {
+        id: randomUUID(),
+        identifier: `password-reset-token:${resetToken}`,
+        value: targetUser.id,
+        expiresAt: tokenExpiry,
+      },
+    });
+
+    await redis.setJson(
+      `reset_token:${resetToken}`,
+      { userId: targetUser.id, email: targetUser.email },
+      900,
+    ).catch(() => {});
+
+    logApiExecution({
+      userId: targetUser.id,
+      serviceCode: "AUTH",
+      action: "Password Reset OTP Verified",
+      endpoint: "/api/auth/verify-reset-otp",
+      reference: maskEmail(targetUser.email),
+      status: "SUCCESS",
+      statusCode: 200,
+      ipAddress: clientIp,
+      note: "OTP successfully verified. Reset token issued for password update.",
+    }).catch(() => {});
+
+    return {
+      success: true,
+      resetToken,
+      message: "OTP verified successfully. You can now set your new password.",
+    };
+  }
+
+  /**
+   * Resets the user's password using the verified one-time reset token.
    */
   async resetPassword(data: ResetPasswordInput, headers: Headers) {
     const clientIp =
@@ -579,26 +750,72 @@ export class AuthService {
       headers.get("x-real-ip") ||
       "127.0.0.1";
 
-    // Query token from verification table to associate with user
-    const verificationRecord = await prisma.verification.findFirst({
-      where: { value: data.token },
+    const tokenKey = `password-reset-token:${data.token}`;
+    const tokenRecord = await prisma.verification.findFirst({
+      where: { identifier: tokenKey },
     }).catch(() => null);
 
-    let targetUser: { id: string; email: string; name: string } | null = null;
-    if (verificationRecord?.identifier) {
-      targetUser = await prisma.user.findFirst({
-        where: { email: verificationRecord.identifier.toLowerCase() },
+    if (tokenRecord && new Date() <= tokenRecord.expiresAt) {
+      const userId = tokenRecord.value;
+      const targetUser = await prisma.user.findUnique({
+        where: { id: userId },
         select: { id: true, email: true, name: true },
-      }).catch(() => null);
+      });
+
+      if (!targetUser) {
+        throw AppError.notFound("User account not found.", "USER_NOT_FOUND");
+      }
+
+      // Hash password using Better-Auth's secure password hasher
+      const hashedPassword = await hashPassword(data.newPassword);
+
+      // Update credential account
+      await prisma.account.updateMany({
+        where: {
+          userId: targetUser.id,
+          providerId: "credential",
+        },
+        data: {
+          password: hashedPassword,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Revoke all existing sessions for security
+      await prisma.session.deleteMany({
+        where: { userId: targetUser.id },
+      }).catch(() => {});
+
+      // Invalidate token and caches
+      await Promise.all([
+        prisma.verification.deleteMany({ where: { identifier: tokenKey } }),
+        redis.del(`reset_token:${data.token}`),
+        redis.delPattern(`cache:profile:${targetUser.id}:*`),
+        redis.del(`cache:user_primary_org:${targetUser.id}`),
+        redis.delPattern(`cache:user_org_membership:${targetUser.id}:*`),
+      ]).catch(() => {});
+      invalidateAuthContext();
+
+      // Log successful password reset
+      logApiExecution({
+        userId: targetUser.id,
+        serviceCode: "AUTH",
+        action: "Password Reset Completed",
+        endpoint: "/api/auth/reset-password",
+        reference: maskEmail(targetUser.email),
+        status: "SUCCESS",
+        statusCode: 200,
+        ipAddress: clientIp,
+        note: `Password successfully updated via OTP verification for ${maskEmail(targetUser.email)}`,
+      }).catch(() => {});
+
+      return {
+        success: true,
+        message: "Password reset successfully. You can now sign in with your new password.",
+      };
     }
 
-    const userOrg = targetUser
-      ? await prisma.member.findFirst({
-          where: { userId: targetUser.id },
-          select: { organizationId: true },
-        }).catch(() => null)
-      : null;
-
+    // Fallback to legacy Better-Auth resetPassword for any existing legacy URL tokens
     try {
       await auth.api.resetPassword({
         body: {
@@ -608,44 +825,13 @@ export class AuthService {
         headers,
       });
 
-      // Log successful password reset in audit trail
-      logApiExecution({
-        userId: targetUser?.id || null,
-        organizationId: userOrg?.organizationId || null,
-        serviceCode: "AUTH",
-        action: "Password Reset Completed",
-        endpoint: "/api/auth/reset-password",
-        reference: targetUser ? maskEmail(targetUser.email) : "TOKEN-VERIFIED",
-        status: "SUCCESS",
-        statusCode: 200,
-        ipAddress: clientIp,
-        note: targetUser
-          ? `Password successfully updated and session credentials rotated for ${maskEmail(targetUser.email)}`
-          : "Password successfully updated via valid one-time token",
-      }).catch(() => {});
-
       return {
         success: true,
         message: "Password reset successfully. You can now sign in with your new password.",
       };
     } catch (err: any) {
       logger.error("Failed to reset password:", err);
-
-      // Log failed password reset attempt in audit trail
-      logApiExecution({
-        userId: targetUser?.id || null,
-        organizationId: userOrg?.organizationId || null,
-        serviceCode: "AUTH",
-        action: "Password Reset Failed",
-        endpoint: "/api/auth/reset-password",
-        reference: targetUser ? maskEmail(targetUser.email) : "INVALID-TOKEN",
-        status: "FAILED",
-        statusCode: 400,
-        ipAddress: clientIp,
-        note: `Password reset attempt failed: ${err?.body?.message || err?.message || "Invalid or expired token"}`,
-      }).catch(() => {});
-
-      const msg = err?.body?.message || err?.message || "Invalid or expired reset token. Please request a new link.";
+      const msg = err?.body?.message || err?.message || "Invalid or expired reset token. Please request a new OTP.";
       throw AppError.badRequest(msg, "INVALID_TOKEN");
     }
   }

@@ -30,7 +30,15 @@ export const registerRetailerSchema = z.object({
 export const loginSchema = z.object({
   identifier: z
     .string()
-    .min(3, "Please enter your Email or 10-digit Mobile Number"),
+    .min(3, "Please enter your Email or 10-digit Mobile Number")
+    .refine((val) => {
+      const clean = val.trim();
+      if (clean.includes("@")) {
+        return z.string().email().safeParse(clean).success;
+      }
+      const digits = clean.replace(/\D/g, "");
+      return digits.length === 10;
+    }, "Please enter a valid email address or 10-digit mobile number"),
   password: z.string().min(1, "Password is required"),
 });
 
@@ -54,8 +62,35 @@ export const forgotPasswordSchema = z.object({
   identifier: z
     .string()
     .min(3, "Please enter your registered Email or 10-digit Mobile Number")
-    .max(120),
+    .max(120)
+    .refine((val) => {
+      const clean = val.trim();
+      if (clean.includes("@")) {
+        return z.string().email().safeParse(clean).success;
+      }
+      const digits = clean.replace(/\D/g, "");
+      return digits.length === 10;
+    }, "Please enter a valid email address or 10-digit mobile number"),
   redirectTo: z.string().optional(),
+});
+
+export const verifyResetOtpSchema = z.object({
+  identifier: z
+    .string()
+    .min(3, "Please enter your registered Email or 10-digit Mobile Number")
+    .max(120)
+    .refine((val) => {
+      const clean = val.trim();
+      if (clean.includes("@")) {
+        return z.string().email().safeParse(clean).success;
+      }
+      const digits = clean.replace(/\D/g, "");
+      return digits.length === 10;
+    }, "Please enter a valid email address or 10-digit mobile number"),
+  otp: z
+    .string()
+    .length(6, "OTP must be a 6-digit numeric code")
+    .regex(/^\d{6}$/, "OTP must contain digits only"),
 });
 
 export const resetPasswordSchema = z.object({
@@ -68,4 +103,5 @@ export type RegisterRetailerInput = z.infer<typeof registerRetailerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type VerifyResetOtpInput = z.infer<typeof verifyResetOtpSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
