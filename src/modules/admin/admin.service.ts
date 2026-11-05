@@ -1405,6 +1405,11 @@ export class AdminService {
 
       for (const req of allRequests) {
         const code = req.service.code;
+        const inputData = (req.inputData || {}) as Record<string, unknown>;
+        const stage = typeof inputData?.stage === "string" ? inputData.stage : undefined;
+        const isUnlockStage = code === "PAN_FIND" && (stage === "UNLOCK" || Number(req.amount) === 15);
+        if (isUnlockStage) continue; // Stage 2 Unlock does not hit upstream, do not match with inquiry logs
+
         if (code === "PAN_FIND" || code === "PAN_DETAILS") {
           const reqTime = new Date(req.createdAt).getTime();
           const matchedLog = upstreamApiLogs.find((log) => {
@@ -1426,13 +1431,30 @@ export class AdminService {
 
       const detailedLedger = allRequests.map((req) => {
         const code = req.service.code;
-        const unitCost = serviceCostMap[code] ?? 0.0;
+        const inputData = (req.inputData || {}) as Record<string, unknown>;
+        const stage = typeof inputData?.stage === "string" ? inputData.stage : undefined;
+        const isUnlockStage = code === "PAN_FIND" && (stage === "UNLOCK" || Number(req.amount) === 15);
+
+        // Stage 2 Unlock incurs ₹0.00 vendor cost (no upstream API call; local decryption only)
+        let unitCost = serviceCostMap[code] ?? 0.0;
+        if (isUnlockStage) {
+          unitCost = 0.0;
+        }
+
+        let sName = req.service.name;
+        if (code === "PAN_FIND") {
+          if (stage === "DETECT" || Number(req.amount) === 5) {
+            sName = "Find PAN (Stage 1: Detect)";
+          } else if (isUnlockStage) {
+            sName = "Find PAN (Stage 2: Unlock)";
+          }
+        }
 
         if (!serviceMap[code]) {
           serviceMap[code] = {
             code,
             name: req.service.name,
-            unitCost,
+            unitCost: serviceCostMap[code] ?? 0.0,
             totalInvocations: 0,
             completedCount: 0,
             completedRevenue: 0,
@@ -1455,9 +1477,14 @@ export class AdminService {
           revenue = capturedPayment ? Number(capturedPayment.amount) : Number(req.amount || 0);
           incurredVendorCost = unitCost;
 
-          if (code === "PAN_FIND") panFindCalls++;
-          else if (code === "PAN_DETAILS") panDetailsCalls++;
-          else otherCalls++;
+          // Only count actual upstream API calls toward vendor call volume
+          if (code === "PAN_FIND") {
+            if (!isUnlockStage) panFindCalls++;
+          } else if (code === "PAN_DETAILS") {
+            panDetailsCalls++;
+          } else {
+            otherCalls++;
+          }
 
           if (!isTopup) {
             completedCount++;
@@ -1495,14 +1522,14 @@ export class AdminService {
         const cleanPhone = targetPhone.replace(/[^0-9]/g, "");
         const targetName = req.customer?.name || req.user?.name || "Customer";
         const whatsappUrl = cleanPhone.length === 10
-          ? `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Namaste ${targetName} ji, Nagrik Seva Point support team here. Aapka ${req.service.name} lookup process start hua tha. Kya payment / checkout complete karne me koi dikkat aa rahi hai?`)}`
+          ? `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(`Namaste ${targetName} ji, Nagrik Seva Point support team here. Aapka ${sName} lookup process start hua tha. Kya payment / checkout complete karne me koi dikkat aa rahi hai?`)}`
           : null;
 
         return {
           id: req.id,
           referenceNumber: req.referenceNumber || req.id.slice(0, 8).toUpperCase(),
           serviceCode: code,
-          serviceName: req.service.name,
+          serviceName: sName,
           createdAt: req.createdAt,
           status: req.status as string,
           isPaid: isCompleted,
