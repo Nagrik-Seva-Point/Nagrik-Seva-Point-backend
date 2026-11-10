@@ -6,6 +6,8 @@ import { serviceDispatcher } from "../services/service.dispatcher";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import { sanitizeDpdpData, maskEmail, maskIpAddress } from "../../core/logger/api-logger";
 import { brevoMailService } from "../../core/mail/brevo.service";
+import { paymentService } from "../payment/payment.service";
+import { cashfreeGateway } from "../../core/integrations/cashfree/cashfree.gateway";
 import type { PaymentStatus, PaymentMethod, AccessMode, PricingTier } from "@prisma/client";
 import type {
   WalletAdjustmentInput,
@@ -241,6 +243,249 @@ export class AdminService {
     }
 
     return payment;
+  }
+
+  /**
+   * 2b. On-demand sync a transaction with Cashfree Gateway
+   */
+  async syncTransactionWithCashfree(orderId: string, adminUserId?: string) {
+    const result = await paymentService.syncCashfreePayment(orderId, adminUserId);
+    // Invalidate admin transactions cache
+    await redis.delPattern("cache:admin:txs:*").catch(() => {});
+    return result;
+  }
+
+  /**
+   * 2c. Preview pending Cashfree transactions by querying live Cashfree status.
+   * Generates a dry-run confirmation list with proposed actions (credit wallet vs mark failed).
+   */
+  async previewCashfreeSync(params?: {
+    orderIds?: string[];
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+    limit?: number;
+  }) {
+    const limit = Math.min(50, Math.max(1, Number(params?.limit) || 30));
+
+    const where: any = {
+      method: "CASHFREE",
+    };
+
+    if (params?.orderIds && params.orderIds.length > 0) {
+      where.OR = [
+        { id: { in: params.orderIds } },
+        { orderId: { in: params.orderIds } },
+      ];
+    } else {
+      where.status = "PENDING";
+
+      if (params?.startDate || params?.endDate) {
+        where.createdAt = {};
+        if (params.startDate) {
+          where.createdAt.gte = new Date(`${params.startDate}T00:00:00.000Z`);
+        }
+        if (params.endDate) {
+          where.createdAt.lte = new Date(`${params.endDate}T23:59:59.999Z`);
+        }
+      }
+
+      if (params?.search && params.search.trim()) {
+        const s = params.search.trim();
+        where.AND = [
+          {
+            OR: [
+              { orderId: { contains: s, mode: "insensitive" } },
+              { user: { name: { contains: s, mode: "insensitive" } } },
+              { user: { email: { contains: s, mode: "insensitive" } } },
+              { user: { phone: { contains: s, mode: "insensitive" } } },
+              { organization: { name: { contains: s, mode: "insensitive" } } },
+            ],
+          },
+        ];
+      }
+    }
+
+    const pendingTxs = await prisma.payment.findMany({
+      where,
+      include: {
+        user: { select: { id: true, name: true, email: true, phone: true } },
+        organization: { select: { id: true, name: true } },
+        serviceRequest: {
+          include: {
+            service: { select: { id: true, name: true, code: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    });
+
+    const items = await Promise.all(
+      pendingTxs.map(async (tx) => {
+        const orderId = tx.orderId || tx.id;
+        try {
+          const cfOrder = await cashfreeGateway.getOrder(orderId);
+          const cfPayments = await cashfreeGateway.getOrderPayments(orderId).catch(() => []);
+
+          const orderStatus = String(cfOrder.order_status || "").toUpperCase();
+          const successfulPayment = cfPayments.find((p: any) => String(p.payment_status).toUpperCase() === "SUCCESS");
+          const failedPayment = cfPayments.find((p: any) => String(p.payment_status).toUpperCase() === "FAILED");
+
+          const gatewayAmount = Number(cfOrder.order_amount);
+          const recordedAmount = Number(tx.amount);
+          const amountMismatch = Math.abs(gatewayAmount - recordedAmount) > 0.01;
+
+          if ((orderStatus === "PAID" || successfulPayment) && !amountMismatch) {
+            const cfPayId = successfulPayment?.cf_payment_id || cfOrder.cf_order_id;
+            const bankRef = successfulPayment?.bank_reference || successfulPayment?.bank_reference_number;
+            const payMode = successfulPayment?.payment_group || successfulPayment?.payment_method?.payment_mode || "UPI";
+
+            return {
+              id: tx.id,
+              orderId,
+              amount: recordedAmount,
+              createdAt: tx.createdAt.toISOString(),
+              user: tx.user,
+              organization: tx.organization,
+              serviceName: tx.serviceRequest?.service?.name || "Service Request",
+              isWalletTopup: tx.serviceRequest?.service?.code === "WALLET_TOPUP",
+              gatewayStatus: "PAID",
+              resolution: "READY_TO_CAPTURE" as const,
+              actionLabel: `Credit ₹${recordedAmount.toFixed(2)} to Wallet (Captured)`,
+              actionType: "CREDIT_WALLET" as const,
+              recommended: true,
+              cfPaymentId: cfPayId ? String(cfPayId) : undefined,
+              bankReference: bankRef ? String(bankRef) : undefined,
+              paymentMode: String(payMode).toUpperCase(),
+              paymentTime: successfulPayment?.payment_completion_time || (cfOrder as any).created_at,
+            };
+          }
+
+          if (["FAILED", "EXPIRED", "TERMINATED", "CANCELLED", "USER_DROPPED"].includes(orderStatus) || failedPayment) {
+            const reason = failedPayment?.payment_message || failedPayment?.error_details?.error_description || orderStatus;
+            return {
+              id: tx.id,
+              orderId,
+              amount: recordedAmount,
+              createdAt: tx.createdAt.toISOString(),
+              user: tx.user,
+              organization: tx.organization,
+              serviceName: tx.serviceRequest?.service?.name || "Service Request",
+              isWalletTopup: tx.serviceRequest?.service?.code === "WALLET_TOPUP",
+              gatewayStatus: orderStatus || "FAILED",
+              resolution: "READY_TO_FAIL" as const,
+              actionLabel: "Mark as FAILED (No Wallet Credit)",
+              actionType: "MARK_FAILED" as const,
+              recommended: true,
+              failureReason: String(reason),
+            };
+          }
+
+          return {
+            id: tx.id,
+            orderId,
+            amount: recordedAmount,
+            createdAt: tx.createdAt.toISOString(),
+            user: tx.user,
+            organization: tx.organization,
+            serviceName: tx.serviceRequest?.service?.name || "Service Request",
+            isWalletTopup: tx.serviceRequest?.service?.code === "WALLET_TOPUP",
+            gatewayStatus: orderStatus || "ACTIVE",
+            resolution: "STILL_PENDING" as const,
+            actionLabel: "Customer did not pay on gateway (Awaiting Payment)",
+            actionType: "SKIP" as const,
+            recommended: false,
+          };
+        } catch (err: any) {
+          return {
+            id: tx.id,
+            orderId,
+            amount: Number(tx.amount),
+            createdAt: tx.createdAt.toISOString(),
+            user: tx.user,
+            organization: tx.organization,
+            serviceName: tx.serviceRequest?.service?.name || "Service Request",
+            isWalletTopup: tx.serviceRequest?.service?.code === "WALLET_TOPUP",
+            gatewayStatus: "ERROR",
+            resolution: "GATEWAY_ERROR" as const,
+            actionLabel: `Not found on Cashfree: ${err?.message || "Order Not Found"}`,
+            actionType: "ERROR" as const,
+            recommended: false,
+          };
+        }
+      })
+    );
+
+    const readyToCapture = items.filter((i) => i.resolution === "READY_TO_CAPTURE");
+    const readyToFail = items.filter((i) => i.resolution === "READY_TO_FAIL");
+    const stillPending = items.filter((i) => i.resolution === "STILL_PENDING");
+    const errors = items.filter((i) => i.resolution === "GATEWAY_ERROR");
+    const totalAmountToCredit = readyToCapture.reduce((sum, i) => sum + i.amount, 0);
+
+    return {
+      items,
+      summary: {
+        totalFound: items.length,
+        readyToCaptureCount: readyToCapture.length,
+        readyToCaptureAmount: totalAmountToCredit,
+        readyToFailCount: readyToFail.length,
+        stillPendingCount: stillPending.length,
+        errorCount: errors.length,
+      },
+    };
+  }
+
+  /**
+   * 2d. Confirm and execute sync for selected Cashfree transactions.
+   * Updates database and credits wallets for verified paid transactions.
+   */
+  async confirmCashfreeSync(orderIds: string[], adminUserId?: string) {
+    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+      throw AppError.badRequest("No orderIds provided for sync confirmation");
+    }
+
+    const results: Array<{ orderId: string; status: string; amount: number; message: string }> = [];
+    let capturedCount = 0;
+    let failedCount = 0;
+    let totalCreditedAmount = 0;
+
+    for (const orderId of orderIds) {
+      try {
+        const res = await paymentService.syncCashfreePayment(orderId, adminUserId);
+        const amount = Number(res.payment?.amount || 0);
+        results.push({
+          orderId,
+          status: res.status,
+          amount,
+          message: res.message,
+        });
+
+        if (res.status === "CAPTURED") {
+          capturedCount++;
+          totalCreditedAmount += amount;
+        } else if (res.status === "FAILED") {
+          failedCount++;
+        }
+      } catch (err: any) {
+        results.push({
+          orderId,
+          status: "ERROR",
+          amount: 0,
+          message: err?.message || "Failed to process sync",
+        });
+      }
+    }
+
+    await redis.delPattern("cache:admin:txs:*").catch(() => {});
+
+    return {
+      totalProcessed: results.length,
+      capturedCount,
+      failedCount,
+      totalCreditedAmount,
+      results,
+    };
   }
 
   /**

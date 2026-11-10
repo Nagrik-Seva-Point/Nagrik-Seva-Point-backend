@@ -49,7 +49,7 @@ export class CashfreeGateway {
         customer_name: params.customerName || "Customer",
       },
       order_meta: {
-        return_url: params.returnUrl || `https://nagriksevapoint.in/dashboard/requests/${params.orderId}?payment=true`,
+        return_url: params.returnUrl || `https://nagriksevapoint.in/dashboard?order_id=${params.orderId}&payment=true`,
         notify_url: params.notifyUrl || `https://api.nagriksevapoint.in/api/v1/payments/cashfree/webhook`
       },
     };
@@ -109,14 +109,43 @@ export class CashfreeGateway {
       const data = await response.json();
       if (!response.ok) {
         logger.error(`[CashfreeGateway] Get order failed: ${JSON.stringify(data)}`);
-        throw AppError.internal("Failed to retrieve Cashfree order status");
+        throw AppError.internal((data as any)?.message || "Failed to retrieve Cashfree order status");
       }
 
       return data as CashfreeOrderResponse;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[CashfreeGateway] Error getting order: ${msg}`);
-      throw AppError.internal("Cashfree Gateway Error");
+      throw AppError.internal(msg || "Cashfree Gateway Error");
+    }
+  }
+
+  async getOrderPayments(orderId: string): Promise<Array<Record<string, any>>> {
+    const { clientId, clientSecret, apiUrl } = getCashfreeConfig();
+
+    if (!clientId || !clientSecret) {
+      return [];
+    }
+
+    try {
+      const response = await fetch(`${apiUrl}/orders/${orderId}/payments`, {
+        method: "GET",
+        headers: {
+          "x-api-version": API_VERSION,
+          "x-client-id": clientId,
+          "x-client-secret": clientSecret,
+        },
+      });
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = await response.json();
+      return Array.isArray(data) ? data : [];
+    } catch (err: unknown) {
+      logger.warn(`[CashfreeGateway] Error fetching payments for order ${orderId}: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
     }
   }
 

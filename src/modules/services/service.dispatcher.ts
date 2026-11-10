@@ -27,6 +27,11 @@ export class ServiceDispatcher {
         throw new Error("ServiceRequest not found");
       }
 
+      if (request.status === "COMPLETED") {
+        logger.warn(`[ServiceDispatcher] Request ${serviceRequestId} is already COMPLETED. Skipping duplicate fulfillment.`);
+        return;
+      }
+
       // 1. Mark as processing
       await prisma.serviceRequest.update({
         where: { id: serviceRequestId },

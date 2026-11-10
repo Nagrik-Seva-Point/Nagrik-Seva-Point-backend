@@ -72,10 +72,54 @@ adminRouter.get("/transactions", async (c) => {
  * 3. Get Single Transaction
  * GET /admin/transactions/:id
  */
+/**
+ * 2b. Preview Cashfree Sync (Dry-Run Reconciliation)
+ * POST /admin/transactions/sync-cashfree/preview
+ */
+adminRouter.post("/transactions/sync-cashfree/preview", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const result = await adminService.previewCashfreeSync({
+    orderIds: Array.isArray(body?.orderIds) ? body.orderIds : undefined,
+    startDate: body?.startDate ? String(body.startDate) : undefined,
+    endDate: body?.endDate ? String(body.endDate) : undefined,
+    search: body?.search ? String(body.search) : undefined,
+    limit: body?.limit ? Number(body.limit) : undefined,
+  });
+  return c.json({ success: true, data: result });
+});
+
+/**
+ * 2c. Confirm and Apply Cashfree Sync
+ * POST /admin/transactions/sync-cashfree/confirm
+ */
+adminRouter.post("/transactions/sync-cashfree/confirm", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const user = c.get("user");
+  const adminUserId = user?.id;
+  const result = await adminService.confirmCashfreeSync(body?.orderIds || [], adminUserId);
+  return c.json({ success: true, data: result });
+});
+
+/**
+ * 3. Get Single Transaction
+ * GET /admin/transactions/:id
+ */
 adminRouter.get("/transactions/:id", async (c) => {
   const id = c.req.param("id");
   const transaction = await adminService.getTransactionById(id);
   return c.json({ success: true, data: transaction });
+});
+
+/**
+ * 3b. Sync Single Transaction with Cashfree
+ * POST /admin/transactions/:orderId/sync-cashfree
+ */
+adminRouter.post("/transactions/:orderId/sync-cashfree", async (c) => {
+  const orderId = c.req.param("orderId");
+  const user = c.get("user");
+  const adminUserId = user?.id;
+  const result = await adminService.syncTransactionWithCashfree(orderId, adminUserId);
+  return c.json({ success: true, data: result });
 });
 
 /**

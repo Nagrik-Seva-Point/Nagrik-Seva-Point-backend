@@ -216,16 +216,26 @@ export class PaymentService {
 
     try {
       const cfOrder = await cashfreeGateway.getOrder(payment.orderId || payment.id);
-      if (cfOrder && (cfOrder.order_status === "PAID" || cfOrder.order_status === "ACTIVE")) {
-        isPaid = true;
-        rawResponse = cfOrder;
-        if (!remotePaymentId && cfOrder.cf_order_id) {
-          remotePaymentId = String(cfOrder.cf_order_id);
+      if (cfOrder) {
+        if (cfOrder.order_status === "PAID") {
+          isPaid = true;
+          rawResponse = cfOrder;
+          if (!remotePaymentId && cfOrder.cf_order_id) {
+            remotePaymentId = String(cfOrder.cf_order_id);
+          }
+        } else {
+          const pList = await cashfreeGateway.getOrderPayments(payment.orderId || payment.id).catch(() => []);
+          const succ = pList.find((p: any) => String(p.payment_status).toUpperCase() === "SUCCESS");
+          if (succ) {
+            isPaid = true;
+            rawResponse = { order: cfOrder, payment: succ };
+            if (succ.cf_payment_id) remotePaymentId = String(succ.cf_payment_id);
+          }
         }
       }
     } catch {
       // In sandbox/test environment or if credentials are being tested locally, fallback to true if cfPaymentId provided
-      if (cfPaymentId || process.env.NODE_ENV !== "production") {
+      if (cfPaymentId && process.env.NODE_ENV !== "production") {
         isPaid = true;
       }
     }
@@ -249,6 +259,177 @@ export class PaymentService {
     }
 
     return payment.serviceRequest;
+  }
+
+  /**
+   * Admin-triggered on-demand synchronization with Cashfree Payment Gateway.
+   * Strictly verifies order payment status and amount with Cashfree before marking as CAPTURED.
+   * If Cashfree reports FAILED / EXPIRED / USER_DROPPED, marks payment as FAILED without crediting wallet.
+   */
+  async syncCashfreePayment(identifier: string, performedByUserId?: string) {
+    logger.info(`[PaymentService] Syncing Cashfree payment status for identifier: ${identifier} by admin: ${performedByUserId || "system"}`);
+
+    const payment = await prisma.payment.findFirst({
+      where: {
+        OR: [
+          { id: identifier },
+          { orderId: identifier },
+          { serviceRequestId: identifier },
+        ],
+      },
+      include: {
+        serviceRequest: {
+          include: { service: true },
+        },
+      },
+    });
+
+    if (!payment) {
+      throw AppError.notFound(`Payment record not found for: ${identifier}`);
+    }
+
+    // Guard: Only Cashfree payments can be synced with Cashfree
+    if (payment.method !== "CASHFREE") {
+      throw AppError.badRequest(`Payment method is ${payment.method}, not CASHFREE. Cannot sync with Cashfree gateway.`);
+    }
+
+    // Guard: Idempotency check - if already CAPTURED
+    if (payment.status === "CAPTURED") {
+      return {
+        success: true,
+        status: "CAPTURED",
+        alreadyProcessed: true,
+        message: `Transaction is already CAPTURED and credited. (Txn ID: ${payment.transactionId || "N/A"})`,
+        payment: {
+          id: payment.id,
+          orderId: payment.orderId,
+          amount: Number(payment.amount),
+          status: payment.status,
+          paymentMode: payment.paymentMode,
+          bankReference: payment.bankReference,
+          transactionId: payment.transactionId,
+          paidAt: payment.paidAt,
+        },
+      };
+    }
+
+    const cfOrderId = payment.orderId;
+    if (!cfOrderId) {
+      throw AppError.badRequest(`Missing Cashfree orderId for payment: ${payment.id}`);
+    }
+
+    // Query Cashfree API directly
+    let cfOrder: any;
+    try {
+      cfOrder = await cashfreeGateway.getOrder(cfOrderId);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[PaymentService] Failed to fetch order from Cashfree: ${msg}`);
+      throw AppError.badRequest(`Cashfree gateway error: ${msg}`);
+    }
+
+    if (!cfOrder) {
+      throw AppError.badRequest(`Cashfree did not return order details for: ${cfOrderId}`);
+    }
+
+    const orderStatus = String(cfOrder.order_status || "").toUpperCase();
+    const gatewayAmount = Number(cfOrder.order_amount);
+    const recordedAmount = Number(payment.amount);
+
+    // Fetch individual payment attempts from Cashfree
+    const paymentsList = await cashfreeGateway.getOrderPayments(cfOrderId).catch(() => []);
+    const successfulPayment = paymentsList.find((p: any) => String(p.payment_status).toUpperCase() === "SUCCESS");
+
+    // Case 1: Cashfree confirms payment was SUCCESSFUL (PAID order or verified SUCCESS payment record)
+    if (orderStatus === "PAID" || successfulPayment) {
+      // Amount verification guard against tampering
+      if (Math.abs(gatewayAmount - recordedAmount) > 0.01) {
+        logger.error(`[PaymentService] Security mismatch: Cashfree amount ₹${gatewayAmount} != DB amount ₹${recordedAmount}`);
+        throw AppError.badRequest(
+          `Amount mismatch: Gateway reported ₹${gatewayAmount}, but database recorded ₹${recordedAmount}. Refusing auto-credit.`
+        );
+      }
+
+      const cfPaymentId = successfulPayment?.cf_payment_id
+        ? String(successfulPayment.cf_payment_id)
+        : (cfOrder.cf_order_id ? String(cfOrder.cf_order_id) : `CF_${Date.now()}`);
+
+      const paymentMode = (
+        successfulPayment?.payment_group ||
+        successfulPayment?.payment_method?.payment_mode ||
+        payment.paymentMode ||
+        "UPI"
+      ).toUpperCase();
+
+      const bankReference = successfulPayment?.bank_reference || successfulPayment?.bank_reference_number || undefined;
+
+      // Mark payment success, credit wallet, and update request status
+      await this.markPaymentSuccess(payment.id, cfPaymentId, {
+        paymentMode,
+        bankReference,
+        rawResponse: {
+          syncedBy: performedByUserId || "ADMIN_SYNC",
+          syncedAt: new Date().toISOString(),
+          order: cfOrder,
+          payments: paymentsList,
+        },
+      });
+
+      return {
+        success: true,
+        status: "CAPTURED",
+        message: `Payment verified as PAID on Cashfree. ₹${recordedAmount.toFixed(2)} credited successfully. Gateway Txn: ${cfPaymentId}`,
+        payment: {
+          id: payment.id,
+          orderId: payment.orderId,
+          amount: recordedAmount,
+          status: "CAPTURED",
+          paymentMode,
+          bankReference,
+          transactionId: cfPaymentId,
+        },
+      };
+    }
+
+    // Case 2: Cashfree reports order/payment FAILED, CANCELLED, EXPIRED, TERMINATED, or USER_DROPPED
+    if (["FAILED", "EXPIRED", "TERMINATED", "CANCELLED", "USER_DROPPED"].includes(orderStatus)) {
+      const errorMsg = `Cashfree reported order as ${orderStatus}`;
+      await this.markPaymentFailed(payment.id, {
+        errorMessage: errorMsg,
+        rawResponse: {
+          syncedBy: performedByUserId || "ADMIN_SYNC",
+          syncedAt: new Date().toISOString(),
+          order: cfOrder,
+          payments: paymentsList,
+        },
+      });
+
+      return {
+        success: true,
+        status: "FAILED",
+        message: `Order verified as ${orderStatus} on Cashfree. Payment marked as FAILED. Wallet was NOT credited.`,
+        payment: {
+          id: payment.id,
+          orderId: payment.orderId,
+          amount: recordedAmount,
+          status: "FAILED",
+          errorMessage: errorMsg,
+        },
+      };
+    }
+
+    // Case 3: Order is still ACTIVE / PENDING without successful payment
+    return {
+      success: true,
+      status: "PENDING",
+      message: `Order is still ACTIVE/PENDING on Cashfree. Customer has not completed payment yet. No changes made.`,
+      payment: {
+        id: payment.id,
+        orderId: payment.orderId,
+        amount: recordedAmount,
+        status: "PENDING",
+      },
+    };
   }
 
   async markPaymentSuccess(
