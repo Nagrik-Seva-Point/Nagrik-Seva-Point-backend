@@ -10785,7 +10785,6 @@ var PanService = class {
       };
     }
     const response = await ezytmPanGateway.getAdvancePanToAadhaar(formattedPan);
-    console.log(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
     logger2.info(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
     if (response.Errorcode === 100 && response.Data) {
       const d = response.Data;
@@ -10889,6 +10888,590 @@ var PanService = class {
   }
 };
 var panService = new PanService();
+
+// src/core/integrations/ezytm/ezytm-rc.gateway.ts
+var EzytmRcGateway = class {
+  /**
+   * RC Details API
+   * POST /api/Ekyc/RcDetails
+   */
+  async getRcDetails(vehicleNumber) {
+    const cleanNumber = vehicleNumber.trim().toUpperCase().replace(/[\s\-_]/g, "");
+    return await ezytmGateway.postForm(
+      "/api/Ekyc/RcDetails",
+      {
+        VehicleNumber: cleanNumber
+      }
+    );
+  }
+  /**
+   * Mobile To RC API
+   * POST /Api/Ekyc/MobileToRC
+   */
+  async getMobileToRc(mobileNumber) {
+    const cleanMobile = mobileNumber.trim().replace(/\D/g, "");
+    return await ezytmGateway.postForm(
+      "/Api/Ekyc/MobileToRC",
+      {
+        MobileNo: cleanMobile
+      }
+    );
+  }
+  /**
+   * RC Owner History API
+   * POST /Api/Ekyc/RcOwnerHistory
+   */
+  async getRcOwnerHistory(vehicleNumber) {
+    const cleanNumber = vehicleNumber.trim().toUpperCase().replace(/[\s\-_]/g, "");
+    return await ezytmGateway.postForm(
+      "/Api/Ekyc/RcOwnerHistory",
+      {
+        vehicleNumber: cleanNumber
+      }
+    );
+  }
+};
+var ezytmRcGateway = new EzytmRcGateway();
+
+// src/modules/rc/rc.dummy.ts
+function getDummyRcDetails(vehicleNumber = "DL01AB1234") {
+  return {
+    rc_number: vehicleNumber || "DL01AB1234",
+    registration_date: "2017-09-05",
+    owner_name: "Munna Bhaiya",
+    father_name: "Kaleen Bhaiya",
+    present_address: "HNO 1-10/2 Mirzapur, Uttar Pradesh",
+    permanent_address: "HNO 1-10/2 Mirzapur, Uttar Pradesh",
+    mobile_number: "9876543210",
+    vehicle_category: "HPV",
+    vehicle_chasi_number: "ABCD12LRT0HH123456",
+    vehicle_engine_number: "ABCD12H123456",
+    maker_description: "VEHICLES LTD",
+    maker_model: "EICHER PRO BSIV",
+    body_type: "SALOON",
+    fuel_type: "DIESEL",
+    color: "WHITE",
+    norms_type: "BHARAT STAGE IV",
+    fit_up_to: "2032-09-05",
+    financer: "FINANCE LTD",
+    financed: true,
+    insurance_company: "Assurance Company Limited",
+    insurance_policy_number: "0000023123456789",
+    insurance_upto: "2027-09-04",
+    manufacturing_date: "8/2017",
+    manufacturing_date_formatted: "2017-08",
+    registered_at: "MIRZAPUR RTO, Uttar Pradesh",
+    latest_by: "2027-09-04",
+    less_info: false,
+    tax_upto: "2028-09-05",
+    tax_paid_upto: "2025-11-30",
+    cubic_capacity: "3298",
+    vehicle_gross_weight: "9850",
+    no_cylinders: "4",
+    seat_capacity: "50",
+    sleeper_capacity: null,
+    standing_capacity: null,
+    wheelbase: "5260",
+    unladen_weight: "6110",
+    vehicle_category_description: "Heavy Passenger Vehicles (Bus)",
+    pucc_number: "UP123456789",
+    pucc_upto: "2026-12-31",
+    permit_number: "123/AB/45/64",
+    permit_issue_date: "2017-09-05",
+    permit_valid_from: "2017-09-05",
+    permit_valid_upto: "2028-11-06",
+    permit_type: "TEMPORARY PERMIT",
+    national_permit_number: "NP/2017/9981",
+    national_permit_upto: "2028-11-06",
+    national_permit_issued_by: "UTTAR PRADESH",
+    non_use_status: "No",
+    non_use_from: null,
+    non_use_to: null,
+    blacklist_status: "Clean (No Blacklist)",
+    noc_details: null,
+    owner_number: "1",
+    rc_status: "ACTIVE",
+    masked_name: false,
+    challan_details: null,
+    variant: "EICHER PRO BS-IV DIESEL"
+  };
+}
+function getDummyMobileToRc(mobile = "1234567890") {
+  return {
+    mobile_number: mobile || "1234567890",
+    rc_number: ["RJ14XJ1234", "RJ14CA5678"],
+    total_vehicles: 2
+  };
+}
+function getDummyRcOwnerHistory(vehicleNumber = "DL01AB1234") {
+  return {
+    rc_number: vehicleNumber || "DL01AB1234",
+    current_owner_number: "3",
+    current_owner_name: "MAHAMMADALI",
+    owner_history: [
+      {
+        owner_name: "HEMPREET SINGH BAJAJ",
+        owner_number: "1"
+      },
+      {
+        owner_name: "VARUNKUMAR DINESHKUMAR GADHAVI",
+        owner_number: "2"
+      },
+      {
+        owner_name: "MAHAMMADALI",
+        owner_number: "3"
+      }
+    ]
+  };
+}
+
+// src/modules/rc/rc.service.ts
+var RcService = class {
+  /**
+   * 1. Get Comprehensive RC Details
+   * Strictly intercepts dummy test numbers before calling live upstream PlainAPI.
+   */
+  async getRcDetails(vehicleNumber) {
+    const cleanNumber = vehicleNumber.replace(/[\s\-_]/g, "").toUpperCase();
+    logger2.info(`[RcService] Querying RC details for vehicle: ${cleanNumber}`);
+    if (cleanNumber === "DL01AB1234") {
+      logger2.info(
+        `[RcService] Test vehicle number DL01AB1234 detected. Returning mock RC details.`
+      );
+      return getDummyRcDetails(cleanNumber);
+    }
+    const cacheKey = `cache:rc_details:${cleanNumber}`;
+    const cached = await redis.getJson(cacheKey);
+    if (cached && cached.owner_name && cached.owner_name !== "N/A") {
+      logger2.info(`[RcService] Cache HIT for RC: ${cleanNumber}`);
+      return cached;
+    }
+    try {
+      const response = await ezytmRcGateway.getRcDetails(cleanNumber);
+      if (!response) {
+        throw new AppError("No response received from transport registry", 502);
+      }
+      if (response.Errorcode !== 100) {
+        let errorMsg = response.Message || response.message || "Vehicle Registration Certificate (RC) details not found in government registry";
+        if (errorMsg === "Internal Server Error") {
+          errorMsg = "Government transport registry (Vahan) returned an error or vehicle details not found";
+        }
+        throw new AppError(errorMsg, 404, "RC_NOT_FOUND");
+      }
+      const rawData = response.response || response.data || response.Data || response.result || response;
+      const formatted = {
+        rc_number: rawData.rc_number || rawData.license_plate || rawData.VehicleNumber || rawData.vehicleNumber || cleanNumber,
+        registration_date: rawData.registration_date || rawData.reg_date || rawData.RegistrationDate || rawData.regDate || "N/A",
+        owner_name: rawData.owner_name || rawData.OwnerName || rawData.owner || rawData.Owner || "N/A",
+        father_name: rawData.father_name || rawData.fatherName || rawData.FatherName || rawData.Father || "N/A",
+        present_address: rawData.present_address || rawData.address || rawData.PresentAddress || rawData.Address || "N/A",
+        permanent_address: rawData.permanent_address || rawData.PermanentAddress || rawData.address || "N/A",
+        mobile_number: rawData.mobile_number || rawData.MobileNo || rawData.Mobile || "",
+        vehicle_category: rawData.vehicle_category || rawData.category || rawData.classs || rawData.VehicleClass || rawData.vehicle_class || "N/A",
+        vehicle_chasi_number: rawData.vehicle_chasi_number || rawData.chassis_number || rawData.chasi_number || rawData.ChassisNumber || rawData.ChasiNumber || "N/A",
+        vehicle_engine_number: rawData.vehicle_engine_number || rawData.engine_number || rawData.EngineNumber || "N/A",
+        maker_description: rawData.maker_description || rawData.maker || rawData.Maker || rawData.Manufacturer || "N/A",
+        maker_model: rawData.maker_model || rawData.model || rawData.MakerModel || rawData.Model || "N/A",
+        body_type: rawData.body_type || rawData.BodyType || "N/A",
+        fuel_type: rawData.fuel_type || rawData.fuel || rawData.FuelType || rawData.Fuel || "N/A",
+        color: rawData.color || rawData.Color || rawData.vehicle_color || "N/A",
+        norms_type: rawData.norms_type || rawData.norms || rawData.NormsType || "N/A",
+        fit_up_to: rawData.fit_up_to || rawData.fitness_upto || rawData.FitnessUpto || rawData.fitness_expiry || "N/A",
+        financer: rawData.financer || rawData.Financer || (rawData.financed || rawData.is_financed ? "Yes" : "None"),
+        financed: Boolean(rawData.financed || rawData.is_financed),
+        insurance_company: rawData.insurance_company || rawData.insurance_comp || rawData.InsuranceCompany || "N/A",
+        insurance_policy_number: rawData.insurance_policy_number || rawData.policy_no || rawData.insurance_policy || rawData.PolicyNo || "N/A",
+        insurance_upto: rawData.insurance_upto || rawData.insurance_valid_upto || rawData.insurance_expiry || rawData.InsuranceUpto || "N/A",
+        manufacturing_date: rawData.manufacturing_date || rawData.ManufacturingDate || "N/A",
+        manufacturing_date_formatted: rawData.manufacturing_date_formatted || rawData.manufacturing_date || "N/A",
+        registered_at: rawData.registered_at || rawData.rto || rawData.RTO || rawData.RegisteredAt || "N/A",
+        latest_by: rawData.latest_by,
+        less_info: Boolean(rawData.less_info),
+        tax_upto: rawData.tax_upto || rawData.TaxUpto || null,
+        tax_paid_upto: rawData.tax_paid_upto || rawData.TaxPaidUpto || null,
+        cubic_capacity: String(rawData.cubic_capacity || rawData.cc || rawData.CubicCapacity || "N/A"),
+        vehicle_gross_weight: String(rawData.vehicle_gross_weight || rawData.gross_weight || rawData.GrossWeight || "N/A"),
+        no_cylinders: String(rawData.no_cylinders || rawData.cylinders || rawData.NoOfCylinders || "N/A"),
+        seat_capacity: String(rawData.seat_capacity || rawData.seating || rawData.SeatCapacity || "N/A"),
+        sleeper_capacity: rawData.sleeper_capacity || null,
+        standing_capacity: rawData.standing_capacity || null,
+        wheelbase: String(rawData.wheelbase || rawData.Wheelbase || "N/A"),
+        unladen_weight: String(rawData.unladen_weight || rawData.UnladenWeight || "N/A"),
+        vehicle_category_description: rawData.vehicle_category_description || rawData.vehicle_category || rawData.classs || "N/A",
+        pucc_number: rawData.pucc_number || rawData.PuccNumber || "N/A",
+        pucc_upto: rawData.pucc_upto || rawData.PuccUpto || null,
+        permit_number: rawData.permit_number || null,
+        permit_issue_date: rawData.permit_issue_date || null,
+        permit_valid_from: rawData.permit_valid_from || null,
+        permit_valid_upto: rawData.permit_valid_upto || null,
+        permit_type: rawData.permit_type || null,
+        national_permit_number: rawData.national_permit_number || null,
+        national_permit_upto: rawData.national_permit_upto || null,
+        national_permit_issued_by: rawData.national_permit_issued_by || null,
+        non_use_status: rawData.non_use_status || null,
+        non_use_from: rawData.non_use_from || null,
+        non_use_to: rawData.non_use_to || null,
+        blacklist_status: rawData.blacklist_status || rawData.BlacklistStatus || "No",
+        noc_details: rawData.noc_details || null,
+        owner_number: String(rawData.owner_number || rawData.OwnerNumber || "1"),
+        rc_status: rawData.rc_status || rawData.status || rawData.Status || "ACTIVE",
+        masked_name: Boolean(rawData.masked_name),
+        challan_details: rawData.challan_details || null,
+        variant: rawData.variant || null
+      };
+      vendorWalletService.deductApiCost({
+        serviceCode: "VEHICLE_LOOKUP",
+        unitCost: 2.25,
+        reference: formatted.rc_number
+      }).catch((err) => {
+        logger2.error("[RcService] Failed to deduct vendor wallet for VEHICLE_LOOKUP:", err);
+      });
+      if (formatted.owner_name && formatted.owner_name !== "N/A") {
+        await redis.setJson(cacheKey, formatted, 86400);
+      }
+      return formatted;
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      const msg = err instanceof Error ? err.message : "Transport registry lookup failed";
+      logger2.error(`[RcService] Live PlainAPI RC lookup error: ${msg}`, err);
+      throw new AppError(msg, 502, "UPSTREAM_GATEWAY_ERROR");
+    }
+  }
+  /**
+   * 2. Pre-Verification for UI validation
+   */
+  async verifyRc(vehicleNumber) {
+    const cleanNumber = vehicleNumber.replace(/[\s\-_]/g, "").toUpperCase();
+    if (cleanNumber === "DL01AB1234") {
+      return {
+        vehicleNumber: cleanNumber,
+        ownerNameMasked: "M**** B*****",
+        makerModel: "EICHER PRO BSIV",
+        fuelType: "DIESEL",
+        status: "ACTIVE"
+      };
+    }
+    const details = await this.getRcDetails(cleanNumber);
+    const words = details.owner_name.split(" ");
+    const maskedWords = words.map((w) => w.length > 1 ? `${w[0]}${"*".repeat(w.length - 1)}` : w);
+    return {
+      vehicleNumber: details.rc_number,
+      ownerNameMasked: maskedWords.join(" "),
+      makerModel: `${details.maker_description} ${details.maker_model}`.trim(),
+      fuelType: details.fuel_type,
+      status: details.rc_status || "ACTIVE"
+    };
+  }
+  /**
+   * 3. Get Mobile To RC (Linked Vehicle Registrations)
+   */
+  async getMobileToRc(mobileNumber) {
+    const cleanMobile = mobileNumber.trim().replace(/\D/g, "");
+    if (!/^\d{10}$/.test(cleanMobile)) {
+      throw new AppError("Mobile number must be a valid 10-digit number", 400);
+    }
+    logger2.info(`[RcService] Querying Mobile To RC for: ${cleanMobile}`);
+    if (cleanMobile === "1234567890") {
+      logger2.info(
+        `[RcService] Test mobile 1234567890 detected. Returning mock MobileToRC format without external API call.`
+      );
+      return getDummyMobileToRc(cleanMobile);
+    }
+    const cacheKey = `cache:mobile_to_rc:${cleanMobile}`;
+    const cached = await redis.getJson(cacheKey);
+    if (cached) {
+      logger2.info(`[RcService] Cache HIT for MobileToRC: ${cleanMobile}`);
+      return cached;
+    }
+    try {
+      const response = await ezytmRcGateway.getMobileToRc(cleanMobile);
+      if (!response) {
+        throw new AppError("No response received from transport registry", 502);
+      }
+      if (response.Errorcode !== 100) {
+        let errorMsg = response.Message || response.message || "No vehicle registrations found linked with this mobile number in government registry";
+        if (errorMsg === "Internal Server Error") {
+          errorMsg = "Government transport registry (Vahan) returned an error or no vehicles are linked to this mobile number";
+        }
+        throw new AppError(errorMsg, 404, "VEHICLE_NOT_FOUND");
+      }
+      const rawData = response.data || response.Data || response;
+      let rcList = [];
+      if (Array.isArray(rawData.rc_number)) {
+        rcList = rawData.rc_number.map((s) => String(s).trim().toUpperCase()).filter(Boolean);
+      } else if (typeof rawData.rc_number === "string" && rawData.rc_number.trim()) {
+        rcList = rawData.rc_number.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+      } else if (Array.isArray(rawData.rcNumbers)) {
+        rcList = rawData.rcNumbers.map((s) => String(s).trim().toUpperCase()).filter(Boolean);
+      }
+      if (rcList.length === 0) {
+        const errorMsg = response.Message || response.message || "No connected vehicle registrations found for this mobile number";
+        throw new AppError(errorMsg, 404, "VEHICLE_NOT_FOUND");
+      }
+      const formatted = {
+        mobile_number: String(rawData.mobile_number || cleanMobile),
+        rc_number: rcList,
+        total_vehicles: rcList.length
+      };
+      vendorWalletService.deductApiCost({
+        serviceCode: "MOBILE_TO_RC",
+        unitCost: 8.15,
+        reference: `Mobile ending in ${cleanMobile.slice(-4)}`
+      }).catch((err) => {
+        logger2.error("[RcService] Failed to deduct vendor wallet for MOBILE_TO_RC:", err);
+      });
+      await redis.setJson(cacheKey, formatted, 86400);
+      return formatted;
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      const msg = err instanceof Error ? err.message : "Transport registry lookup failed";
+      logger2.error(`[RcService] Mobile to RC lookup error: ${msg}`, err);
+      throw new AppError(msg, 502, "UPSTREAM_GATEWAY_ERROR");
+    }
+  }
+  /**
+   * 4. Pre-Verification for Mobile To RC UI validation
+   */
+  async verifyMobileToRc(mobileNumber) {
+    const cleanMobile = mobileNumber.trim().replace(/\D/g, "");
+    if (!/^\d{10}$/.test(cleanMobile)) {
+      throw new AppError("Mobile number must be a valid 10-digit number", 400);
+    }
+    if (cleanMobile === "1234567890") {
+      return {
+        mobileNumber: cleanMobile,
+        vehicleCount: 2,
+        status: "FOUND"
+      };
+    }
+    const data = await this.getMobileToRc(cleanMobile);
+    return {
+      mobileNumber: data.mobile_number,
+      vehicleCount: data.rc_number.length,
+      status: "FOUND"
+    };
+  }
+  /**
+   * 5. Get RC Owner History
+   */
+  async getRcOwnerHistory(vehicleNumber) {
+    const cleanNumber = vehicleNumber.replace(/[\s\-_]/g, "").toUpperCase();
+    logger2.info(`[RcService] Querying RC Owner History for vehicle: ${cleanNumber}`);
+    if (cleanNumber === "DL01AB1234") {
+      logger2.info(
+        `[RcService] Test vehicle number DL01AB1234 detected. Returning mock RcOwnerHistory format.`
+      );
+      return getDummyRcOwnerHistory(cleanNumber);
+    }
+    const cacheKey = `cache:rc_owner_history:${cleanNumber}`;
+    const cached = await redis.getJson(cacheKey);
+    if (cached) {
+      logger2.info(`[RcService] Cache HIT for RcOwnerHistory: ${cleanNumber}`);
+      return cached;
+    }
+    try {
+      const response = await ezytmRcGateway.getRcOwnerHistory(cleanNumber);
+      if (!response) {
+        throw new AppError("No response received from transport registry", 502);
+      }
+      if (response.Errorcode !== 100) {
+        let errorMsg = response.Message || response.message || "No owner history found for this vehicle in government registry";
+        if (errorMsg.includes("Internal Server Error")) {
+          errorMsg = "Government transport registry (Vahan) returned an error or vehicle owner history not found. Please try again later.";
+        }
+        throw new AppError(errorMsg, 404, "RECORD_NOT_FOUND");
+      }
+      const rawData = response.data || response.Data || response;
+      let historyList = [];
+      if (Array.isArray(rawData.owner_history)) {
+        historyList = rawData.owner_history.map((item) => ({
+          owner_name: String(item.owner_name || item.name || "").trim().toUpperCase(),
+          owner_number: String(item.owner_number || item.number || "1").trim()
+        }));
+      }
+      const formatted = {
+        rc_number: String(rawData.rc_number || cleanNumber).toUpperCase(),
+        current_owner_number: String(rawData.current_owner_number || (historyList.length ? historyList[historyList.length - 1].owner_number : "1")),
+        current_owner_name: String(rawData.current_owner_name || (historyList.length ? historyList[historyList.length - 1].owner_name : "")),
+        owner_history: historyList
+      };
+      vendorWalletService.deductApiCost({
+        serviceCode: "RC_OWNER_HISTORY",
+        unitCost: 7.5,
+        reference: formatted.rc_number
+      }).catch((err) => {
+        logger2.error("[RcService] Failed to deduct vendor wallet for RC_OWNER_HISTORY:", err);
+      });
+      await redis.setJson(cacheKey, formatted, 86400);
+      return formatted;
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      const msg = err instanceof Error ? err.message : "Transport registry owner history lookup failed";
+      logger2.error(`[RcService] RC owner history error: ${msg}`, err);
+      throw new AppError(msg, 502, "UPSTREAM_GATEWAY_ERROR");
+    }
+  }
+};
+var rcService = new RcService();
+
+// src/core/integrations/ezytm/ezytm-dl.gateway.ts
+var EzytmDlGateway = class {
+  /**
+   * Driving License Verification API
+   * POST /Api/Ekyc/DLVerification
+   */
+  async verifyDrivingLicense(dlNumber, dob) {
+    const cleanNumber = dlNumber.trim().toUpperCase().replace(/[\s\-_]/g, "");
+    let formattedDob = dob.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(formattedDob)) {
+      const [year, month, day] = formattedDob.split("-");
+      formattedDob = `${day}-${month}-${year}`;
+    }
+    return await ezytmGateway.postForm(
+      "/Api/Ekyc/DLVerification",
+      {
+        DLNumber: cleanNumber,
+        DateofBirth: formattedDob
+      }
+    );
+  }
+};
+var ezytmDlGateway = new EzytmDlGateway();
+
+// src/modules/dl/dl.dummy.ts
+function getDummyDlDetails(dlNumber = "DL1420110012345", dob = "15-08-1992") {
+  const clean = dlNumber || "DL1420110012345";
+  return {
+    license_number: clean,
+    holder_name: "MUNNA BHAIYA",
+    father_or_husband_name: "KALEEN BHAIYA",
+    dob: dob || "15-08-1992",
+    gender: "MALE",
+    blood_group: "B+",
+    issue_date: "12-04-2011",
+    valid_from: "12-04-2011",
+    valid_upto: "14-08-2032",
+    vehicle_class: "LMV, MCWG",
+    rto_code: "DL14",
+    rto: "DELHI CENTRAL RTO",
+    state: "DELHI",
+    permanent_address: "HNO 1-10/2 Civil Lines, Mirzapur, Uttar Pradesh",
+    permanent_zip: "231001",
+    temporary_address: "HNO 1-10/2 Civil Lines, Mirzapur, Uttar Pradesh",
+    temporary_zip: "231001",
+    status: "ACTIVE",
+    image: null,
+    transaction_details: {
+      transaction_name: "ISSUE OF DRIVING LICENCE & COV ENDORSEMENT",
+      transaction_date: "12-04-2011",
+      application_number: "APPL-DL14-0012345",
+      status: "COMPLETED & APPROVED"
+    }
+  };
+}
+
+// src/modules/dl/dl.service.ts
+var DlService = class {
+  /**
+   * 1. Get Comprehensive Driving License Details
+   * Strictly intercepts dummy test numbers before calling live upstream PlanAPI.
+   */
+  async getDlDetails(dlNumber, dob) {
+    const cleanNumber = dlNumber.replace(/[\s\-_]/g, "").toUpperCase();
+    const cleanDob = dob.trim();
+    logger2.info(`[DlService] Querying Driving License details: ${cleanNumber}, DOB: ${cleanDob}`);
+    if (cleanNumber === "DL1420110012345") {
+      logger2.info(
+        `[DlService] Test DL number DL1420110012345 detected. Returning mock DL details.`
+      );
+      return getDummyDlDetails(cleanNumber, cleanDob);
+    }
+    const cacheKey = `cache:dl_details:${cleanNumber}:${cleanDob}`;
+    const cached = await redis.getJson(cacheKey);
+    if (cached) {
+      logger2.info(`[DlService] Cache HIT for DL: ${cleanNumber}`);
+      return cached;
+    }
+    try {
+      const response = await ezytmDlGateway.verifyDrivingLicense(cleanNumber, cleanDob);
+      logger2.info(`[DlService] Live PlanAPI DL verification raw response for ${cleanNumber}: ${JSON.stringify(response)}`);
+      if (!response) {
+        throw new AppError("No response received from government transport registry", 502);
+      }
+      if (response.Errorcode !== 100) {
+        let errorMsg = response.Message || response.message || response.msg || "Driving License details not found in government registry. Please check DL number and Date of Birth.";
+        if (errorMsg === "Internal Server Error") {
+          errorMsg = "Government transport registry (Sarathi) returned an error or DL details not found";
+        }
+        throw new AppError(errorMsg, 404, "DL_NOT_FOUND");
+      }
+      const raw2 = response.response || response.data || response.Data || response;
+      const formatted = {
+        license_number: raw2.license_number || raw2.dl_number || raw2.DLNumber || cleanNumber,
+        holder_name: raw2.holder_name || raw2.name || raw2.Name || "N/A",
+        father_or_husband_name: raw2.father_or_husband_name || raw2.father_name || raw2.FatherName || "N/A",
+        dob: raw2.dob || raw2.DateOfBirth || cleanDob,
+        gender: raw2.gender || raw2.Gender || "N/A",
+        blood_group: raw2.blood_group || raw2.BloodGroup || "N/A",
+        issue_date: raw2.issue_date || raw2.IssueDate || "N/A",
+        valid_from: raw2.valid_from || raw2.ValidFrom || raw2.issue_date || "N/A",
+        valid_upto: raw2.valid_upto || raw2.ValidUpto || (raw2.validity && typeof raw2.validity === "object" ? raw2.validity.non_transport || raw2.validity.transport : "N/A") || "N/A",
+        vehicle_class: raw2.vehicle_class || raw2.cov || raw2.VehicleClass || "LMV, MCWG",
+        rto_code: raw2.rto_code || raw2.RtoCode || "N/A",
+        rto: raw2.rto || raw2.RTO || raw2.state || "N/A",
+        state: raw2.state || raw2.State || "N/A",
+        permanent_address: raw2.permanent_address || raw2.address || raw2.PermanentAddress || "N/A",
+        permanent_zip: raw2.permanent_zip || raw2.PermanentZip || "",
+        temporary_address: raw2.temporary_address || raw2.present_address || raw2.TemporaryAddress || "N/A",
+        temporary_zip: raw2.temporary_zip || raw2.TemporaryZip || "",
+        status: raw2.status || (raw2.isValid ? "ACTIVE" : "ACTIVE"),
+        image: raw2.image || raw2.photo || null,
+        transaction_details: raw2.transaction_details || {
+          transaction_name: "ISSUE OF DRIVING LICENCE & COV ENDORSEMENT",
+          transaction_date: raw2.issue_date || raw2.IssueDate || "N/A",
+          application_number: raw2.application_number || `APPL-${raw2.rto_code || "DL"}-${cleanNumber.slice(-6)}`,
+          status: "COMPLETED & APPROVED"
+        }
+      };
+      vendorWalletService.deductApiCost({
+        serviceCode: "DL_VERIFY",
+        unitCost: 4,
+        reference: formatted.license_number
+      }).catch((err) => {
+        logger2.error("[DlService] Failed to deduct vendor wallet for DL_VERIFY:", err);
+      });
+      await redis.setJson(cacheKey, formatted, 86400);
+      return formatted;
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      logger2.error(`[DlService] Live DL verification failed:`, err);
+      throw new AppError(
+        err instanceof Error ? err.message : "Driving License lookup failed in national registry",
+        502
+      );
+    }
+  }
+  /**
+   * 2. Pre-verify Driving License Status & Existence
+   * Returns masked owner name, status and RTO for confirmation before wallet deduction.
+   */
+  async verifyDl(dlNumber, dob) {
+    const details = await this.getDlDetails(dlNumber, dob);
+    const nameParts = details.holder_name.split(" ");
+    const maskedName = nameParts.map(
+      (part) => part.length > 1 ? part[0] + "*".repeat(Math.max(part.length - 1, 3)) : part
+    ).join(" ");
+    return {
+      dlNumber: details.license_number,
+      holderNameMasked: maskedName,
+      dob: details.dob,
+      rto: details.rto,
+      vehicleClass: details.vehicle_class,
+      status: details.status || "ACTIVE"
+    };
+  }
+};
+var dlService = new DlService();
 
 // src/core/vault/ephemeral-vault.service.ts
 import crypto4 from "node:crypto";
@@ -11292,6 +11875,83 @@ var ServiceDispatcher = class {
           };
           break;
         }
+        case "VEHICLE_LOOKUP":
+        case "VEHICLE_RC": {
+          const input = request.inputData || {};
+          const vehicleNumber = String(
+            input.vehicleNumber || input.rcNumber || input.rc_number || ""
+          ).trim();
+          if (!vehicleNumber) {
+            throw new Error("Missing vehicle registration number for RC lookup service");
+          }
+          const rcResult = await rcService.getRcDetails(vehicleNumber);
+          resultData = {
+            ...rcResult,
+            status: "SUCCESS",
+            completedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          break;
+        }
+        case "DL_VERIFY":
+        case "DRIVING_LICENSE":
+        case "DL_DETAILS": {
+          const input = request.inputData || {};
+          const dlNumber = String(
+            input.dlNumber || input.licenseNumber || input.license_number || ""
+          ).trim();
+          const dob = String(input.dob || input.dateOfBirth || "").trim();
+          if (!dlNumber) {
+            throw new Error("Missing Driving License number for DL verification service");
+          }
+          if (!dob) {
+            throw new Error("Missing Date of Birth for DL verification service");
+          }
+          const dlResult = await dlService.getDlDetails(dlNumber, dob);
+          resultData = {
+            ...dlResult,
+            status: "SUCCESS",
+            completedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          break;
+        }
+        case "MOBILE_TO_RC":
+        case "MOBILE_RC": {
+          const input = request.inputData || {};
+          const mobileNumber = String(
+            input.mobileNumber || input.mobile_number || input.mobile || ""
+          ).trim();
+          if (!mobileNumber) {
+            throw new Error("Missing mobile number for Mobile To RC lookup service");
+          }
+          const mobileResult = await rcService.getMobileToRc(mobileNumber);
+          resultData = {
+            ...mobileResult,
+            status: "SUCCESS",
+            completedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          break;
+        }
+        case "RC_OWNER_HISTORY":
+        case "RC_HISTORY": {
+          const input = request.inputData || {};
+          const vehicleNumber = String(
+            input.vehicleNumber || input.vehicle_number || input.rc_number || input.rcNumber || ""
+          ).trim();
+          if (!vehicleNumber) {
+            throw new Error(
+              "Missing vehicle registration number for RC Owner History service"
+            );
+          }
+          const ownerHistoryResult = await rcService.getRcOwnerHistory(
+            vehicleNumber
+          );
+          resultData = {
+            ...ownerHistoryResult,
+            status: "SUCCESS",
+            completedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          break;
+        }
         default:
           throw new Error(`Unsupported service code: ${request.service.code}`);
       }
@@ -11324,7 +11984,14 @@ var ServiceDispatcher = class {
       const msg = error instanceof Error ? error.message : "Upstream verification failed";
       await prisma.serviceRequest.update({
         where: { id: serviceRequestId },
-        data: { status: "PROVIDER_FAILED" }
+        data: {
+          status: "PROVIDER_FAILED",
+          resultData: {
+            status: "PROVIDER_FAILED",
+            error: msg,
+            failedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }
+        }
       });
       await prisma.serviceRequestEvent.create({
         data: {
@@ -12703,10 +13370,10 @@ var PaymentService = class {
       });
       return { request: newReq, balanceAfterDebit: newBal };
     });
-    if (rawInput.searchToken || rawInput.pan) {
+    if (rawInput.searchToken || rawInput.pan || rawInput.vehicleNumber || rawInput.rcNumber) {
       await ephemeralVault.stashTempSearchToken(
         request.id,
-        String(rawInput.searchToken || rawInput.pan)
+        String(rawInput.searchToken || rawInput.pan || rawInput.vehicleNumber || rawInput.rcNumber)
       );
     }
     try {
@@ -12715,7 +13382,8 @@ var PaymentService = class {
         where: { id: request.id }
       });
       if (finalReq?.status === "PROVIDER_FAILED") {
-        throw new Error("Upstream government registry returned no matching record");
+        const provError = finalReq?.resultData?.error;
+        throw new Error(provError || "Upstream government registry returned no matching record");
       }
       const vault = await ephemeralVault.getVaultItem(request.id);
       return {
@@ -12773,7 +13441,7 @@ var PaymentService = class {
         referenceNumber,
         amount: servicePrice,
         newBalance: balanceAfterRefund,
-        message: `\u0938\u0924\u094D\u092F\u093E\u092A\u0928 \u0905\u0938\u092B\u0932 \u0930\u0939\u093E\u0964 \u20B9${servicePrice.toFixed(2)} \u0906\u092A\u0915\u0947 \u0935\u0949\u0932\u0947\u091F \u092E\u0947\u0902 \u0924\u0941\u0930\u0902\u0924 (Instant Refund) \u0935\u093E\u092A\u0938 \u091C\u092E\u093E \u0915\u0930 \u0926\u093F\u090F \u0917\u090F \u0939\u0948\u0902\u0964 \u0906\u092A\u0915\u093E \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u0935\u0949\u0932\u0947\u091F \u092C\u0948\u0932\u0947\u0902\u0938: \u20B9${balanceAfterRefund.toFixed(2)}\u0964`
+        message: `${fulfillmentErr?.message || "\u0938\u0924\u094D\u092F\u093E\u092A\u0928 \u0905\u0938\u092B\u0932 \u0930\u0939\u093E"}\u0964 \u20B9${servicePrice.toFixed(2)} \u0906\u092A\u0915\u0947 \u0935\u0949\u0932\u0947\u091F \u092E\u0947\u0902 \u0924\u0941\u0930\u0902\u0924 (Instant Refund) \u0935\u093E\u092A\u0938 \u091C\u092E\u093E \u0915\u0930 \u0926\u093F\u090F \u0917\u090F \u0939\u0948\u0902\u0964 \u0906\u092A\u0915\u093E \u0935\u0930\u094D\u0924\u092E\u093E\u0928 \u0935\u0949\u0932\u0947\u091F \u092C\u0948\u0932\u0947\u0902\u0938: \u20B9${balanceAfterRefund.toFixed(2)}\u0964`
       };
     }
   }
@@ -13780,6 +14448,342 @@ panRoutes.post(
   }
 );
 
+// src/modules/rc/rc.schema.ts
+var rcDetailsSchema = external_exports.object({
+  vehicleNumber: external_exports.string().trim().min(5, "Vehicle registration number must be at least 5 characters").max(20, "Vehicle registration number too long").transform((val) => val.replace(/[\s\-_]/g, "").toUpperCase()),
+  customerId: external_exports.string().uuid().optional()
+});
+var verifyRcSchema = external_exports.object({
+  vehicleNumber: external_exports.string().trim().min(5, "Vehicle registration number must be at least 5 characters").max(20, "Vehicle registration number too long").transform((val) => val.replace(/[\s\-_]/g, "").toUpperCase())
+});
+var mobileToRcSchema = external_exports.object({
+  mobileNumber: external_exports.string().trim().regex(/^[6-9]\d{9}$/, "Mobile number must be a valid 10-digit Indian mobile number"),
+  customerId: external_exports.string().uuid().optional()
+});
+var rcOwnerHistorySchema = external_exports.object({
+  vehicleNumber: external_exports.string().trim().min(5, "Vehicle registration number must be at least 5 characters").max(20, "Vehicle registration number too long").transform((val) => val.replace(/[\s\-_]/g, "").toUpperCase()),
+  customerId: external_exports.string().uuid().optional()
+});
+
+// src/modules/rc/rc.routes.ts
+var rcRoutes = new Hono3();
+rcRoutes.post(
+  "/verify",
+  validationMiddleware(verifyRcSchema),
+  async (c) => {
+    const { vehicleNumber } = c.get("validData");
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    const cleanNo = vehicleNumber.replace(/[\s\-_]/g, "").toUpperCase();
+    const isMockTest = cleanNo === "DL01AB1234";
+    try {
+      const result = await rcService.verifyRc(vehicleNumber);
+      if (!isMockTest) {
+        logApiExecution({
+          organizationId: orgId,
+          userId: user?.id,
+          serviceCode: "VEHICLE_LOOKUP",
+          action: "Vehicle Registration Pre-Verification",
+          endpoint: "/api/v1/rc/verify",
+          reference: result.vehicleNumber,
+          status: "SUCCESS",
+          statusCode: 200,
+          durationMs: Date.now() - start,
+          note: `RC pre-verification executed. Masked Owner: ${result.ownerNameMasked}`
+        });
+      }
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Vehicle record not found";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "VEHICLE_LOOKUP",
+        action: "Vehicle Registration Pre-Verification",
+        endpoint: "/api/v1/rc/verify",
+        reference: vehicleNumber,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `Vehicle RC pre-verification failed: ${msg}`
+      });
+      return c.json({ success: false, message: msg }, statusCode);
+    }
+  }
+);
+rcRoutes.post(
+  "/details",
+  validationMiddleware(rcDetailsSchema),
+  async (c) => {
+    const { vehicleNumber } = c.get("validData");
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    const cleanNo = vehicleNumber.replace(/[\s\-_]/g, "").toUpperCase();
+    const isMockTest = cleanNo === "DL01AB1234";
+    try {
+      const result = await rcService.getRcDetails(vehicleNumber);
+      if (!isMockTest) {
+        logApiExecution({
+          organizationId: orgId,
+          userId: user?.id,
+          serviceCode: "VEHICLE_LOOKUP",
+          action: "Comprehensive RC Full Details Inquiry",
+          endpoint: "/api/v1/rc/details",
+          reference: result.rc_number,
+          status: "SUCCESS",
+          statusCode: 200,
+          durationMs: Date.now() - start,
+          note: `RC full details retrieved for ${result.rc_number} (${result.maker_model})`
+        });
+      }
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Vehicle details lookup failed";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "VEHICLE_LOOKUP",
+        action: "Comprehensive RC Full Details Inquiry",
+        endpoint: "/api/v1/rc/details",
+        reference: vehicleNumber,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `Vehicle RC details inquiry failed: ${msg}`
+      });
+      return c.json({ success: false, message: msg }, statusCode);
+    }
+  }
+);
+rcRoutes.post(
+  "/mobile/verify",
+  validationMiddleware(mobileToRcSchema),
+  async (c) => {
+    const { mobileNumber } = c.get("validData");
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = await rcService.verifyMobileToRc(mobileNumber);
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "MOBILE_TO_RC",
+        action: "Mobile to RC Pre-Check",
+        endpoint: "/api/v1/rc/mobile/verify",
+        reference: mobileNumber,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Mobile to RC pre-check: ${result.vehicleCount} vehicles found`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "No vehicle records found for this mobile";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "MOBILE_TO_RC",
+        action: "Mobile to RC Pre-Check",
+        endpoint: "/api/v1/rc/mobile/verify",
+        reference: mobileNumber,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `Mobile to RC pre-check failed: ${msg}`
+      });
+      return c.json({ success: false, message: msg }, statusCode);
+    }
+  }
+);
+rcRoutes.post(
+  "/mobile/details",
+  validationMiddleware(mobileToRcSchema),
+  async (c) => {
+    const { mobileNumber } = c.get("validData");
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = await rcService.getMobileToRc(mobileNumber);
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "MOBILE_TO_RC",
+        action: "Mobile to RC Fetch",
+        endpoint: "/api/v1/rc/mobile/details",
+        reference: mobileNumber,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `Mobile to RC returned ${result.rc_number.length} vehicles`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to retrieve vehicles";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "MOBILE_TO_RC",
+        action: "Mobile to RC Fetch",
+        endpoint: "/api/v1/rc/mobile/details",
+        reference: mobileNumber,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `Mobile to RC fetch failed: ${msg}`
+      });
+      return c.json({ success: false, message: msg }, statusCode);
+    }
+  }
+);
+rcRoutes.post(
+  "/owner-history",
+  validationMiddleware(rcOwnerHistorySchema),
+  async (c) => {
+    const { vehicleNumber } = c.get("validData");
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = await rcService.getRcOwnerHistory(vehicleNumber);
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "RC_OWNER_HISTORY",
+        action: "RC Owner History Inquiry",
+        endpoint: "/api/v1/rc/owner-history",
+        reference: vehicleNumber,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `RC owner history retrieved: Owner #${result.current_owner_number} (${result.current_owner_name})`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to retrieve vehicle owner history";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "RC_OWNER_HISTORY",
+        action: "RC Owner History Inquiry",
+        endpoint: "/api/v1/rc/owner-history",
+        reference: vehicleNumber,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `RC owner history inquiry failed: ${msg}`
+      });
+      return c.json({ success: false, message: msg }, statusCode);
+    }
+  }
+);
+
+// src/modules/dl/dl.schema.ts
+var dlDetailsSchema = external_exports.object({
+  dlNumber: external_exports.string().trim().min(5, "Driving License number must be at least 5 characters").max(30, "Driving License number too long").transform((val) => val.replace(/[\s\-_]/g, "").toUpperCase()),
+  dob: external_exports.string().trim().min(8, "Date of birth is required").max(12, "Invalid Date of birth format"),
+  customerId: external_exports.string().uuid().optional()
+});
+var verifyDlSchema = external_exports.object({
+  dlNumber: external_exports.string().trim().min(5, "Driving License number must be at least 5 characters").max(30, "Driving License number too long").transform((val) => val.replace(/[\s\-_]/g, "").toUpperCase()),
+  dob: external_exports.string().trim().min(8, "Date of birth is required").max(12, "Invalid Date of birth format")
+});
+
+// src/modules/dl/dl.routes.ts
+var dlRoutes = new Hono3();
+dlRoutes.post(
+  "/verify",
+  validationMiddleware(verifyDlSchema),
+  async (c) => {
+    const { dlNumber, dob } = c.get("validData");
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = await dlService.verifyDl(dlNumber, dob);
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "DL_VERIFY",
+        action: "Driving License Pre-Verification",
+        endpoint: "/api/v1/dl/verify",
+        reference: result.dlNumber,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `DL pre-verification executed. Masked Holder: ${result.holderNameMasked}`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Driving license record not found";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "DL_VERIFY",
+        action: "Driving License Pre-Verification",
+        endpoint: "/api/v1/dl/verify",
+        reference: dlNumber,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `DL pre-verification failed: ${msg}`
+      });
+      return c.json({ success: false, message: msg }, statusCode);
+    }
+  }
+);
+dlRoutes.post(
+  "/details",
+  validationMiddleware(dlDetailsSchema),
+  async (c) => {
+    const { dlNumber, dob } = c.get("validData");
+    const orgId = c.get("organizationId");
+    const user = c.get("user");
+    const start = Date.now();
+    try {
+      const result = await dlService.getDlDetails(dlNumber, dob);
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "DL_VERIFY",
+        action: "Comprehensive Driving License Details Inquiry",
+        endpoint: "/api/v1/dl/details",
+        reference: result.license_number,
+        status: "SUCCESS",
+        statusCode: 200,
+        durationMs: Date.now() - start,
+        note: `DL full details retrieved for ${result.license_number} (${result.holder_name})`
+      });
+      return c.json({ success: true, data: result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Driving license details lookup failed";
+      const statusCode = err && typeof err === "object" && "statusCode" in err && typeof err.statusCode === "number" ? err.statusCode : 400;
+      logApiExecution({
+        organizationId: orgId,
+        userId: user?.id,
+        serviceCode: "DL_VERIFY",
+        action: "Comprehensive Driving License Details Inquiry",
+        endpoint: "/api/v1/dl/details",
+        reference: dlNumber,
+        status: "FAILED",
+        statusCode,
+        durationMs: Date.now() - start,
+        note: `DL full details inquiry failed: ${msg}`
+      });
+      return c.json({ success: false, message: msg }, statusCode);
+    }
+  }
+);
+
 // src/modules/payment/payment.schema.ts
 var createOrderSchema = external_exports.object({
   serviceCode: external_exports.string(),
@@ -13886,6 +14890,20 @@ paymentRoutes.post("/wallet/pay", async (c) => {
     customerId,
     inputData
   });
+  if (!result.success) {
+    return c.json(
+      {
+        success: false,
+        error: {
+          message: result.message,
+          code: "PROVIDER_FAILED",
+          refunded: result.refunded ?? true
+        },
+        data: result
+      },
+      400
+    );
+  }
   return c.json({ success: true, data: result });
 });
 paymentRoutes.post("/wallet/topup/create-order", async (c) => {
@@ -15297,8 +16315,18 @@ var AdminService = class {
       const serviceCostMap = {
         PAN_FIND: 3,
         PAN_DETAILS: 2.5,
+        PAN_TO_AADHAAR: 40,
         KISAN_CARD: 0,
-        KISAN_REGISTRATION_CARD: 0
+        KISAN_REGISTRATION_CARD: 0,
+        VEHICLE_LOOKUP: 2.25,
+        VEHICLE_RC: 2.25,
+        MOBILE_TO_RC: 8.15,
+        MOBILE_RC: 8.15,
+        RC_OWNER_HISTORY: 7.5,
+        RC_HISTORY: 7.5,
+        DL_VERIFY: 4,
+        DRIVING_LICENSE: 4,
+        VOTER_VERIFY: 0
       };
       const [services, allRequests, upstreamApiLogs] = await Promise.all([
         prisma.service.findMany({
@@ -15321,12 +16349,16 @@ var AdminService = class {
         prisma.apiLog.findMany({
           where: {
             ...whereDate,
-            serviceCode: { in: ["PAN_FIND", "PAN_DETAILS"] },
-            endpoint: {
+            serviceCode: {
               in: [
-                "/api/v1/pan/find",
-                "/api/v1/pan/details/verify",
-                "/api/v1/pan/details"
+                "PAN_FIND",
+                "PAN_DETAILS",
+                "VEHICLE_LOOKUP",
+                "VEHICLE_RC",
+                "DL_VERIFY",
+                "DRIVING_LICENSE",
+                "MOBILE_TO_RC",
+                "RC_OWNER_HISTORY"
               ]
             }
           },
@@ -15343,6 +16375,11 @@ var AdminService = class {
       let wastedVendorCost = 0;
       let panFindCalls = 0;
       let panDetailsCalls = 0;
+      let rcDetailsCalls = 0;
+      let dlVerifyCalls = 0;
+      let mobileToRcCalls = 0;
+      let rcOwnerHistoryCalls = 0;
+      let kisanCalls = 0;
       let otherCalls = 0;
       let completedCount = 0;
       let abandonedCount = 0;
@@ -15361,27 +16398,52 @@ var AdminService = class {
         };
       });
       const claimedLogIds = /* @__PURE__ */ new Set();
+      for (const log2 of upstreamApiLogs) {
+        const ref = (log2.reference || "").toUpperCase().replace(/[\s\-_]/g, "");
+        const note = (log2.note || "").toLowerCase();
+        if (ref === "DL01AB1234" || ref === "1234567890" || note.includes("test") || note.includes("simulation") || note.includes("mock")) {
+          claimedLogIds.add(log2.id);
+        }
+      }
+      const isSameService = (logCode, reqCode) => {
+        if (logCode === reqCode) return true;
+        if ((logCode === "VEHICLE_LOOKUP" || logCode === "VEHICLE_RC") && (reqCode === "VEHICLE_LOOKUP" || reqCode === "VEHICLE_RC"))
+          return true;
+        if ((logCode === "DL_VERIFY" || logCode === "DRIVING_LICENSE") && (reqCode === "DL_VERIFY" || reqCode === "DRIVING_LICENSE"))
+          return true;
+        if ((logCode === "MOBILE_TO_RC" || logCode === "MOBILE_RC") && (reqCode === "MOBILE_TO_RC" || reqCode === "MOBILE_RC"))
+          return true;
+        if ((logCode === "RC_OWNER_HISTORY" || logCode === "RC_HISTORY") && (reqCode === "RC_OWNER_HISTORY" || reqCode === "RC_HISTORY"))
+          return true;
+        if ((logCode === "KISAN_REGISTRATION_CARD" || logCode === "KISAN_CARD") && (reqCode === "KISAN_REGISTRATION_CARD" || reqCode === "KISAN_CARD"))
+          return true;
+        return false;
+      };
       for (const req of allRequests) {
         const code = req.service.code;
         const inputData = req.inputData || {};
         const stage = typeof inputData?.stage === "string" ? inputData.stage : void 0;
         const isUnlockStage = code === "PAN_FIND" && (stage === "UNLOCK" || Number(req.amount) === 15);
         if (isUnlockStage) continue;
-        if (code === "PAN_FIND" || code === "PAN_DETAILS") {
-          const reqTime = new Date(req.createdAt).getTime();
-          const matchedLog = upstreamApiLogs.find((log2) => {
-            if (claimedLogIds.has(log2.id)) return false;
-            if (log2.serviceCode !== code) return false;
-            const logTime = new Date(log2.createdAt).getTime();
-            const timeDiff = reqTime - logTime;
-            if (timeDiff < -3e4 || timeDiff > 2 * 60 * 60 * 1e3) return false;
+        const reqTime = new Date(req.createdAt).getTime();
+        const reqRef = (inputData.vehicleNumber || inputData.rcNumber || inputData.pan || inputData.dlNumber || inputData.mobile || inputData.mobileNumber || "").toUpperCase().replace(/[\s\-_]/g, "");
+        const matchedLog = upstreamApiLogs.find((log2) => {
+          if (claimedLogIds.has(log2.id)) return false;
+          if (!isSameService(log2.serviceCode, code)) return false;
+          const logRef = (log2.reference || "").toUpperCase().replace(/[\s\-_]/g, "");
+          if (reqRef && logRef && (reqRef === logRef || reqRef.includes(logRef) || logRef.includes(reqRef))) {
+            return true;
+          }
+          const logTime = new Date(log2.createdAt).getTime();
+          const timeDiff = reqTime - logTime;
+          if (timeDiff >= -3e5 && timeDiff <= 2 * 60 * 60 * 1e3) {
             if (req.organizationId && log2.organizationId && req.organizationId === log2.organizationId) return true;
             if (req.userId && log2.userId && req.userId === log2.userId) return true;
-            return false;
-          });
-          if (matchedLog) {
-            claimedLogIds.add(matchedLog.id);
           }
+          return false;
+        });
+        if (matchedLog) {
+          claimedLogIds.add(matchedLog.id);
         }
       }
       const detailedLedger = allRequests.map((req) => {
@@ -15428,7 +16490,17 @@ var AdminService = class {
             if (!isUnlockStage) panFindCalls++;
           } else if (code === "PAN_DETAILS") {
             panDetailsCalls++;
-          } else {
+          } else if (code === "VEHICLE_LOOKUP" || code === "VEHICLE_RC") {
+            rcDetailsCalls++;
+          } else if (code === "DL_VERIFY" || code === "DRIVING_LICENSE") {
+            dlVerifyCalls++;
+          } else if (code === "MOBILE_TO_RC" || code === "MOBILE_RC") {
+            mobileToRcCalls++;
+          } else if (code === "RC_OWNER_HISTORY" || code === "RC_HISTORY") {
+            rcOwnerHistoryCalls++;
+          } else if (code === "KISAN_REGISTRATION_CARD" || code === "KISAN_CARD") {
+            kisanCalls++;
+          } else if (!isTopup) {
             otherCalls++;
           }
           if (!isTopup) {
@@ -15483,9 +16555,29 @@ var AdminService = class {
         if (unitCost > 0) {
           if (code === "PAN_FIND") panFindCalls++;
           else if (code === "PAN_DETAILS") panDetailsCalls++;
+          else if (code === "VEHICLE_LOOKUP" || code === "VEHICLE_RC") rcDetailsCalls++;
+          else if (code === "DL_VERIFY" || code === "DRIVING_LICENSE") dlVerifyCalls++;
+          else if (code === "MOBILE_TO_RC" || code === "MOBILE_RC") mobileToRcCalls++;
+          else if (code === "RC_OWNER_HISTORY" || code === "RC_HISTORY") rcOwnerHistoryCalls++;
+          else if (code === "KISAN_REGISTRATION_CARD" || code === "KISAN_CARD") kisanCalls++;
           else otherCalls++;
         }
-        const sName = code === "PAN_FIND" ? "Instant PAN Find by Aadhaar" : "PAN Details Verification";
+        const fallbackServiceNames = {
+          PAN_FIND: "Instant PAN Find by Aadhaar",
+          PAN_DETAILS: "PAN Details Verification",
+          PAN_TO_AADHAAR: "Find Aadhaar by PAN",
+          VEHICLE_LOOKUP: "RC Details & Verification",
+          VEHICLE_RC: "RC Details & Verification",
+          MOBILE_TO_RC: "Mobile to RC Verification",
+          MOBILE_RC: "Mobile to RC Verification",
+          RC_OWNER_HISTORY: "RC Ownership History",
+          RC_HISTORY: "RC Ownership History",
+          DL_VERIFY: "Driving License Verification",
+          DRIVING_LICENSE: "Driving License Verification",
+          KISAN_CARD: "Kisan Registration Card",
+          KISAN_REGISTRATION_CARD: "Kisan Registration Card"
+        };
+        const sName = fallbackServiceNames[code] || serviceMap[code]?.name || code;
         if (!serviceMap[code]) {
           serviceMap[code] = {
             code,
@@ -15539,10 +16631,22 @@ var AdminService = class {
         panFindBurn: Number((panFindCalls * 3).toFixed(2)),
         panDetailsCalls,
         panDetailsBurn: Number((panDetailsCalls * 2.5).toFixed(2)),
+        rcDetailsCalls,
+        rcDetailsBurn: Number((rcDetailsCalls * 2.25).toFixed(2)),
+        dlVerifyCalls,
+        dlVerifyBurn: Number((dlVerifyCalls * 4).toFixed(2)),
+        mobileToRcCalls,
+        mobileToRcBurn: Number((mobileToRcCalls * 8.15).toFixed(2)),
+        rcOwnerHistoryCalls,
+        rcOwnerHistoryBurn: Number((rcOwnerHistoryCalls * 7.5).toFixed(2)),
+        kisanCalls,
+        kisanBurn: 0,
         otherCalls,
         otherBurn: 0,
-        totalCalls: panFindCalls + panDetailsCalls,
-        totalCreditBurned: Number((panFindCalls * 3 + panDetailsCalls * 2.5).toFixed(2))
+        totalCalls: panFindCalls + panDetailsCalls + rcDetailsCalls + dlVerifyCalls + mobileToRcCalls + rcOwnerHistoryCalls,
+        totalCreditBurned: Number(
+          (panFindCalls * 3 + panDetailsCalls * 2.5 + rcDetailsCalls * 2.25 + dlVerifyCalls * 4 + mobileToRcCalls * 8.15 + rcOwnerHistoryCalls * 7.5).toFixed(2)
+        )
       };
       const serviceBreakdown = Object.values(serviceMap).filter((s) => s.totalInvocations > 0).map((s) => {
         const serviceNet = s.completedRevenue - (s.fulfilledCost + s.wastedCost);
@@ -16735,6 +17839,8 @@ apiRouter.get("/audit-logs", async (c) => {
 });
 apiRouter.route("/pan", panRoutes);
 apiRouter.route("/integrations/pan", panRoutes);
+apiRouter.route("/rc", rcRoutes);
+apiRouter.route("/dl", dlRoutes);
 apiRouter.route("/admin/categories", adminCategoryRouter);
 apiRouter.route("/admin/services", adminServiceRoutes);
 apiRouter.route("/admin", adminRouter);

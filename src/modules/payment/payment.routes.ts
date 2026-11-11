@@ -150,6 +150,21 @@ paymentRoutes.post("/wallet/pay", async (c) => {
     inputData,
   });
 
+  if (!result.success) {
+    return c.json(
+      {
+        success: false,
+        error: {
+          message: result.message,
+          code: "PROVIDER_FAILED",
+          refunded: (result as any).refunded ?? true,
+        },
+        data: result,
+      },
+      400
+    );
+  }
+
   return c.json({ success: true, data: result });
 });
 

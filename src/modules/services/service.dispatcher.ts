@@ -2,6 +2,8 @@ import { prisma } from "../../core/db/prisma";
 import { redis } from "../../core/redis/redis.client";
 import { logger } from "../../core/logger/logger";
 import { panService } from "../pan/pan.service";
+import { rcService } from "../rc/rc.service";
+import { dlService } from "../dl/dl.service";
 import { ephemeralVault } from "../../core/vault/ephemeral-vault.service";
 import { decryptPanToken } from "../../core/security/crypto.util";
 import { sanitizeDpdpData } from "../../core/logger/api-logger";
@@ -215,6 +217,99 @@ export class ServiceDispatcher {
           break;
         }
 
+        case "VEHICLE_LOOKUP":
+        case "VEHICLE_RC": {
+          const input = (request.inputData || {}) as Record<string, unknown>;
+          const vehicleNumber = String(
+            input.vehicleNumber || input.rcNumber || input.rc_number || ""
+          ).trim();
+
+          if (!vehicleNumber) {
+            throw new Error("Missing vehicle registration number for RC lookup service");
+          }
+
+          const rcResult = await rcService.getRcDetails(vehicleNumber);
+          resultData = {
+            ...rcResult,
+            status: "SUCCESS",
+            completedAt: new Date().toISOString(),
+          };
+          break;
+        }
+
+        case "DL_VERIFY":
+        case "DRIVING_LICENSE":
+        case "DL_DETAILS": {
+          const input = (request.inputData || {}) as Record<string, unknown>;
+          const dlNumber = String(
+            input.dlNumber || input.licenseNumber || input.license_number || ""
+          ).trim();
+          const dob = String(input.dob || input.dateOfBirth || "").trim();
+
+          if (!dlNumber) {
+            throw new Error("Missing Driving License number for DL verification service");
+          }
+          if (!dob) {
+            throw new Error("Missing Date of Birth for DL verification service");
+          }
+
+          const dlResult = await dlService.getDlDetails(dlNumber, dob);
+          resultData = {
+            ...dlResult,
+            status: "SUCCESS",
+            completedAt: new Date().toISOString(),
+          };
+          break;
+        }
+
+        case "MOBILE_TO_RC":
+        case "MOBILE_RC": {
+          const input = (request.inputData || {}) as Record<string, unknown>;
+          const mobileNumber = String(
+            input.mobileNumber || input.mobile_number || input.mobile || ""
+          ).trim();
+
+          if (!mobileNumber) {
+            throw new Error("Missing mobile number for Mobile To RC lookup service");
+          }
+
+          const mobileResult = await rcService.getMobileToRc(mobileNumber);
+          resultData = {
+            ...mobileResult,
+            status: "SUCCESS",
+            completedAt: new Date().toISOString(),
+          };
+          break;
+        }
+
+        case "RC_OWNER_HISTORY":
+        case "RC_HISTORY": {
+          const input = (request.inputData || {}) as Record<string, unknown>;
+          const vehicleNumber = String(
+            input.vehicleNumber ||
+              input.vehicle_number ||
+              input.rc_number ||
+              input.rcNumber ||
+              ""
+          ).trim();
+
+          if (!vehicleNumber) {
+            throw new Error(
+              "Missing vehicle registration number for RC Owner History service"
+            );
+          }
+
+          const ownerHistoryResult = await rcService.getRcOwnerHistory(
+            vehicleNumber
+          );
+          resultData = {
+            ...ownerHistoryResult,
+            status: "SUCCESS",
+            completedAt: new Date().toISOString(),
+          };
+          break;
+        }
+
         default:
           throw new Error(`Unsupported service code: ${request.service.code}`);
       }
@@ -253,11 +348,16 @@ export class ServiceDispatcher {
       logger.error(`[ServiceDispatcher] Fulfillment FAILED for Request ${serviceRequestId}:`, error);
       const msg = error instanceof Error ? error.message : "Upstream verification failed";
       
-      // Critical Error: Payment was captured, but API failed.
-      // We must mark this state so admins can issue a refund or retry.
       await prisma.serviceRequest.update({
         where: { id: serviceRequestId },
-        data: { status: "PROVIDER_FAILED" },
+        data: {
+          status: "PROVIDER_FAILED",
+          resultData: {
+            status: "PROVIDER_FAILED",
+            error: msg,
+            failedAt: new Date().toISOString(),
+          },
+        },
       });
 
       await prisma.serviceRequestEvent.create({

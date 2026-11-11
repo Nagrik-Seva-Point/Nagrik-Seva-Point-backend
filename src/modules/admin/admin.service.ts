@@ -1565,8 +1565,18 @@ export class AdminService {
       const serviceCostMap: Record<string, number> = {
         PAN_FIND: 3.0,
         PAN_DETAILS: 2.5,
+        PAN_TO_AADHAAR: 40.0,
         KISAN_CARD: 0.0,
         KISAN_REGISTRATION_CARD: 0.0,
+        VEHICLE_LOOKUP: 2.25,
+        VEHICLE_RC: 2.25,
+        MOBILE_TO_RC: 8.15,
+        MOBILE_RC: 8.15,
+        RC_OWNER_HISTORY: 7.50,
+        RC_HISTORY: 7.50,
+        DL_VERIFY: 4.0,
+        DRIVING_LICENSE: 4.0,
+        VOTER_VERIFY: 0.0,
       };
 
       const [services, allRequests, upstreamApiLogs] = await Promise.all([
@@ -1590,12 +1600,16 @@ export class AdminService {
         prisma.apiLog.findMany({
           where: {
             ...whereDate,
-            serviceCode: { in: ["PAN_FIND", "PAN_DETAILS"] },
-            endpoint: {
+            serviceCode: {
               in: [
-                "/api/v1/pan/find",
-                "/api/v1/pan/details/verify",
-                "/api/v1/pan/details",
+                "PAN_FIND",
+                "PAN_DETAILS",
+                "VEHICLE_LOOKUP",
+                "VEHICLE_RC",
+                "DL_VERIFY",
+                "DRIVING_LICENSE",
+                "MOBILE_TO_RC",
+                "RC_OWNER_HISTORY",
               ],
             },
           },
@@ -1613,6 +1627,11 @@ export class AdminService {
       let wastedVendorCost = 0;
       let panFindCalls = 0;
       let panDetailsCalls = 0;
+      let rcDetailsCalls = 0;
+      let dlVerifyCalls = 0;
+      let mobileToRcCalls = 0;
+      let rcOwnerHistoryCalls = 0;
+      let kisanCalls = 0;
       let otherCalls = 0;
 
       let completedCount = 0;
@@ -1648,6 +1667,51 @@ export class AdminService {
       // Track which ApiLogs were subsequently converted into a ServiceRequest
       const claimedLogIds = new Set<string>();
 
+      // Filter out test / dummy simulations so they are never counted as paid upstream costs or abandoned requests
+      for (const log of upstreamApiLogs) {
+        const ref = (log.reference || "").toUpperCase().replace(/[\s\-_]/g, "");
+        const note = (log.note || "").toLowerCase();
+        if (
+          ref === "DL01AB1234" ||
+          ref === "1234567890" ||
+          note.includes("test") ||
+          note.includes("simulation") ||
+          note.includes("mock")
+        ) {
+          claimedLogIds.add(log.id);
+        }
+      }
+
+      const isSameService = (logCode: string, reqCode: string) => {
+        if (logCode === reqCode) return true;
+        if (
+          (logCode === "VEHICLE_LOOKUP" || logCode === "VEHICLE_RC") &&
+          (reqCode === "VEHICLE_LOOKUP" || reqCode === "VEHICLE_RC")
+        )
+          return true;
+        if (
+          (logCode === "DL_VERIFY" || logCode === "DRIVING_LICENSE") &&
+          (reqCode === "DL_VERIFY" || reqCode === "DRIVING_LICENSE")
+        )
+          return true;
+        if (
+          (logCode === "MOBILE_TO_RC" || logCode === "MOBILE_RC") &&
+          (reqCode === "MOBILE_TO_RC" || reqCode === "MOBILE_RC")
+        )
+          return true;
+        if (
+          (logCode === "RC_OWNER_HISTORY" || logCode === "RC_HISTORY") &&
+          (reqCode === "RC_OWNER_HISTORY" || reqCode === "RC_HISTORY")
+        )
+          return true;
+        if (
+          (logCode === "KISAN_REGISTRATION_CARD" || logCode === "KISAN_CARD") &&
+          (reqCode === "KISAN_REGISTRATION_CARD" || reqCode === "KISAN_CARD")
+        )
+          return true;
+        return false;
+      };
+
       for (const req of allRequests) {
         const code = req.service.code;
         const inputData = (req.inputData || {}) as Record<string, unknown>;
@@ -1655,22 +1719,39 @@ export class AdminService {
         const isUnlockStage = code === "PAN_FIND" && (stage === "UNLOCK" || Number(req.amount) === 15);
         if (isUnlockStage) continue; // Stage 2 Unlock does not hit upstream, do not match with inquiry logs
 
-        if (code === "PAN_FIND" || code === "PAN_DETAILS") {
-          const reqTime = new Date(req.createdAt).getTime();
-          const matchedLog = upstreamApiLogs.find((log) => {
-            if (claimedLogIds.has(log.id)) return false;
-            if (log.serviceCode !== code) return false;
-            const logTime = new Date(log.createdAt).getTime();
-            const timeDiff = reqTime - logTime;
-            // Match if inquiry happened up to 2 hours before or 30s after request creation
-            if (timeDiff < -30000 || timeDiff > 2 * 60 * 60 * 1000) return false;
+        const reqTime = new Date(req.createdAt).getTime();
+        const reqRef = (
+          (inputData.vehicleNumber as string) ||
+          (inputData.rcNumber as string) ||
+          (inputData.pan as string) ||
+          (inputData.dlNumber as string) ||
+          (inputData.mobile as string) ||
+          (inputData.mobileNumber as string) ||
+          ""
+        ).toUpperCase().replace(/[\s\-_]/g, "");
+
+        const matchedLog = upstreamApiLogs.find((log) => {
+          if (claimedLogIds.has(log.id)) return false;
+          if (!isSameService(log.serviceCode, code)) return false;
+
+          const logRef = (log.reference || "").toUpperCase().replace(/[\s\-_]/g, "");
+          if (reqRef && logRef && (reqRef === logRef || reqRef.includes(logRef) || logRef.includes(reqRef))) {
+            return true;
+          }
+
+          const logTime = new Date(log.createdAt).getTime();
+          const timeDiff = reqTime - logTime;
+          // Match if inquiry happened up to 2 hours before or 5 minutes after request creation
+          if (timeDiff >= -300000 && timeDiff <= 2 * 60 * 60 * 1000) {
             if (req.organizationId && log.organizationId && req.organizationId === log.organizationId) return true;
             if (req.userId && log.userId && req.userId === log.userId) return true;
-            return false;
-          });
-          if (matchedLog) {
-            claimedLogIds.add(matchedLog.id);
           }
+
+          return false;
+        });
+
+        if (matchedLog) {
+          claimedLogIds.add(matchedLog.id);
         }
       }
 
@@ -1727,7 +1808,17 @@ export class AdminService {
             if (!isUnlockStage) panFindCalls++;
           } else if (code === "PAN_DETAILS") {
             panDetailsCalls++;
-          } else {
+          } else if (code === "VEHICLE_LOOKUP" || code === "VEHICLE_RC") {
+            rcDetailsCalls++;
+          } else if (code === "DL_VERIFY" || code === "DRIVING_LICENSE") {
+            dlVerifyCalls++;
+          } else if (code === "MOBILE_TO_RC" || code === "MOBILE_RC") {
+            mobileToRcCalls++;
+          } else if (code === "RC_OWNER_HISTORY" || code === "RC_HISTORY") {
+            rcOwnerHistoryCalls++;
+          } else if (code === "KISAN_REGISTRATION_CARD" || code === "KISAN_CARD") {
+            kisanCalls++;
+          } else if (!isTopup) {
             otherCalls++;
           }
 
@@ -1801,10 +1892,31 @@ export class AdminService {
         if (unitCost > 0) {
           if (code === "PAN_FIND") panFindCalls++;
           else if (code === "PAN_DETAILS") panDetailsCalls++;
+          else if (code === "VEHICLE_LOOKUP" || code === "VEHICLE_RC") rcDetailsCalls++;
+          else if (code === "DL_VERIFY" || code === "DRIVING_LICENSE") dlVerifyCalls++;
+          else if (code === "MOBILE_TO_RC" || code === "MOBILE_RC") mobileToRcCalls++;
+          else if (code === "RC_OWNER_HISTORY" || code === "RC_HISTORY") rcOwnerHistoryCalls++;
+          else if (code === "KISAN_REGISTRATION_CARD" || code === "KISAN_CARD") kisanCalls++;
           else otherCalls++;
         }
 
-        const sName = code === "PAN_FIND" ? "Instant PAN Find by Aadhaar" : "PAN Details Verification";
+        const fallbackServiceNames: Record<string, string> = {
+          PAN_FIND: "Instant PAN Find by Aadhaar",
+          PAN_DETAILS: "PAN Details Verification",
+          PAN_TO_AADHAAR: "Find Aadhaar by PAN",
+          VEHICLE_LOOKUP: "RC Details & Verification",
+          VEHICLE_RC: "RC Details & Verification",
+          MOBILE_TO_RC: "Mobile to RC Verification",
+          MOBILE_RC: "Mobile to RC Verification",
+          RC_OWNER_HISTORY: "RC Ownership History",
+          RC_HISTORY: "RC Ownership History",
+          DL_VERIFY: "Driving License Verification",
+          DRIVING_LICENSE: "Driving License Verification",
+          KISAN_CARD: "Kisan Registration Card",
+          KISAN_REGISTRATION_CARD: "Kisan Registration Card",
+        };
+
+        const sName = fallbackServiceNames[code] || serviceMap[code]?.name || code;
 
         if (!serviceMap[code]) {
           serviceMap[code] = {
@@ -1869,10 +1981,35 @@ export class AdminService {
         panFindBurn: Number((panFindCalls * 3.0).toFixed(2)),
         panDetailsCalls,
         panDetailsBurn: Number((panDetailsCalls * 2.5).toFixed(2)),
+        rcDetailsCalls,
+        rcDetailsBurn: Number((rcDetailsCalls * 2.25).toFixed(2)),
+        dlVerifyCalls,
+        dlVerifyBurn: Number((dlVerifyCalls * 4.0).toFixed(2)),
+        mobileToRcCalls,
+        mobileToRcBurn: Number((mobileToRcCalls * 8.15).toFixed(2)),
+        rcOwnerHistoryCalls,
+        rcOwnerHistoryBurn: Number((rcOwnerHistoryCalls * 7.50).toFixed(2)),
+        kisanCalls,
+        kisanBurn: 0.00,
         otherCalls,
         otherBurn: 0.00,
-        totalCalls: panFindCalls + panDetailsCalls,
-        totalCreditBurned: Number((panFindCalls * 3.0 + panDetailsCalls * 2.5).toFixed(2)),
+        totalCalls:
+          panFindCalls +
+          panDetailsCalls +
+          rcDetailsCalls +
+          dlVerifyCalls +
+          mobileToRcCalls +
+          rcOwnerHistoryCalls,
+        totalCreditBurned: Number(
+          (
+            panFindCalls * 3.0 +
+            panDetailsCalls * 2.5 +
+            rcDetailsCalls * 2.25 +
+            dlVerifyCalls * 4.0 +
+            mobileToRcCalls * 8.15 +
+            rcOwnerHistoryCalls * 7.50
+          ).toFixed(2)
+        ),
       };
 
       // Service breakdown array

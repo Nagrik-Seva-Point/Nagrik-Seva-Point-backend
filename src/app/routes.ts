@@ -11,6 +11,8 @@ import {
 } from "../modules/categories/category.routes";
 import { requestRoutes } from "../modules/requests/request.routes";
 import { panRoutes } from "../modules/pan/pan.routes";
+import { rcRoutes } from "../modules/rc/rc.routes";
+import { dlRoutes } from "../modules/dl/dl.routes";
 import { paymentRoutes } from "../modules/payment/payment.routes";
 import { adminRouter } from "../modules/admin/admin.routes";
 import { adminService } from "../modules/admin/admin.service";
@@ -81,6 +83,8 @@ apiRouter.get("/audit-logs", async (c) => {
 // Specialized Service Routes
 apiRouter.route("/pan", panRoutes);
 apiRouter.route("/integrations/pan", panRoutes);
+apiRouter.route("/rc", rcRoutes);
+apiRouter.route("/dl", dlRoutes);
 
 // Master Admin API Routes
 apiRouter.route("/admin/categories", adminCategoryRouter);

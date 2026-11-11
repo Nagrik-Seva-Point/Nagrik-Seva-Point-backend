@@ -967,10 +967,10 @@ export class PaymentService {
     });
 
     // Stash search token in ephemeral vault if passed
-    if (rawInput.searchToken || rawInput.pan) {
+    if (rawInput.searchToken || rawInput.pan || rawInput.vehicleNumber || rawInput.rcNumber) {
       await ephemeralVault.stashTempSearchToken(
         request.id,
-        String(rawInput.searchToken || rawInput.pan)
+        String(rawInput.searchToken || rawInput.pan || rawInput.vehicleNumber || rawInput.rcNumber)
       );
     }
 
@@ -983,7 +983,8 @@ export class PaymentService {
       });
 
       if (finalReq?.status === "PROVIDER_FAILED") {
-        throw new Error("Upstream government registry returned no matching record");
+        const provError = (finalReq?.resultData as any)?.error;
+        throw new Error(provError || "Upstream government registry returned no matching record");
       }
 
       const vault = await ephemeralVault.getVaultItem(request.id);
@@ -1053,7 +1054,7 @@ export class PaymentService {
         referenceNumber,
         amount: servicePrice,
         newBalance: balanceAfterRefund,
-        message: `सत्यापन असफल रहा। ₹${servicePrice.toFixed(2)} आपके वॉलेट में तुरंत (Instant Refund) वापस जमा कर दिए गए हैं। आपका वर्तमान वॉलेट बैलेंस: ₹${balanceAfterRefund.toFixed(2)}।`,
+        message: `${fulfillmentErr?.message || "सत्यापन असफल रहा"}। ₹${servicePrice.toFixed(2)} आपके वॉलेट में तुरंत (Instant Refund) वापस जमा कर दिए गए हैं। आपका वर्तमान वॉलेट बैलेंस: ₹${balanceAfterRefund.toFixed(2)}।`,
       };
     }
   }

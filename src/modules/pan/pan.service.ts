@@ -458,7 +458,6 @@ export class PanService {
     }
 
     const response = await ezytmPanGateway.getAdvancePanToAadhaar(formattedPan);
-    console.log(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
     logger.info(`[PanService] Raw AdvancePanToAadhaar response: ${JSON.stringify(response)}`);
 
     if (response.Errorcode === 100 && response.Data) {

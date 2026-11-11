@@ -190,6 +190,7 @@ export class EzytmGateway {
       clearTimeout(timeoutId);
 
       const text = await response.text();
+
       try {
         const json = JSON.parse(text) as T;
         return json;
