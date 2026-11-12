@@ -15386,10 +15386,49 @@ var AdminService = class {
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
     const sortBy = query.sortBy || "default";
     const hasBalance = query.hasBalance === true || String(query.hasBalance) === "true";
-    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}:${sortBy}:${hasBalance}`;
+    const activeFilter = query.activeFilter || "ALL";
+    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}:${sortBy}:${hasBalance}:${activeFilter}`;
     return await redis.remember(cacheKey, 15, async () => {
       const skip = (page - 1) * limit;
-      const where = {};
+      const now = /* @__PURE__ */ new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3);
+      const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1e3);
+      const buildActiveCondition = (startDate, endDate) => {
+        const timeCondition = { gte: startDate };
+        if (endDate) timeCondition.lt = endDate;
+        return {
+          OR: [
+            {
+              members: {
+                some: {
+                  user: {
+                    sessions: {
+                      some: {
+                        OR: [
+                          { updatedAt: timeCondition },
+                          { createdAt: timeCondition }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              requests: {
+                some: {
+                  createdAt: timeCondition
+                }
+              }
+            },
+            {
+              createdAt: timeCondition
+            }
+          ]
+        };
+      };
       const searchConditions = query.search && query.search.trim() ? [
         { name: { contains: query.search.trim(), mode: "insensitive" } },
         { slug: { contains: query.search.trim(), mode: "insensitive" } },
@@ -15407,16 +15446,25 @@ var AdminService = class {
           }
         }
       ] : null;
-      if (hasBalance && searchConditions) {
-        where.AND = [
-          { wallet: { balance: { gt: 0 } } },
-          { OR: searchConditions }
-        ];
-      } else if (hasBalance) {
-        where.wallet = { balance: { gt: 0 } };
-      } else if (searchConditions) {
-        where.OR = searchConditions;
+      const andConditions = [];
+      if (searchConditions) {
+        andConditions.push({ OR: searchConditions });
       }
+      if (hasBalance || activeFilter === "FUNDED") {
+        andConditions.push({ wallet: { balance: { gt: 0 } } });
+      } else if (activeFilter === "TODAY") {
+        andConditions.push(buildActiveCondition(startOfToday));
+      } else if (activeFilter === "YESTERDAY") {
+        andConditions.push(buildActiveCondition(startOfYesterday, startOfToday));
+      } else if (activeFilter === "WEEK") {
+        andConditions.push(buildActiveCondition(sevenDaysAgo));
+      } else if (activeFilter === "DAY0") {
+        andConditions.push({
+          createdAt: { lte: twoDaysAgo },
+          requests: { none: {} }
+        });
+      }
+      const where = andConditions.length > 0 ? { AND: andConditions } : {};
       let orderBy = [
         { wallet: { balance: "desc" } },
         { createdAt: "desc" }
@@ -15428,8 +15476,19 @@ var AdminService = class {
       } else if (sortBy === "name") {
         orderBy = { name: "asc" };
       }
-      const [total, items, totalWalletSum, countWithBalance] = await Promise.all([
+      const [
+        totalFiltered,
+        totalGlobal,
+        items,
+        totalWalletSum,
+        countWithBalance,
+        countToday,
+        countYesterday,
+        countWeek,
+        countDay0
+      ] = await Promise.all([
         prisma.organization.count({ where }),
+        prisma.organization.count(),
         prisma.organization.findMany({
           where,
           skip,
@@ -15446,7 +15505,6 @@ var AdminService = class {
                     email: true,
                     phone: true,
                     role: true,
-                    updatedAt: true,
                     sessions: {
                       orderBy: { updatedAt: "desc" },
                       take: 1,
@@ -15477,13 +15535,6 @@ var AdminService = class {
                 createdAt: true
               }
             },
-            apiLogs: {
-              orderBy: { createdAt: "desc" },
-              take: 1,
-              select: {
-                createdAt: true
-              }
-            },
             _count: {
               select: {
                 members: true,
@@ -15500,15 +15551,33 @@ var AdminService = class {
         }),
         prisma.organization.count({
           where: { wallet: { balance: { gt: 0 } } }
+        }),
+        prisma.organization.count({
+          where: buildActiveCondition(startOfToday)
+        }),
+        prisma.organization.count({
+          where: buildActiveCondition(startOfYesterday, startOfToday)
+        }),
+        prisma.organization.count({
+          where: buildActiveCondition(sevenDaysAgo)
+        }),
+        prisma.organization.count({
+          where: {
+            createdAt: { lte: twoDaysAgo },
+            requests: { none: {} }
+          }
         })
       ]);
       const enhancedItems = items.map((org) => {
         const ownerUser = org.members[0]?.user;
         const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
         const lastRequestDate = org.requests?.[0]?.createdAt;
-        const lastApiLogDate = org.apiLogs?.[0]?.createdAt;
-        const allTimestamps = [lastSessionDate, ownerUser?.updatedAt, lastRequestDate, lastApiLogDate, org.createdAt].filter(Boolean).map((d) => new Date(d).getTime()).filter((t) => !isNaN(t));
-        const lastLogin = allTimestamps.length > 0 ? new Date(Math.max(...allTimestamps)).toISOString() : org.createdAt;
+        let lastLogin = null;
+        if (lastSessionDate) {
+          lastLogin = new Date(lastSessionDate).toISOString();
+        } else if (lastRequestDate) {
+          lastLogin = new Date(lastRequestDate).toISOString();
+        }
         const completedPayments = org.payments || [];
         const completedPaymentsCount = completedPayments.length;
         const completedPaymentsAmount = completedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
@@ -15529,13 +15598,17 @@ var AdminService = class {
         pagination: {
           page,
           limit,
-          total,
-          totalPages: Math.ceil(total / limit) || 1
+          total: totalFiltered,
+          totalPages: Math.ceil(totalFiltered / limit) || 1
         },
         summary: {
-          totalOrganizations: total,
+          totalOrganizations: totalGlobal,
           totalWalletBalance: Number(totalWalletSum._sum.balance || 0),
-          orgsWithBalanceCount: countWithBalance
+          orgsWithBalanceCount: countWithBalance,
+          todayActiveCount: countToday,
+          yesterdayActiveCount: countYesterday,
+          weekActiveCount: countWeek,
+          day0Count: countDay0
         }
       };
     });
@@ -17586,7 +17659,8 @@ adminRouter.get("/organizations", async (c) => {
     page: query.page ? parseInt(query.page, 10) : void 0,
     limit: query.limit ? parseInt(query.limit, 10) : void 0,
     sortBy: query.sortBy,
-    hasBalance: query.hasBalance === "true" || query.hasBalance === "1" ? true : void 0
+    hasBalance: query.hasBalance === "true" || query.hasBalance === "1" ? true : void 0,
+    activeFilter: query.activeFilter
   });
   return c.json({ success: true, data: result.items, pagination: result.pagination, summary: result.summary });
 });

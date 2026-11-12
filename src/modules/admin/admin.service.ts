@@ -38,6 +38,7 @@ export interface OrganizationFilterQuery {
   limit?: number;
   sortBy?: "walletBalance" | "createdAt" | "requests" | "name" | "default";
   hasBalance?: boolean;
+  activeFilter?: "ALL" | "FUNDED" | "TODAY" | "YESTERDAY" | "WEEK" | "DAY0";
 }
 
 export class AdminService {
@@ -496,12 +497,55 @@ export class AdminService {
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
     const sortBy = query.sortBy || "default";
     const hasBalance = query.hasBalance === true || String(query.hasBalance) === "true";
-    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}:${sortBy}:${hasBalance}`;
+    const activeFilter = query.activeFilter || "ALL";
+    const cacheKey = `cache:admin:orgs:${query.search || "ALL"}:${page}:${limit}:${sortBy}:${hasBalance}:${activeFilter}`;
 
     return await redis.remember(cacheKey, 15, async () => {
       const skip = (page - 1) * limit;
 
-      const where: any = {};
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+      // Helper for timeframe activity condition
+      const buildActiveCondition = (startDate: Date, endDate?: Date) => {
+        const timeCondition: any = { gte: startDate };
+        if (endDate) timeCondition.lt = endDate;
+
+        return {
+          OR: [
+            {
+              members: {
+                some: {
+                  user: {
+                    sessions: {
+                      some: {
+                        OR: [
+                          { updatedAt: timeCondition },
+                          { createdAt: timeCondition },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              requests: {
+                some: {
+                  createdAt: timeCondition,
+                },
+              },
+            },
+            {
+              createdAt: timeCondition,
+            },
+          ],
+        };
+      };
+
       const searchConditions = query.search && query.search.trim() ? [
         { name: { contains: query.search.trim(), mode: "insensitive" } },
         { slug: { contains: query.search.trim(), mode: "insensitive" } },
@@ -520,16 +564,28 @@ export class AdminService {
         },
       ] : null;
 
-      if (hasBalance && searchConditions) {
-        where.AND = [
-          { wallet: { balance: { gt: 0 } } },
-          { OR: searchConditions },
-        ];
-      } else if (hasBalance) {
-        where.wallet = { balance: { gt: 0 } };
-      } else if (searchConditions) {
-        where.OR = searchConditions;
+      const andConditions: any[] = [];
+
+      if (searchConditions) {
+        andConditions.push({ OR: searchConditions });
       }
+
+      if (hasBalance || activeFilter === "FUNDED") {
+        andConditions.push({ wallet: { balance: { gt: 0 } } });
+      } else if (activeFilter === "TODAY") {
+        andConditions.push(buildActiveCondition(startOfToday));
+      } else if (activeFilter === "YESTERDAY") {
+        andConditions.push(buildActiveCondition(startOfYesterday, startOfToday));
+      } else if (activeFilter === "WEEK") {
+        andConditions.push(buildActiveCondition(sevenDaysAgo));
+      } else if (activeFilter === "DAY0") {
+        andConditions.push({
+          createdAt: { lte: twoDaysAgo },
+          requests: { none: {} },
+        });
+      }
+
+      const where: any = andConditions.length > 0 ? { AND: andConditions } : {};
 
       let orderBy: any = [
         { wallet: { balance: "desc" } },
@@ -543,8 +599,19 @@ export class AdminService {
         orderBy = { name: "asc" };
       }
 
-      const [total, items, totalWalletSum, countWithBalance] = await Promise.all([
+      const [
+        totalFiltered,
+        totalGlobal,
+        items,
+        totalWalletSum,
+        countWithBalance,
+        countToday,
+        countYesterday,
+        countWeek,
+        countDay0,
+      ] = await Promise.all([
         prisma.organization.count({ where }),
+        prisma.organization.count(),
         prisma.organization.findMany({
           where,
           skip,
@@ -561,7 +628,6 @@ export class AdminService {
                     email: true,
                     phone: true,
                     role: true,
-                    updatedAt: true,
                     sessions: {
                       orderBy: { updatedAt: "desc" },
                       take: 1,
@@ -592,13 +658,6 @@ export class AdminService {
                 createdAt: true,
               },
             },
-            apiLogs: {
-              orderBy: { createdAt: "desc" },
-              take: 1,
-              select: {
-                createdAt: true,
-              },
-            },
             _count: {
               select: {
                 members: true,
@@ -616,18 +675,37 @@ export class AdminService {
         prisma.organization.count({
           where: { wallet: { balance: { gt: 0 } } },
         }),
+        prisma.organization.count({
+          where: buildActiveCondition(startOfToday),
+        }),
+        prisma.organization.count({
+          where: buildActiveCondition(startOfYesterday, startOfToday),
+        }),
+        prisma.organization.count({
+          where: buildActiveCondition(sevenDaysAgo),
+        }),
+        prisma.organization.count({
+          where: {
+            createdAt: { lte: twoDaysAgo },
+            requests: { none: {} },
+          },
+        }),
       ]);
 
       const enhancedItems = items.map((org) => {
         const ownerUser = org.members[0]?.user;
         const lastSessionDate = ownerUser?.sessions?.[0]?.updatedAt || ownerUser?.sessions?.[0]?.createdAt;
         const lastRequestDate = org.requests?.[0]?.createdAt;
-        const lastApiLogDate = org.apiLogs?.[0]?.createdAt;
-        const allTimestamps = [lastSessionDate, ownerUser?.updatedAt, lastRequestDate, lastApiLogDate, org.createdAt]
-          .filter(Boolean)
-          .map((d) => new Date(d!).getTime())
-          .filter((t) => !isNaN(t));
-        const lastLogin = allTimestamps.length > 0 ? new Date(Math.max(...allTimestamps)).toISOString() : org.createdAt;
+
+        // Accurate User Last Login: Determined ONLY from genuine user authentication Session,
+        // fallback to citizen request activity, or null ("Never").
+        // (Never contaminated by system/email audit ApiLogs or user record touches).
+        let lastLogin: string | null = null;
+        if (lastSessionDate) {
+          lastLogin = new Date(lastSessionDate).toISOString();
+        } else if (lastRequestDate) {
+          lastLogin = new Date(lastRequestDate).toISOString();
+        }
 
         const completedPayments = org.payments || [];
         const completedPaymentsCount = completedPayments.length;
@@ -651,13 +729,17 @@ export class AdminService {
         pagination: {
           page,
           limit,
-          total,
-          totalPages: Math.ceil(total / limit) || 1,
+          total: totalFiltered,
+          totalPages: Math.ceil(totalFiltered / limit) || 1,
         },
         summary: {
-          totalOrganizations: total,
+          totalOrganizations: totalGlobal,
           totalWalletBalance: Number(totalWalletSum._sum.balance || 0),
           orgsWithBalanceCount: countWithBalance,
+          todayActiveCount: countToday,
+          yesterdayActiveCount: countYesterday,
+          weekActiveCount: countWeek,
+          day0Count: countDay0,
         },
       };
     });

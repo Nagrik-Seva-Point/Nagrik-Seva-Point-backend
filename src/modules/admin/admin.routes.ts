@@ -134,6 +134,7 @@ adminRouter.get("/organizations", async (c) => {
     limit: query.limit ? parseInt(query.limit, 10) : undefined,
     sortBy: query.sortBy as any,
     hasBalance: query.hasBalance === "true" || query.hasBalance === "1" ? true : undefined,
+    activeFilter: query.activeFilter as any,
   });
 
   return c.json({ success: true, data: result.items, pagination: result.pagination, summary: result.summary });
